@@ -44,6 +44,32 @@ class Store:
             db.execute("INSERT OR REPLACE INTO sessions VALUES (?,?,?,?)",
                        (tenant, session_id, json.dumps(history[-limit:], ensure_ascii=False), time.time()))
 
+    def list_sessions(self, tenant: str, limit: int = 50) -> list[dict]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT id, messages, updated FROM sessions WHERE tenant=? ORDER BY updated DESC LIMIT ?",
+                (tenant, limit)
+            ).fetchall()
+        results = []
+        for sid, raw_messages, updated in rows:
+            try:
+                msgs = json.loads(raw_messages)
+                first_user = next((m.get("content", "") for m in msgs if m.get("role") == "user"), "")
+                title = first_user[:60] if first_user else "Cuộc trò chuyện mới"
+            except Exception:
+                title, msgs = "Cuộc trò chuyện mới", []
+            results.append({
+                "id": sid,
+                "title": title or "Cuộc trò chuyện mới",
+                "message_count": len(msgs),
+                "updated": updated,
+            })
+        return results
+
+    def delete_session(self, tenant: str, session_id: str):
+        with self.connect() as db:
+            db.execute("DELETE FROM sessions WHERE tenant=? AND id=?", (tenant, session_id))
+
     def save_reply(self, tenant: str, request_id: str, payload: dict):
         with self.connect() as db:
             db.execute("INSERT OR REPLACE INTO replies VALUES (?,?,?,?)",

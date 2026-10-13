@@ -106,12 +106,15 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.get("/api/documents")
-    async def documents(session_id: str | None = None, scope=Depends(tenant), svc=Depends(get_service)):
+    async def documents(session_id: str | None = None, only_session: bool = False, scope=Depends(tenant), svc=Depends(get_service)):
         kb = await asyncio.to_thread(svc.knowledge.for_tenant, scope)
         snapshot = kb.snapshot
         records = snapshot.records
         if session_id:
-            records = [r for r in records if r.get("is_global", True) or str(r.get("session_id", "")) == str(session_id)]
+            if only_session:
+                records = [r for r in records if str(r.get("session_id", "")) == str(session_id)]
+            else:
+                records = [r for r in records if r.get("is_global", True) or str(r.get("session_id", "")) == str(session_id)]
         return {"documents": [{k: v for k, v in r.items() if k != "stored_name"} for r in records],
                 "chunks": len(snapshot.nodes), "revision": snapshot.revision}
 
@@ -164,9 +167,18 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
                 raise HTTPException(404, "Không tìm thấy tài liệu")
         return {"deleted": document_id}
 
+    @app.get("/api/sessions")
+    async def list_sessions(limit: int = 50, scope=Depends(tenant), svc=Depends(get_service)):
+        return {"sessions": await asyncio.to_thread(svc.store.list_sessions, scope, limit)}
+
     @app.get("/api/sessions/{session_id}")
     async def history(session_id: UUID, scope=Depends(tenant), svc=Depends(get_service)):
         return {"session_id": str(session_id), "messages": await asyncio.to_thread(svc.store.history, scope, str(session_id))}
+
+    @app.delete("/api/sessions/{session_id}")
+    async def delete_session(session_id: UUID, scope=Depends(tenant), svc=Depends(get_service)):
+        await asyncio.to_thread(svc.store.delete_session, scope, str(session_id))
+        return {"deleted": str(session_id)}
 
     @app.get("/api/replies/{request_id}")
     async def reply(request_id: str, scope=Depends(tenant), svc=Depends(get_service)):

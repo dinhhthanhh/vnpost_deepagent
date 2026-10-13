@@ -21,11 +21,22 @@ def test_api_upload_chat_sse_and_tenant_authorization(settings):
         result = response.json()
         assert client.get("/api/replies/" + result["request_id"], headers=hb).status_code == 404
         assert not client.get("/api/sessions/" + result["session_id"], headers=hb).json()["messages"]
+
+        # Check sessions listing & isolation
+        sessions_a = client.get("/api/sessions", headers=ha).json()["sessions"]
+        assert any(s["id"] == result["session_id"] for s in sessions_a)
+        assert not client.get("/api/sessions", headers=hb).json()["sessions"]
+
         stream = client.post("/api/chat/stream", headers=ha, json={"message": "Hoàn cước bao lâu?", "voice": True})
         assert "event: answer" in stream.text and "event: done" in stream.text
         assert stream.text.index("event: answer") < stream.text.index("event: speech_error")
         assert client.delete("/api/documents/" + uploaded.json()["id"], headers=hb).status_code == 404
         assert client.delete("/api/documents/" + uploaded.json()["id"], headers=ha).status_code == 200
+
+        # Check session deletion
+        del_res = client.delete("/api/sessions/" + result["session_id"], headers=ha)
+        assert del_res.status_code == 200
+        assert not any(s["id"] == result["session_id"] for s in client.get("/api/sessions", headers=ha).json()["sessions"])
 
 
 def test_api_rejects_invalid_inputs_and_limits(settings):

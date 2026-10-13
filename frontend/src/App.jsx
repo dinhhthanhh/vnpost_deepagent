@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowUp, BookOpen, FileText, Headphones, Image as ImageIcon, Plus, ShieldCheck, Square, Upload, Volume2, X } from "lucide-react";
+import { ArrowUp, BookOpen, FileText, Headphones, Image as ImageIcon, MessageSquare, Plus, ShieldCheck, Square, Trash2, Upload, Volume2, X } from "lucide-react";
 import { audioBlob, request, streamChat } from "./api";
 import { playWavStream } from "./wav-stream";
 
@@ -7,18 +7,20 @@ const agentNames = { "rag-agent": "Tìm tài liệu", "analyst-agent": "Phân t�
 const suggestions = ["Tài liệu này quy định những bước xử lý nào?", "So sánh hai quy trình trong tài liệu.", "Tóm tắt các nội dung quan trọng và trích nguồn."];
 
 function AnswerText({ text }) {
-  // React escapes every string; never render document or LLM output as raw HTML.
   return <div className="answer-text">{text.split(/(\[S\d+\])/g).map((part, i) => /^\[S\d+\]$/.test(part) ? <span key={i} className="citation">{part}</span> : part)}</div>;
 }
 
 export default function App() {
-  const [key, setKey] = useState(""); // In memory only. No keys in localStorage or URLs.
-  const [draftKey, setDraftKey] = useState(""), [health, setHealth] = useState(null), [documents, setDocuments] = useState([]);
+  const [key, setKey] = useState("");
+  const [draftKey, setDraftKey] = useState(""), [health, setHealth] = useState(null);
   const [messages, setMessages] = useState([]), [input, setInput] = useState(""), [busy, setBusy] = useState(false);
   const [grounded, setGrounded] = useState(true), [routeMode, setRouteMode] = useState("auto");
   const [voice, setVoice] = useState(false), [voices, setVoices] = useState([]), [voiceName, setVoiceName] = useState("maichi");
   const [notice, setNotice] = useState(""), [events, setEvents] = useState([]), [uploading, setUploading] = useState(false);
   const [session, setSession] = useState(() => localStorage.getItem("chat-session") || null);
+  const [sessions, setSessions] = useState([]);
+  const [sessionDocs, setSessionDocs] = useState([]);
+  const [showDocTab, setShowDocTab] = useState(false);
   const [streamingAudio, setStreamingAudio] = useState(false);
   const [attachedImage, setAttachedImage] = useState(null);
   const end = useRef(), uploadInput = useRef(), imageInput = useRef(), abort = useRef(), audio = useRef(), blobs = useRef([]), stream = useRef(null);
@@ -29,31 +31,80 @@ export default function App() {
     if (audio.current) { audio.current.pause(); audio.current = null; }
     setStreamingAudio(false);
   };
+
   useEffect(() => () => { abort.current?.abort(); stopAudio(); releaseBlobs(); }, []);
   useEffect(() => { end.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, events]);
   useEffect(() => { request("/api/health", "").then(r => r.json()).then(setHealth).catch(e => setNotice(e.message)); }, []);
 
-  async function loadWorkspace(activeKey = key, restoreHistory = false) {
+  async function loadSessions(activeKey = key) {
     try {
-      const docsUrl = session ? `/api/documents?session_id=${session}` : "/api/documents";
-      const [docs, voiceResponse] = await Promise.all([request(docsUrl, activeKey).then(r => r.json()), request("/api/tts/voices", activeKey).then(r => r.json()).catch(() => ({ voices: [] }))]);
-      setDocuments(docs.documents); setVoices(voiceResponse.voices || []); setNotice("");
-      if (restoreHistory && session) {
-        const data = await request(`/api/sessions/${session}`, activeKey).then(r => r.json());
-        setMessages(data.messages.map(m => ({ ...m, id: m.request_id || crypto.randomUUID(), text: m.content, answer: m.content })));
-      }
+      const data = await request("/api/sessions", activeKey).then(r => r.json());
+      setSessions(data.sessions || []);
+    } catch {
+      setSessions([]);
+    }
+  }
+
+  async function loadSessionDocs(sid, activeKey = key) {
+    if (!sid) { setSessionDocs([]); return; }
+    try {
+      const data = await request(`/api/documents?session_id=${sid}&only_session=true`, activeKey).then(r => r.json());
+      setSessionDocs(data.documents || []);
+    } catch {
+      setSessionDocs([]);
+    }
+  }
+
+  async function loadVoices(activeKey = key) {
+    try {
+      const voiceResponse = await request("/api/tts/voices", activeKey).then(r => r.json()).catch(() => ({ voices: [] }));
+      setVoices(voiceResponse.voices || []);
+    } catch {
+      setVoices([]);
+    }
+  }
+
+  async function selectSession(sid) {
+    if (busy || sid === session) return;
+    abort.current?.abort(); stopAudio(); releaseBlobs();
+    setSession(sid); localStorage.setItem("chat-session", sid);
+    setNotice(""); setAttachedImage(null); setEvents([]);
+    try {
+      const data = await request(`/api/sessions/${sid}`, key).then(r => r.json());
+      setMessages(data.messages.map(m => ({ ...m, id: m.request_id || crypto.randomUUID(), text: m.content, answer: m.content })));
+      await loadSessionDocs(sid, key);
     } catch (e) { setNotice(e.message); }
   }
-  useEffect(() => { loadWorkspace(key, true); }, [key, session]);
+
+  async function deleteSession(sid) {
+    if (!confirm("Xóa phiên trò chuyện này?")) return;
+    try {
+      await request(`/api/sessions/${sid}`, key, { method: "DELETE" });
+      if (session === sid) {
+        newChat();
+      }
+      await loadSessions(key);
+    } catch (e) { setNotice(e.message); }
+  }
+
+  useEffect(() => {
+    loadSessions(key);
+    loadVoices(key);
+    if (session) {
+      request(`/api/sessions/${session}`, key).then(r => r.json()).then(data => {
+        setMessages(data.messages.map(m => ({ ...m, id: m.request_id || crypto.randomUUID(), text: m.content, answer: m.content })));
+      }).catch(() => {});
+      loadSessionDocs(session, key);
+    }
+  }, [key]);
 
   async function newChat() {
     abort.current?.abort(); stopAudio(); releaseBlobs();
-    setSession(null); localStorage.removeItem("chat-session"); setMessages([]); setEvents([]); setNotice(""); setAttachedImage(null);
+    setSession(null); localStorage.removeItem("chat-session");
+    setMessages([]); setEvents([]); setNotice(""); setAttachedImage(null);
+    setSessionDocs([]); setShowDocTab(false);
   }
-  async function connectKey() {
-    if (busy) return;
-    await newChat(); setKey(draftKey.trim()); setDraftKey("");
-  }
+
   function handleImageSelect(e) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -70,6 +121,7 @@ export default function App() {
     reader.readAsDataURL(file);
     e.target.value = "";
   }
+
   function handlePaste(e) {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -86,23 +138,35 @@ export default function App() {
       }
     }
   }
+
   async function uploadFiles(files) {
     setUploading(true); setNotice("");
     try {
-      for (const file of files) {
-        const body = new FormData(); body.append("file", file);
-        if (session) body.append("session_id", session);
-        const uploadUrl = session ? `/api/documents?session_id=${session}` : "/api/documents";
-        await request(uploadUrl, key, { method: "POST", body });
+      let currentSession = session;
+      if (!currentSession) {
+        currentSession = crypto.randomUUID();
+        setSession(currentSession);
+        localStorage.setItem("chat-session", currentSession);
       }
-      await loadWorkspace();
+      for (const file of files) {
+        const body = new FormData();
+        body.append("file", file);
+        body.append("session_id", currentSession);
+        await request(`/api/documents?session_id=${currentSession}`, key, { method: "POST", body });
+      }
+      await loadSessionDocs(currentSession);
+      setShowDocTab(true);
+      setNotice("Tải tài liệu thành công. Tài liệu này sẽ được dùng riêng trong phiên chat hiện tại.");
     } catch (e) { setNotice(e.message); }
     finally { setUploading(false); if (uploadInput.current) uploadInput.current.value = ""; }
   }
+
   async function deleteDoc(doc) {
-    if (!confirm(`Xóa tài liệu “${doc.filename}” khỏi kho?`)) return;
-    try { await request(`/api/documents/${doc.id}`, key, { method: "DELETE" }); await loadWorkspace(); }
-    catch (e) { setNotice(e.message); }
+    if (!confirm(`Xóa tài liệu “${doc.filename}” khỏi phiên chat này?`)) return;
+    try {
+      await request(`/api/documents/${doc.id}`, key, { method: "DELETE" });
+      await loadSessionDocs(session);
+    } catch (e) { setNotice(e.message); }
   }
 
   async function prepareAudio(url, id) {
@@ -113,6 +177,7 @@ export default function App() {
       audio.current.play().catch(() => setNotice("Âm thanh đã sẵn sàng. Bấm Nghe để phát."));
     } catch (e) { setNotice(e.message); }
   }
+
   async function send(event, text = input) {
     event?.preventDefault(); text = text.trim(); if ((!text && !attachedImage) || busy) return;
     if (!text && attachedImage) text = "Hãy phân tích hình ảnh này.";
@@ -122,11 +187,17 @@ export default function App() {
     abort.current = new AbortController(); let receivedAnswer = false;
     try {
       await streamChat({ message: text, image: currentImage, session_id: session, grounded, mode: routeMode, voice, voice_name: voiceName }, key, item => {
-        if (item.type === "start") { setSession(item.session_id); localStorage.setItem("chat-session", item.session_id); }
+        if (item.type === "start") {
+          setSession(item.session_id);
+          localStorage.setItem("chat-session", item.session_id);
+        }
         if (item.type === "answer" || item.type === "done") {
           receivedAnswer = true;
           setMessages(previous => previous.map(m => m.id === id ? { ...m, ...item.data, pending: false } : m));
-          if (item.type === "done" && item.data.warnings?.length) setNotice(item.data.warnings.join(" "));
+          if (item.type === "done") {
+            loadSessions(key);
+            if (item.data.warnings?.length) setNotice(item.data.warnings.join(" "));
+          }
         } else if (item.type === "speech_ready") prepareAudio(item.audio_url, id);
         else if (item.type === "speech_error" || item.type === "error") {
           setNotice(item.message); if (item.type === "error") setMessages(previous => previous.map(m => m.id === id ? { ...m, pending: false, error: item.message } : m));
@@ -136,8 +207,12 @@ export default function App() {
       const message = e.name === "AbortError" ? "Đã dừng yêu cầu." : e.message;
       setNotice(message);
       if (!receivedAnswer) setMessages(previous => previous.map(m => m.id === id ? { ...m, pending: false, error: message } : m));
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+      loadSessions(key);
+    }
   }
+
   async function readAnswer(message) {
     stopAudio();
     if (message.blob) { audio.current = new Audio(message.blob); audio.current.play().catch(e => setNotice(e.message)); return; }
@@ -147,6 +222,7 @@ export default function App() {
       await prepareAudio(data.audio_url, message.id); setNotice("");
     } catch (e) { setNotice(e.message); }
   }
+
   async function streamAnswer(message) {
     stopAudio(); const controller = new AbortController(), context = new AudioContext();
     stream.current = { controller, context }; setStreamingAudio(true);
@@ -161,43 +237,170 @@ export default function App() {
 
   return <div className="shell">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-icon"><BookOpen size={21} /></div><div><strong>VNPost</strong><span>Trợ lý tài liệu</span></div></div>
-      <button className="new-chat" disabled={busy} onClick={newChat}><Plus size={17} /> Cuộc trò chuyện mới</button>
-      <div className="sidebar-section"><div className="section-label">KHO TÀI LIỆU <span>{documents.length}</span></div>
-        <button className="upload" disabled={uploading || busy} onClick={() => uploadInput.current.click()}><Upload size={17} /> {uploading ? "Đang lập chỉ mục…" : "Thêm tài liệu"}</button>
-        <input ref={uploadInput} type="file" accept=".docx,.txt,.pdf" multiple hidden onChange={e => uploadFiles(Array.from(e.target.files))} />
-        <p className="small muted">Word (.docx), PDF (.pdf) và văn bản UTF-8 (.txt)</p>
-        <div className="document-list">{documents.map(doc => <div className="document" key={doc.id}><FileText size={15} /><span title={doc.filename}>{doc.filename}</span><span className="doc-scope-tag" style={{ fontSize: "9px", padding: "1px 5px", borderRadius: "4px", background: doc.is_global ? "#1f3c60" : "#4a3b10", color: doc.is_global ? "#8cb4e2" : "#f5d061", flexShrink: 0, margin: "0 4px" }}>{doc.is_global ? "Hệ thống" : "Cá nhân"}</span><button aria-label={`Xóa ${doc.filename}`} disabled={busy || uploading} onClick={() => deleteDoc(doc)}><X size={13} /></button></div>)}
-          {!documents.length && <div className="empty-docs">Thêm tài liệu để bắt đầu hỏi đáp có nguồn.</div>}</div>
+      <div className="brand">
+        <div className="brand-icon"><BookOpen size={21} /></div>
+        <div><strong>VNPost</strong><span>Trợ lý AI</span></div>
       </div>
-      <div className="sidebar-section"><div className="section-label">GIỌNG ĐỌC</div><select aria-label="Giọng đọc" value={voiceName} onChange={e => setVoiceName(e.target.value)}>{voices.length ? voices.map(v => <option key={v.name} value={v.name}>{v.name}</option>) : <option value="maichi">maichi</option>}</select>
-        <label className="check"><input type="checkbox" checked={voice} onChange={e => setVoice(e.target.checked)} disabled={!health?.tts_enabled} /> Tự đọc câu trả lời</label>
+
+      <button className="new-chat" disabled={busy} onClick={newChat}>
+        <Plus size={17} /> Cuộc trò chuyện mới
+      </button>
+
+      {/* 1. Phần Giọng đọc được đưa lên trên */}
+      <div className="sidebar-section">
+        <div className="section-label">GIỌNG ĐỌC</div>
+        <select aria-label="Giọng đọc" value={voiceName} onChange={e => setVoiceName(e.target.value)}>
+          {voices.length ? voices.map(v => <option key={v.name} value={v.name}>{v.name}</option>) : <option value="maichi">maichi</option>}
+        </select>
+        <label className="check">
+          <input type="checkbox" checked={voice} onChange={e => setVoice(e.target.checked)} disabled={!health?.tts_enabled} />
+          Tự đọc câu trả lời
+        </label>
         {!health?.tts_enabled && <p className="small muted">Giọng đọc chưa được bật trên máy chủ.</p>}
       </div>
-      <div className="sidebar-bottom"><ShieldCheck size={15} /> {grounded ? "Trả lời dựa trên tài liệu" : "Chế độ trao đổi chung"}</div>
+
+      {/* 2. Lịch sử các session chat */}
+      <div className="sidebar-section" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <div className="section-label">LỊCH SỬ TRÒ CHUYỆN <span>{sessions.length}</span></div>
+        <div className="session-list">
+          {sessions.map(s => (
+            <div
+              key={s.id}
+              className={`session-item ${session === s.id ? "active" : ""}`}
+              onClick={() => selectSession(s.id)}
+            >
+              <MessageSquare size={14} style={{ flexShrink: 0 }} />
+              <span title={s.title}>{s.title}</span>
+              <button
+                className="delete-session-btn"
+                title="Xóa phiên trò chuyện"
+                onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+          {!sessions.length && <div className="empty-docs">Chưa có phiên trò chuyện nào được lưu.</div>}
+        </div>
+      </div>
+
+      <div className="sidebar-bottom">
+        <ShieldCheck size={15} /> {grounded ? "Trả lời dựa trên tài liệu" : "Chế độ trao đổi chung"}
+      </div>
     </aside>
+
     <main className="main">
-      <header className="topbar"><div><span className="overline">WORKSPACE</span><h1>Hỏi đáp & tra cứu</h1></div><span className="status"><i />{health ? "Đang hoạt động" : "Đang kết nối"}</span></header>
+      <header className="topbar">
+        <div>
+          <span className="overline">WORKSPACE</span>
+          <h1>Hỏi đáp & tra cứu</h1>
+        </div>
+        <div className="topbar-actions">
+          {/* Tab nhỏ ở trên: Hiển thị và quản lý tài liệu đã tải lên của session */}
+          <button
+            className={`session-docs-tab-btn ${showDocTab ? "active" : ""}`}
+            onClick={() => setShowDocTab(!showDocTab)}
+            title="Xem và tải lên tài liệu cho phiên chat này"
+          >
+            <FileText size={15} />
+            <span>Tài liệu đã tải ({sessionDocs.length})</span>
+          </button>
+          <span className="status"><i />{health ? "Đang hoạt động" : "Đang kết nối"}</span>
+        </div>
+      </header>
+
+      {/* Panel tab nhỏ ở trên: Hiện tài liệu đã tải lên của phiên chat */}
+      {showDocTab && (
+        <div className="session-docs-panel">
+          <div className="session-docs-header">
+            <div className="session-docs-title">
+              <FileText size={16} />
+              <strong>Tài liệu của phiên chat này ({sessionDocs.length})</strong>
+            </div>
+            <div className="session-docs-actions">
+              <button
+                className="upload-tab-btn"
+                disabled={uploading || busy}
+                onClick={() => uploadInput.current?.click()}
+              >
+                <Upload size={14} /> {uploading ? "Đang lập chỉ mục…" : "Tải lên tài liệu"}
+              </button>
+              <button className="close-tab-btn" onClick={() => setShowDocTab(false)}>
+                <X size={15} />
+              </button>
+            </div>
+          </div>
+          <input
+            ref={uploadInput}
+            type="file"
+            accept=".docx,.txt,.pdf"
+            multiple
+            hidden
+            onChange={e => uploadFiles(Array.from(e.target.files))}
+          />
+          <div className="session-docs-list">
+            {sessionDocs.map(doc => (
+              <div className="session-doc-chip" key={doc.id}>
+                <FileText size={13} />
+                <span title={doc.filename}>{doc.filename}</span>
+                <button
+                  aria-label={`Xóa ${doc.filename}`}
+                  disabled={busy || uploading}
+                  onClick={() => deleteDoc(doc)}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+            {!sessionDocs.length && (
+              <span className="session-docs-empty">
+                Chưa có tài liệu nào tải lên trong phiên chat này. Bấm "Tải lên tài liệu" (.docx, .pdf, .txt) để thêm tài liệu riêng.
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       <section className="conversation" aria-live="polite">
-        {!messages.length && <div className="welcome"><div className="welcome-icon"><BookOpen size={29} /></div><span className="overline">HIỂU TÀI LIỆU, TÌM ĐÚNG THÔNG TIN</span><h2>Bạn muốn tìm điều gì?</h2><p>Thêm tài liệu vào kho, rồi đặt câu hỏi.<br />Mỗi câu trả lời sẽ đi kèm những đoạn nguồn để bạn kiểm tra.</p><div className="suggestions">{suggestions.map(s => <button key={s} onClick={() => setInput(s)}>{s}<ArrowUp size={14} /></button>)}</div></div>}
+        {!messages.length && <div className="welcome">
+          <div className="welcome-icon"><BookOpen size={29} /></div>
+          <span className="overline">TRỢ LÝ NGUỒN VNPOST</span>
+          <h2>Bạn muốn tìm điều gì?</h2>
+          <p>Đặt câu hỏi trực tiếp để tra cứu quy định VNPost,<br />hoặc bấm tab "Tài liệu đã tải" ở trên để nạp thêm tài liệu riêng cho phiên chat.</p>
+          <div className="suggestions">{suggestions.map(s => <button key={s} onClick={() => setInput(s)}>{s}<ArrowUp size={14} /></button>)}</div>
+        </div>}
+
         {messages.map(message => <article className={`message ${message.role}`} key={message.id}>
-          <div className="message-avatar">{message.role === "user" ? "Bạn" : <BookOpen size={17} />}</div><div className="message-content">
+          <div className="message-avatar">{message.role === "user" ? "Bạn" : <BookOpen size={17} />}</div>
+          <div className="message-content">
             {message.role === "user" ? <div className="user-text">
               {message.image && <div className="user-image-container"><img src={message.image} alt="Đính kèm" className="user-attached-image" /></div>}
               <div>{message.text}</div>
             </div> : message.pending ? <div className="pending"><span /> Đang xử lý yêu cầu…</div> : <>
               <AnswerText text={message.answer || message.error || ""} />
               {message.sources?.length > 0 && <details className="sources"><summary><FileText size={14} /> {message.sources.length} đoạn nguồn tham chiếu</summary>{message.sources.map(source => <div className="source" key={source.citation_id}><strong>[{source.citation_id}] {source.filename}</strong><span>{source.location}</span><p>{source.excerpt}</p></div>)}</details>}
-              {message.answer && <div className="answer-actions">{message.route && <span className={`route-badge ${message.route}`} title={message.route_reason || ""}>{message.route === "fast" ? "⚡ Fast RAG" : "🤖 Deep Agent"}</span>}<span>{message.grounding_status === "cited" ? "Có trích nguồn · " : ""}{((message.elapsed_ms || 0) / 1000).toFixed(1)} giây</span>{health?.tts_enabled && <><button onClick={() => readAnswer(message)}><Volume2 size={14} /> Nghe</button><button onClick={() => streamAnswer(message)} disabled={streamingAudio}><Headphones size={14} /> Phát streaming</button></>}{message.blob && <a href={message.blob} download="answer.wav">Tải âm thanh</a>}</div>}
+              {message.answer && <div className="answer-actions">
+                {message.route && <span className={`route-badge ${message.route}`} title={message.route_reason || ""}>{message.route === "fast" ? "⚡ Fast RAG" : "🤖 Deep Agent"}</span>}
+                <span>{message.grounding_status === "cited" ? "Có trích nguồn · " : ""}{((message.elapsed_ms || 0) / 1000).toFixed(1)} giây</span>
+                {health?.tts_enabled && <>
+                  <button onClick={() => readAnswer(message)}><Volume2 size={14} /> Nghe</button>
+                  <button onClick={() => streamAnswer(message)} disabled={streamingAudio}><Headphones size={14} /> Phát streaming</button>
+                </>}
+                {message.blob && <a href={message.blob} download="answer.wav">Tải âm thanh</a>}
+              </div>}
             </>}
-          </div></article>)}
+          </div>
+        </article>)}
+
         {busy && events.length > 0 && <div className="activity">
           {events.filter(e => e.type === "router_decision").slice(-1).map((e, i) => <span key={`r-${i}`} className="route-activity">{e.route === "fast" ? "⚡ Đường nhanh (Direct RAG)" : "🤖 Đường sâu (Deep Agent)"}: {e.reason}</span>)}
           {events.filter(e => e.type === "task_start" || e.type === "task_end").slice(-5).map((e, i) => <span key={i}>{agentNames[e.agent] || e.agent} · {e.type === "task_start" ? "đang chạy" : (e.status === "ok" ? "xong" : "lỗi")}</span>)}
         </div>}
         <div ref={end} />
       </section>
-      <div className="composer-area">{notice && <div className="notice" role="status">{notice}<button aria-label="Đóng thông báo" onClick={() => setNotice("")}><X size={14} /></button></div>}
+
+      <div className="composer-area">
+        {notice && <div className="notice" role="status">{notice}<button aria-label="Đóng thông báo" onClick={() => setNotice("")}><X size={14} /></button></div>}
         <div className="composer-options">
           <label className="check"><input type="checkbox" checked={grounded} onChange={e => setGrounded(e.target.checked)} disabled={busy} /> Yêu cầu trích nguồn tài liệu</label>
           <div className="route-select-wrapper">
@@ -210,6 +413,7 @@ export default function App() {
           </div>
           {streamingAudio && <button className="stop-audio" onClick={stopAudio}><Square size={12} /> Dừng âm thanh</button>}
         </div>
+
         {attachedImage && <div className="attached-preview-bar">
           <div className="attached-thumb">
             <img src={attachedImage} alt="Ảnh đính kèm" />
@@ -217,6 +421,7 @@ export default function App() {
           </div>
           <span className="small muted">Ảnh đã đính kèm (mô hình sẽ phân tích hình ảnh này)</span>
         </div>}
+
         <form className="composer" onSubmit={send}>
           <input ref={imageInput} type="file" accept="image/*" hidden onChange={handleImageSelect} />
           <button type="button" className="attach-btn" onClick={() => imageInput.current?.click()} title="Đính kèm ảnh" disabled={busy}><ImageIcon size={18} /></button>
