@@ -1,10 +1,31 @@
 # Chatbot Deep Agent VNPost
 
-Bộ mã nguồn chạy từ thư mục này, gồm backend FastAPI, Deep Agents điều phối sub-agent, RAG DOCX/TXT bằng LlamaIndex và giọng đọc ZeroTTS. Giao diện React đã được build sẵn trong bản ZIP, nên lần chạy đầu không cần Node.js.
+Bộ mã nguồn chạy từ thư mục này, gồm backend FastAPI, Deep Agents điều phối sub-agent, RAG DOCX/TXT bằng LlamaIndex và giọng đọc ZeroTTS. Router hai tầng giữ các câu tra cứu rõ ràng ở đường nhanh, còn câu mơ hồ được LLM phân loại ý định trước khi chọn Deep Agent. Giao diện React đã được build sẵn trong bản ZIP, nên lần chạy đầu không cần Node.js.
 
 **Bắt đầu bằng demo; chuyển sang LLM và embedding thật khi đã điền cấu hình.** Demo dùng chính thư viện Deep Agents/LlamaIndex với model kịch bản và embedding hash, để thử luồng chạy, giao nhiệm vụ và nguồn. Demo không phản ánh chất lượng suy luận của LLM thật. Dữ liệu trong `examples/` là giả lập.
 
-## Chạy nhanh trên Windows
+## Chạy nhanh trên Windows với Conda và GPU (khuyến nghị)
+
+Máy này có RTX 4060 Ti 16 GB. Cấu hình mặc định dùng CUDA cho embedding cục bộ
+`bkai-foundation-models/vietnamese-bi-encoder`; LLM vẫn chạy qua API nội bộ. Conda đã
+có tại `%USERPROFILE%\\miniconda3` dù chưa được thêm vào `PATH`.
+
+```powershell
+.\scripts\setup-conda.ps1
+C:\Users\Admin\miniconda3\condabin\conda.bat run -n vnpost-deepagent python scripts\verify_gpu.py
+C:\Users\Admin\miniconda3\condabin\conda.bat run -n vnpost-deepagent python scripts\check_services.py --live
+C:\Users\Admin\miniconda3\condabin\conda.bat run -n vnpost-deepagent python -m uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1 --no-proxy-headers
+```
+
+`.env` cục bộ đã được tạo, chứa URL/model LLM và khóa do bạn cung cấp; file này bị Git
+bỏ qua. Lần chạy đầu sẽ tải model embedding từ Hugging Face. Với model BKAI, văn bản
+được word-segment bằng PyVi trước khi embedding (yêu cầu của model card), vector có 768
+chiều, và chunk được đặt 220/32 để không vượt giới hạn 256 token của model.
+
+`scripts/check_services.py --live` là kiểm tra bắt buộc trước khi chạy Deep Agent: nó
+xác minh tool calling, vì chat văn bản đơn thuần không đủ cho `create_deep_agent`.
+
+## Chạy bằng virtualenv (CPU/demo)
 
 Cần Python 3.12. Mở PowerShell tại thư mục đã giải nén:
 

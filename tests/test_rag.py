@@ -118,6 +118,13 @@ def test_live_mode_rejects_demo_embedding_and_missing_keys(tmp_path):
                  api_keys_json='{"1234567890123456":"a"}', llm_api_key="dummy", llm_model="real")
 
 
+def test_bkai_chunk_respects_encoder_window(tmp_path):
+    with pytest.raises(ValueError, match="CHUNK_SIZE"):
+        Settings(_env_file=None, data_dir=tmp_path, embedding_provider="huggingface",
+                 local_embedding_model="bkai-foundation-models/vietnamese-bi-encoder",
+                 chunk_size=257, embedding_max_length=256)
+
+
 def test_metadata_filtering_global_and_session_isolation(settings):
     kb = KnowledgeBases(settings).for_tenant("test-tenant")
     # 1. Global system document

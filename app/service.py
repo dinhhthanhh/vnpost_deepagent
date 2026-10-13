@@ -10,7 +10,7 @@ from app.context import RunContext, current_run
 from app.fast_rag import FastRAGExecutor
 from app.providers import ProviderClients
 from app.rag import KnowledgeBases
-from app.router import classify_query
+from app.router import RouterDecision, classify_query_adaptive
 from app.schemas import ChatRequest, ChatResponse
 from app.store import Store
 from app.tts import TTSError, ZeroTTS
@@ -67,15 +67,19 @@ class ChatService:
         try:
             # Xác định tuyến xử lý: Fast Path (Direct RAG) vs Deep Agent Path
             if request.mode == "fast":
-                route, route_reason = "fast", "Đường nhanh (Fast Direct RAG) do người dùng yêu cầu"
+                decision = RouterDecision("fast", "Đường nhanh (Fast Direct RAG) do người dùng yêu cầu", "rule", 1.0)
             elif request.mode == "deep":
-                route, route_reason = "deep", "Đường sâu (Deep Multi-Agent) do người dùng yêu cầu"
+                decision = RouterDecision("deep", "Đường sâu (Deep Multi-Agent) do người dùng yêu cầu", "rule", 1.0)
             elif not self.settings.router_enabled:
-                route, route_reason = "deep", "Đường sâu (Deep Agent Harness)"
+                decision = RouterDecision("deep", "Đường sâu (Deep Agent Harness)", "rule", 1.0)
             else:
-                route, route_reason = classify_query(request.message, request.image)
+                decision = await classify_query_adaptive(
+                    self.settings, self.providers, request.message, request.image
+                )
+            route, route_reason = decision.route, decision.reason
 
-            run.event("router_decision", route=route, reason=route_reason)
+            run.event("router_decision", route=route, reason=route_reason,
+                      strategy=decision.strategy, confidence=decision.confidence)
 
             # Covers capacity queue, session queue and the complete reasoning run.
             async with asyncio.timeout(self.settings.request_timeout):

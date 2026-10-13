@@ -9,7 +9,10 @@ Thiết kế ưu tiên một luồng có thể kiểm tra: truy vấn → bằng
 ```mermaid
 flowchart TD
     U["Người dùng"] --> API["FastAPI và xác thực tenant"]
-    API --> H["Deep Agent điều phối"]
+    API --> RT["Router hai tầng"]
+    RT -->|Tra cứu rõ ràng| F["Fast RAG"]
+    RT -->|Phức tạp hoặc mơ hồ| H["Deep Agent điều phối"]
+    F --> KB
     H --> R["RAG agent"]
     H --> A["Analyst agent"]
     H --> W["Writer agent"]
@@ -26,6 +29,8 @@ flowchart TD
 
 Mỗi request có context riêng gồm tenant, nguồn, budget task và sự kiện tiến trình. Sub-agent có context nhiệm vụ độc lập; supervisor nhận kết quả gọn. Các công cụ của Deep Agent chỉ chạm vào filesystem ảo của StateBackend. File DOCX/TXT thật do lớp RAG đọc trong phạm vi tenant đã xác thực, không được mở bởi lệnh tùy ý từ LLM.
 
+Router dùng hai tầng. Tầng quy tắc nhận ngay hình ảnh, câu hỏi nhiều phần, so sánh, tính toán và yêu cầu soạn thảo; đồng thời chỉ cho Fast RAG với các mẫu tra cứu một ý có độ chắc chắn cao. Các câu còn lại được gọi một LLM router riêng với JSON nhỏ, nhiệt độ 0 và timeout ngắn. Nếu router lỗi, không trả JSON hợp lệ hoặc độ tin cậy dưới ngưỡng, hệ thống chọn Deep Agent thay vì đoán Fast RAG. Vì vậy router không chỉ dò từ khóa, nhưng cũng không tăng một lượt LLM cho những câu rõ ràng. Sự kiện `router_decision` ghi route, chiến lược và độ tin cậy để đánh giá sau pilot.
+
 | Thành phần | Đầu vào | Đầu ra | Công cụ hoặc cơ chế |
 |---|---|---|---|
 | Supervisor | Yêu cầu và hội thoại ngắn | Kế hoạch nhỏ, tổng hợp kết quả | `create_deep_agent`, `task`, `parallel_tasks` |
@@ -39,7 +44,7 @@ Trong registry, `general-purpose` được thay bằng writer có giới hạn c
 
 ## 2 Phân công và chạy đồng thời
 
-Supervisor có thể phát nhiều lời gọi `task` trong cùng lượt. Ngoài ra, `parallel_tasks` nhận danh sách `TaskSpec`, chạy các graph qua `asyncio.gather`, trả kết quả theo thứ tự đầu vào. Semaphore giới hạn tối đa ba chuyên viên đang chạy trong một request và budget mặc định tám lần giao nhiệm vụ. Timeout và giới hạn bước dừng vòng agent kéo dài.
+Supervisor có thể phát nhiều lời gọi `task` trong cùng lượt. Ngoài ra, `parallel_tasks` nhận danh sách `TaskSpec`, chạy các graph qua `asyncio.gather`, trả kết quả theo thứ tự đầu vào. Với câu hỏi Deep ở chế độ cần nguồn, backend thực hiện một lượt RAG bắt buộc trước supervisor rồi đưa excerpts có mã `[S...]` vào context; điều này không cho phép model bỏ qua retrieval và trả lời quy định nội bộ từ trí nhớ. Sau đó supervisor vẫn tự chọn các task analyst/writer và các RAG task bổ sung khi câu hỏi cần nhiều hướng tra cứu. Semaphore giới hạn tối đa ba chuyên viên đang chạy trong một request và budget mặc định tám lần giao nhiệm vụ. Timeout và giới hạn bước dừng vòng agent kéo dài.
 
 Ví dụ “So sánh điều kiện hoàn cước của dịch vụ A và B, rồi viết câu trả lời cho khách hàng” được xử lý thành các đợt:
 

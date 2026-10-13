@@ -29,6 +29,22 @@ from app.providers import ProviderClients
 STOPWORDS = set("va la cua co cho cac nhung mot trong voi duoc den tu thi nay do ve theo hay toi ban gi nao bao nhieu tai lieu xin hay the khong thong tin".split())
 
 
+def resolve_embedding_device(requested: str) -> str:
+    """Resolve the embedding device without silently accepting a missing requested GPU."""
+    try:
+        import torch
+    except ImportError as exc:
+        if requested == "cuda":
+            raise RuntimeError("EMBEDDING_DEVICE=cuda requires the PyTorch CUDA build.") from exc
+        return "cpu"
+    available = torch.cuda.is_available()
+    if requested == "auto":
+        return "cuda" if available else "cpu"
+    if requested == "cuda" and not available:
+        raise RuntimeError("EMBEDDING_DEVICE=cuda was requested but PyTorch cannot see an NVIDIA GPU.")
+    return requested
+
+
 def tokens(text: str) -> list[str]:
     text = unicodedata.normalize("NFKD", text.lower().replace("đ", "d"))
     text = "".join(c for c in text if not unicodedata.combining(c))
@@ -62,12 +78,23 @@ def make_embedding(settings: Settings, clients: ProviderClients | None = None) -
     if settings.embedding_provider == "hash":
         return DemoHashEmbedding()
     if settings.embedding_provider == "huggingface":
+        device = resolve_embedding_device(settings.embedding_device)
+        # This PhoBERT bi-encoder must receive Vietnamese text with word segmentation.
+        # Its published SentenceTransformers configuration is 256 tokens / 768 dimensions.
+        if settings.local_embedding_model.lower() == "bkai-foundation-models/vietnamese-bi-encoder":
+            from app.vietnamese_embedding import VietnameseBiEncoderEmbedding
+            return VietnameseBiEncoderEmbedding(model_name=settings.local_embedding_model,
+                                                device=device,
+                                                embed_batch_size=settings.embedding_batch_size,
+                                                max_length=settings.embedding_max_length)
+
         from llama_index.embeddings.huggingface import HuggingFaceEmbedding
         is_e5 = "e5" in settings.local_embedding_model.lower()
         return HuggingFaceEmbedding(model_name=settings.local_embedding_model,
                                    query_instruction="query: " if is_e5 else "",
                                    text_instruction="passage: " if is_e5 else "",
-                                   normalize=True, embed_batch_size=16)
+                                   normalize=True, device=device,
+                                   embed_batch_size=settings.embedding_batch_size)
     from llama_index.embeddings.openai import OpenAIEmbedding
     # model_name selects a custom engine on OpenAI-compatible embedding servers.
     return OpenAIEmbedding(model_name=settings.embedding_model,

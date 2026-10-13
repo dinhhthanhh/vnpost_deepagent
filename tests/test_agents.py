@@ -22,6 +22,7 @@ async def test_real_harness_parallel_rag_and_citations(settings):
     result = await svc.chat("a", ChatRequest(message="Hoàn cước có thời hạn bao lâu?"))
     assert result.grounding_status == "cited" and result.sources
     assert "7 ngày" in result.answer and "[S1]" in result.answer
+    assert any(e["type"] == "rag_prefetch_end" and e.get("status") == "ok" for e in result.events)
     starts = [e for e in result.events if e["type"] == "task_start"]
     ends = [e for e in result.events if e["type"] == "task_end"]
     assert len(starts) == 2 and max(e["elapsed_ms"] for e in starts) < min(e["elapsed_ms"] for e in ends)

@@ -57,6 +57,8 @@ async def test_live_provider_contract_with_real_clients(tmp_path):
             result = await svc.chat("a", ChatRequest(message="Thời hạn hoàn cước?"))
             assert result.grounding_status == "cited"
             assert len(result.sources) == 1 and result.sources[0].filename == "policy.txt"
-            assert calls["llm"] == 4 and calls["embedding"] == 2
+            # One query embedding is the mandatory RAG prefetch for grounded Deep mode;
+            # the delegated RAG task issues the second query embedding.
+            assert calls["llm"] == 4 and calls["embedding"] == 3
         finally:
             await svc.close()

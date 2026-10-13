@@ -12,6 +12,11 @@ class Settings(BaseSettings):
 
     demo_mode: bool | None = None
     router_enabled: bool = Field(False, validation_alias=AliasChoices("ROUTER_ENABLED", "router_enabled"))
+    semantic_router_enabled: bool = Field(True, validation_alias=AliasChoices("SEMANTIC_ROUTER_ENABLED", "semantic_router_enabled"))
+    router_model: str = Field("", validation_alias=AliasChoices("ROUTER_MODEL", "router_model"))
+    router_timeout_seconds: float = Field(8, gt=0, le=60, validation_alias=AliasChoices("ROUTER_TIMEOUT", "ROUTER_TIMEOUT_SECONDS"))
+    semantic_router_min_confidence: float = Field(0.72, ge=0.5, le=1)
+    router_max_characters: int = Field(1200, ge=100, le=12000)
     data_dir: Path = Path("data")
 
     # LLM Settings
@@ -33,6 +38,9 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_revision: str = "v1"
     local_embedding_model: str = "intfloat/multilingual-e5-small"
+    embedding_device: Literal["auto", "cuda", "cpu"] = "auto"
+    embedding_batch_size: int = Field(32, ge=1, le=256)
+    embedding_max_length: int = Field(256, ge=32, le=2048)
     chunk_size: int = Field(512, ge=128, le=2048)
     chunk_overlap: int = Field(64, ge=0)
     retrieval_top_k: int = Field(5, ge=1, le=15)
@@ -62,6 +70,10 @@ class Settings(BaseSettings):
     @property
     def request_timeout(self) -> float:
         return self.request_timeout_seconds
+
+    @property
+    def router_timeout(self) -> float:
+        return self.router_timeout_seconds
 
     @property
     def llm_timeout(self) -> float:
@@ -130,6 +142,12 @@ class Settings(BaseSettings):
             raise ValueError("API_KEYS_JSON must map keys of >=16 characters to safe tenant names")
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
+        if (self.embedding_provider == "huggingface"
+                and self.local_embedding_model.lower() == "bkai-foundation-models/vietnamese-bi-encoder"
+                and self.chunk_size > self.embedding_max_length):
+            raise ValueError(
+                "CHUNK_SIZE must not exceed EMBEDDING_MAX_LENGTH for vietnamese-bi-encoder"
+            )
         if self.demo_mode is False:
             if not keys:
                 raise ValueError("Live mode requires API_KEYS_JSON")

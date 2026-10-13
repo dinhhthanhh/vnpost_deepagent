@@ -1,0 +1,17 @@
+name: vnpost-deepagent
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  # Do not inherit the Anaconda "defaults" channels; this keeps setup independent
+  # of their separate Terms-of-Service acceptance flow.
+  - nodefaults
+dependencies:
+  - python=3.11
+  - pip
+  # CUDA runtime for the local Vietnamese embedding model.  The RTX 4060 Ti's
+  # installed NVIDIA driver supports this runtime.
+  - pytorch=2.5.1
+  - pytorch-cuda=12.4
+  - pip:
+      - -e .[dev,local-embedding]
