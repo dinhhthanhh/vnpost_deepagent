@@ -1,0 +1,3 @@
+{"id":"example-1","question":"Thời hạn hoàn cước?","expected_filename":"quy_trinh_demo.txt","expected_excerpt_contains":"7 ngày"}
+{"id":"example-2","question":"Hồ sơ hoàn cước gồm gì?","expected_filename":"quy_trinh_demo.txt","expected_excerpt_contains":"hóa đơn"}
+{"id":"example-3","question":"Quasar neutrino gamma?","no_answer":true}

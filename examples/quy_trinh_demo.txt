@@ -1,0 +1,10 @@
+DỮ LIỆU GIẢ LẬP PHỤC VỤ DEMO — KHÔNG PHẢI QUY ĐỊNH VNPOST
+
+Quy trình tra cứu bưu gửi mẫu
+Nhân viên tiếp nhận mã bưu gửi, kiểm tra trạng thái trên hệ thống và đối chiếu thời điểm cập nhật gần nhất. Nếu khách hàng chưa cung cấp mã bưu gửi thì hỏi lại mã trước khi tra cứu.
+
+Ví dụ giả lập về yêu cầu hoàn cước
+Với tài liệu mẫu này, thời hạn gửi yêu cầu hoàn cước là 7 ngày kể từ khi sự cố được xác nhận. Hồ sơ gồm mã bưu gửi, hóa đơn và mô tả sự cố.
+
+Ví dụ giả lập báo cáo doanh thu
+Doanh thu tháng A là 100 triệu đồng. Doanh thu tháng B là 120 triệu đồng. Hai số liệu này chỉ dùng để kiểm tra phép tính tăng trưởng 20%.

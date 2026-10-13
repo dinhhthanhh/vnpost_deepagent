@@ -1,0 +1,17 @@
+{
+  "version": "1.0.0",
+  "date": "2026-10-13",
+  "python_tests": 50,
+  "failures": 0,
+  "errors": 0,
+  "frontend_tests": 11,
+  "browser": {
+    "pageErrors": [],
+    "sources": 1,
+    "restoredSources": 1,
+    "answerContains7Days": true,
+    "horizontalOverflow": false
+  },
+  "providers": "mocked HTTP / offline scripted model; no real LLM weights or VNPost TTS calls",
+  "word_pages": 10
+}

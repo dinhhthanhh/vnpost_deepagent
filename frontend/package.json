@@ -1,0 +1,10 @@
+{
+  "name": "vnpost-agent-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": { "dev": "vite --host 127.0.0.1", "build": "vite build", "test": "node --test tests/*.test.js" },
+  "dependencies": { "react": "18.3.1", "react-dom": "18.3.1", "lucide-react": "0.475.0" },
+  "devDependencies": { "vite": "6.1.1", "@vitejs/plugin-react": "4.3.4" },
+  "overrides": { "rollup": "npm:@rollup/wasm-node@4.63.3" }
+}

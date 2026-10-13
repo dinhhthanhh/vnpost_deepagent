@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vnpost-deepagent-chatbot"
+version = "1.0.0"
+description = "Deep Agents harness + LlamaIndex document RAG + ZeroTTS"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "deepagents==0.7.24", "langchain-openai==1.7.1",
+  "llama-index-core==0.14.25", "llama-index-embeddings-openai==0.7.0",
+  "fastapi==0.143.0", "uvicorn==0.54.0", "httpx[socks]==0.28.1",
+  "pydantic-settings==2.15.0", "python-multipart==0.0.32",
+  "python-docx==1.2.0", "rank-bm25==0.2.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "respx==0.23.1", "ruff==0.17.0"]
+local-embedding = ["llama-index-embeddings-huggingface>=0.6,<0.8"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
