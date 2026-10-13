@@ -25,6 +25,11 @@ chiều, và chunk được đặt 220/32 để không vượt giới hạn 256 
 `scripts/check_services.py --live` là kiểm tra bắt buộc trước khi chạy Deep Agent: nó
 xác minh tool calling, vì chat văn bản đơn thuần không đủ cho `create_deep_agent`.
 
+RAG mặc định kết hợp BM25 và vector BKAI rồi dùng cross-encoder
+`BAAI/bge-reranker-v2-m3` trên GPU để xếp lại tối đa 15 đoạn ứng viên trước khi đưa
+5 nguồn tốt nhất vào LLM. Lần đầu chạy `verify_gpu.py` sẽ tải reranker; chỉ khởi động
+API sau khi script xác nhận passage liên quan được xếp đầu.
+
 ## Chạy bằng virtualenv (CPU/demo)
 
 Cần Python 3.12. Mở PowerShell tại thư mục đã giải nén:

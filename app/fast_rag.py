@@ -1,4 +1,5 @@
 import asyncio
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.agents import create_model
@@ -35,7 +36,8 @@ class FastRAGExecutor:
         hits = await asyncio.to_thread(kb.retrieve, message, top_k=self.settings.retrieval_top_k, session_id=run.session_id, user_id=run.user_id)
 
         sources = [run.cite(hit) for hit in hits]
-        run.event("retrieval", count=len(sources), revision=kb.snapshot.revision)
+        run.event("retrieval", count=len(sources), revision=kb.snapshot.revision,
+                  reranked=bool(hits and "reranker_score" in hits[0]))
 
         evidence_blocks = []
         for hit, src in zip(hits, sources):

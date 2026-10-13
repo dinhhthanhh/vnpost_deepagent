@@ -56,6 +56,7 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
     async def health():
         return {"status": "ok", "router_enabled": settings.router_enabled,
                 "embedding_provider": settings.embedding_provider,
+                "reranker_enabled": settings.reranker_enabled,
                 "tts_enabled": settings.tts_enabled,
                 "upstream_status": "not_probed", "version": "1.0.0"}
 

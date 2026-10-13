@@ -17,7 +17,7 @@ phân quyền nội bộ**.
 | --- | --- | --- |
 | Harness LangChain Deep Agents | Có | `create_deep_agent` ở `app/agents.py`; supervisor quản lý RAG, analyst và writer |
 | Chia task và chạy song song | Có | `task` của Deep Agents và `parallel_tasks` chạy các task độc lập bằng `asyncio.gather` |
-| RAG DOCX/TXT bằng LlamaIndex | Có | `app/rag.py`: nạp, chunk, vector retrieval, BM25 và RRF; Deep mode cần nguồn luôn prefetch evidence trước supervisor |
+| RAG DOCX/TXT bằng LlamaIndex | Có | `app/rag.py`: nạp, chunk, vector retrieval, BM25/RRF và rerank cross-encoder; Deep mode cần nguồn luôn prefetch evidence trước supervisor |
 | Đường nhanh | Có | `app/router.py` và `app/fast_rag.py` bỏ vòng supervisor cho câu hỏi đơn giản |
 | Giọng nói | Có | adapter ZeroTTS, WAV/streaming và chữ được trả trước TTS |
 | Embedding GPU tiếng Việt | Đã xác nhận | BKAI bi-encoder dùng CUDA, PyVi word segmentation, 768 chiều và chunk 220/32 |
@@ -34,9 +34,10 @@ phân quyền nội bộ**.
    Chưa được dùng cho tài liệu mật hay phân quyền phòng ban/cấp bậc. ACL phải được lấy từ SSO,
    lưu ở metadata đáng tin cậy và lọc ngay tại retriever/vector store.
 
-3. **Chất lượng retrieval chưa được chứng minh.** Chưa có reranker và chưa có bộ câu hỏi nghiệp
-   vụ có đáp án/nguồn. Tài liệu scan, OCR, PPTX/XLSX, versioning văn bản và queue ingestion là
-   các hạng mục sau pilot.
+3. **Chất lượng retrieval chưa được chứng minh.** Reranker GPU đã được tích hợp và kiểm tra
+   kỹ thuật, nhưng chưa có bộ câu hỏi nghiệp vụ có đáp án/nguồn để chứng minh nó cải thiện kết
+   quả VNPost. Tài liệu scan, OCR, PPTX/XLSX, versioning văn bản và queue ingestion là các hạng
+   mục sau pilot.
 
 4. **TTS chưa được kiểm tra với endpoint thực.** Adapter và giao diện đã có; `.env` đang để
    `TTS_ENABLED=false` đến khi có endpoint/khóa/voice được xác nhận. Lỗi TTS không làm mất câu

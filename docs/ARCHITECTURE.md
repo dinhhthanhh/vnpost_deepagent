@@ -34,7 +34,7 @@ Router dùng hai tầng. Tầng quy tắc nhận ngay hình ảnh, câu hỏi nh
 | Thành phần | Đầu vào | Đầu ra | Công cụ hoặc cơ chế |
 |---|---|---|---|
 | Supervisor | Yêu cầu và hội thoại ngắn | Kế hoạch nhỏ, tổng hợp kết quả | `create_deep_agent`, `task`, `parallel_tasks` |
-| RAG agent | Nhiệm vụ tra cứu | Bằng chứng, vị trí và `[S...]` | `search_documents`, LlamaIndex |
+| RAG agent | Nhiệm vụ tra cứu | Bằng chứng, vị trí và `[S...]` | Hybrid BM25/vector → cross-encoder reranker → LlamaIndex |
 | Analyst agent | Bằng chứng và số liệu đã có | So sánh, nhận xét, phép tính | Calculator AST giới hạn |
 | Writer agent | Bằng chứng/yêu cầu đã cho | Bản soạn hoặc tóm tắt | Model, không thêm công cụ tài liệu |
 | Kiểm tra nguồn | Đáp án và registry nguồn | Đáp án hoặc thông báo thiếu nguồn | Kiểm tra ID, lựa chọn đúng nguồn đã trích |
@@ -65,7 +65,7 @@ LlamaIndex `SentenceSplitter` tạo các node với kích thước khởi điể
 
 Sau khi nhập tài liệu, `VectorStoreIndex` tạo/lưu vector. Khi truy vấn, retriever LlamaIndex lấy ứng viên semantic và BM25Plus lấy ứng viên từ khóa đã chuẩn hóa dấu tiếng Việt. Reciprocal Rank Fusion kết hợp thứ hạng với hằng số 60; trả tối đa năm chunk mặc định. Threshold vector 0,35 là giá trị khởi điểm cần hiệu chỉnh, không phải xác suất đúng hay tiêu chuẩn chung cho mọi model.
 
-BM25 hỗ trợ mã dịch vụ và cụm từ chính xác; vector hỗ trợ cách diễn đạt khác. Việc bỏ dấu và tách từ ở bản pilot là cách đơn giản, có thể nhầm các cụm nhiều nghĩa. Kiểm thử câu paraphrase, mã bưu gửi và chính sách gần tên nhau trước khi quyết định thêm tokenizer tiếng Việt hoặc reranker.
+BM25 hỗ trợ mã dịch vụ và cụm từ chính xác; vector hỗ trợ cách diễn đạt khác. Sau RRF, tối đa 15 đoạn ứng viên được rerank bởi cross-encoder đa ngôn ngữ `BAAI/bge-reranker-v2-m3` trên GPU và chỉ năm đoạn đầu đi vào LLM. Reranker đọc cặp câu hỏi–đoạn thay vì vector độc lập, vì vậy cải thiện thứ hạng nhưng không thay thế bộ đánh giá nghiệp vụ. Điểm reranker không phải xác suất câu trả lời đúng. Kiểm thử câu paraphrase, mã bưu gửi và chính sách gần tên nhau trước khi thay model hoặc fine-tune.
 
 Cache embedding SQLite lưu hash và vector, tách khóa truy vấn/đoạn tài liệu và namespace model/endpoint/revision. Upload mới có thể tái dùng vector của các chunk không đổi. Index được rebuild trong snapshot riêng rồi chuyển con trỏ nguyên tử; truy vấn đọc snapshot cũ trong lúc nhập file. Nếu embedding lỗi, tài liệu mới không được công bố vào KB và file vừa ghi bị gỡ.
 
@@ -99,7 +99,7 @@ Không thể cam kết độ trễ thực của LLM/TTS từ test offline. Với
 
 Điểm tích hợp LLM là API OpenAI-compatible qua `ChatOpenAI`; bắt buộc tool calling. Có thể chạy dịch vụ nội bộ hoặc nhà cung cấp ngoài theo chính sách dữ liệu của đơn vị. `SUBAGENT_MODEL` cho phép dùng model nhẹ hơn cho các task chuyên môn. Model phải được kiểm tra về tool schema, tiếng Việt, các con số và khả năng tuân thủ nguồn trước khi sử dụng.
 
-Embedding có hai lựa chọn thật: server OpenAI-compatible hoặc HuggingFace cục bộ. Nên so sánh hai model embedding đa ngôn ngữ trên cùng dữ liệu; đo retrieval trước khi đo chatbot. Chỉ thêm reranker nếu giúp các câu hỏi khó và phần tăng độ trễ chấp nhận được. Reranker chưa nằm trong code 1.0.0.
+Embedding có hai lựa chọn thật: server OpenAI-compatible hoặc HuggingFace cục bộ. Reranker đã được tích hợp nhưng phải được so sánh với cấu hình hybrid-only trên cùng dữ liệu VNPost; chỉ giữ bật nếu tăng Recall@K/MRR hoặc độ đúng câu trả lời đủ bù phần tăng độ trễ. Không coi tên model đa ngôn ngữ là bằng chứng thay thế evaluation.
 
 Khi dùng một GPU cho LLM, embedding và ZeroTTS, cần đo tải chồng nhau trước khi tăng concurrency. Bản code không gắn chặt vào một cấu hình GPU. Tách ZeroTTS thành dịch vụ đã có sẵn giúp chatbot không phải nạp thêm model âm thanh vào process điều phối.
 
@@ -132,7 +132,7 @@ Bản 1.0.0 phù hợp một instance với giới hạn ban đầu 200 file, 10
 
 Khi tăng kho hoặc số người dùng, thay index RAM bằng Qdrant/pgvector hoặc vector store phù hợp qua LlamaIndex, thay catalog bằng PostgreSQL và quản lý khóa/cache/queue qua Redis. Tách worker ingestion để API upload trả job ID ngay; dùng upsert/delete theo document thay vì rebuild toàn snapshot. Thêm ACL vào filter retrieval trước khi nội dung tới LLM, không lọc sau khi đã trả lời.
 
-Các hạng mục này là hướng mở rộng, chưa nằm trong code hiện tại: OCR/PDF, reranker, ASR, SSO/RBAC, multi-instance, ingestion job queue, tracing token/cost tự động và kiểm tra entailment tự động. Chúng không phải điều kiện để chạy pilot DOCX/TXT với Deep Agents và TTS hiện có.
+Các hạng mục này là hướng mở rộng, chưa nằm trong code hiện tại: OCR cho PDF scan, ASR, SSO/RBAC, multi-instance, ingestion job queue, tracing token/cost tự động và kiểm tra entailment tự động. Chúng không phải điều kiện để chạy pilot DOCX/TXT với Deep Agents và TTS hiện có.
 
 ## 11 Đối chiếu code TTS ban đầu
 

@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(64, ge=0)
     retrieval_top_k: int = Field(5, ge=1, le=15)
     vector_min_similarity: float = Field(0.35, ge=0, le=1, validation_alias=AliasChoices("MIN_SIMILARITY", "VECTOR_MIN_SIMILARITY"))
+    reranker_enabled: bool = Field(False, validation_alias=AliasChoices("RERANKER_ENABLED", "reranker_enabled"))
+    reranker_model: str = Field("BAAI/bge-reranker-v2-m3", validation_alias=AliasChoices("RERANKER_MODEL", "reranker_model"))
+    reranker_device: Literal["auto", "cuda", "cpu"] = Field("auto", validation_alias=AliasChoices("RERANKER_DEVICE", "reranker_device"))
+    reranker_candidate_k: int = Field(15, ge=2, le=50, validation_alias=AliasChoices("RERANKER_CANDIDATE_K", "reranker_candidate_k"))
+    reranker_max_length: int = Field(512, ge=64, le=2048, validation_alias=AliasChoices("RERANKER_MAX_LENGTH", "reranker_max_length"))
+    reranker_batch_size: int = Field(12, ge=1, le=64, validation_alias=AliasChoices("RERANKER_BATCH_SIZE", "reranker_batch_size"))
     max_corpus_characters: int = Field(10_000_000, ge=10000, validation_alias=AliasChoices("MAX_CORPUS_CHARS", "MAX_CORPUS_CHARACTERS"))
     max_docx_expanded_bytes: int = Field(60_000_000, ge=1024, validation_alias=AliasChoices("MAX_DOCX_BYTES", "MAX_DOCX_EXPANDED_BYTES"))
     max_upload_bytes: int = Field(15_000_000, ge=1024)
@@ -142,6 +148,8 @@ class Settings(BaseSettings):
             raise ValueError("API_KEYS_JSON must map keys of >=16 characters to safe tenant names")
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("CHUNK_OVERLAP must be smaller than CHUNK_SIZE")
+        if self.reranker_candidate_k < self.retrieval_top_k:
+            raise ValueError("RERANKER_CANDIDATE_K must be at least RETRIEVAL_TOP_K")
         if (self.embedding_provider == "huggingface"
                 and self.local_embedding_model.lower() == "bkai-foundation-models/vietnamese-bi-encoder"
                 and self.chunk_size > self.embedding_max_length):

@@ -125,6 +125,24 @@ def test_bkai_chunk_respects_encoder_window(tmp_path):
                  chunk_size=257, embedding_max_length=256)
 
 
+def test_reranker_reorders_only_the_hybrid_candidate_pool(settings):
+    class StubReranker:
+        def rerank(self, _query, candidates):
+            reordered = list(reversed(candidates))
+            return [{**item, "reranker_score": float(index)} for index, item in enumerate(reordered, 1)]
+
+    rerank_settings = settings.model_copy(update={"reranker_enabled": True, "reranker_candidate_k": 6})
+    kb = KnowledgeBases(rerank_settings).for_tenant("a")
+    kb.ingest("first.txt", "Hoàn cước cần hóa đơn hợp lệ để xử lý.".encode())
+    kb.ingest("second.txt", "Hoàn cước được giải quyết trong 7 ngày làm việc.".encode())
+    kb.reranker = StubReranker()
+
+    hits = kb.retrieve("hoàn cước", top_k=2)
+
+    assert len(hits) == 2
+    assert all("reranker_score" in hit for hit in hits)
+
+
 def test_metadata_filtering_global_and_session_isolation(settings):
     kb = KnowledgeBases(settings).for_tenant("test-tenant")
     # 1. Global system document

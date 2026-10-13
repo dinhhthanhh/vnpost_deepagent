@@ -19,12 +19,18 @@ from llama_index.core import Document, StorageContext, VectorStoreIndex, load_in
 from llama_index.core.base.embeddings.base import BaseEmbedding
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import MetadataMode, TextNode
-from llama_index.core.vector_stores import FilterCondition, FilterOperator, MetadataFilter, MetadataFilters
+from llama_index.core.vector_stores import (
+    FilterCondition,
+    FilterOperator,
+    MetadataFilter,
+    MetadataFilters,
+)
 from rank_bm25 import BM25Plus
 
 from app.config import Settings
 from app.embedding_cache import CachedEmbedding
 from app.providers import ProviderClients
+from app.reranker import CrossEncoderReranker
 
 STOPWORDS = set("va la cua co cho cac nhung mot trong voi duoc den tu thi nay do ve theo hay toi ban gi nao bao nhieu tai lieu xin hay the khong thong tin".split())
 
@@ -221,6 +227,7 @@ class KnowledgeBase:
 
     def __init__(self, root: Path, settings: Settings, embedding: BaseEmbedding):
         self.root, self.settings, self.embedding = root, settings, embedding
+        self.reranker = CrossEncoderReranker(settings) if settings.reranker_enabled else None
         self.lock = threading.RLock()
         self.root.mkdir(parents=True, exist_ok=True)
         self.raw_dir = self.root / "documents"
@@ -359,6 +366,10 @@ class KnowledgeBase:
         if not snapshot.nodes:
             return []
         k = min(top_k or self.settings.retrieval_top_k, 15)
+        candidate_k = k * 3
+        if self.reranker:
+            candidate_k = max(candidate_k, self.settings.reranker_candidate_k)
+        candidate_k = min(candidate_k, 50)
         query_terms = set(tokens(query))
         if not query_terms:
             return []
@@ -375,7 +386,7 @@ class KnowledgeBase:
         scores = snapshot.bm25.get_scores(list(query_terms))
         lexical = sorted((i for i, terms in enumerate(snapshot.token_sets)
                           if (terms & query_terms) and matches_scope(snapshot.nodes[i].metadata)),
-                         key=lambda i: scores[i], reverse=True)[:k * 3]
+                         key=lambda i: scores[i], reverse=True)[:candidate_k]
 
         # LlamaIndex MetadataFilters: is_global == 'true' OR session_id == current_session
         filter_list = [MetadataFilter(key="is_global", value="true", operator=FilterOperator.EQ)]
@@ -386,7 +397,7 @@ class KnowledgeBase:
         filters = MetadataFilters(filters=filter_list, condition=FilterCondition.OR)
 
         # LlamaIndex is responsible for actual embedding/vector retrieval with metadata filters
-        vector = snapshot.index.as_retriever(similarity_top_k=k * 3, filters=filters).retrieve(query)
+        vector = snapshot.index.as_retriever(similarity_top_k=candidate_k, filters=filters).retrieve(query)
 
         fused, by_id = {}, {n.node_id: n for n in snapshot.nodes}
         for rank, i in enumerate(lexical, 1):
@@ -395,18 +406,20 @@ class KnowledgeBase:
         for rank, hit in enumerate(vector, 1):
             if (hit.score or 0) >= self.settings.vector_min_similarity:
                 fused[hit.node.node_id] = fused.get(hit.node.node_id, 0) + 1 / (60 + rank)
-        result = []
-        for node_id in sorted(fused, key=fused.get, reverse=True)[:k]:
+        candidates = []
+        for node_id in sorted(fused, key=fused.get, reverse=True)[:candidate_k]:
             node = by_id[node_id]
             if not matches_scope(node.metadata):
                 continue
-            result.append({"document_id": node.metadata["document_id"],
-                           "filename": node.metadata["filename"], "location": node.metadata["location"],
-                           "chunk_id": node_id, "excerpt": node.get_content(metadata_mode=MetadataMode.NONE),
-                           "retrieval_score": round(fused[node_id], 6),
-                           "is_global": node.metadata.get("is_global") in (True, "true"),
-                           "session_id": node.metadata.get("session_id") or None})
-        return result
+            candidates.append({"document_id": node.metadata["document_id"],
+                               "filename": node.metadata["filename"], "location": node.metadata["location"],
+                               "chunk_id": node_id, "excerpt": node.get_content(metadata_mode=MetadataMode.NONE),
+                               "retrieval_score": round(fused[node_id], 6),
+                               "is_global": node.metadata.get("is_global") in (True, "true"),
+                               "session_id": node.metadata.get("session_id") or None})
+        if self.reranker:
+            candidates = self.reranker.rerank(query, candidates)
+        return candidates[:k]
 
 
 class KnowledgeBases:
