@@ -35,7 +35,8 @@ export default function App() {
 
   async function loadWorkspace(activeKey = key, restoreHistory = false) {
     try {
-      const [docs, voiceResponse] = await Promise.all([request("/api/documents", activeKey).then(r => r.json()), request("/api/tts/voices", activeKey).then(r => r.json()).catch(() => ({ voices: [] }))]);
+      const docsUrl = session ? `/api/documents?session_id=${session}` : "/api/documents";
+      const [docs, voiceResponse] = await Promise.all([request(docsUrl, activeKey).then(r => r.json()), request("/api/tts/voices", activeKey).then(r => r.json()).catch(() => ({ voices: [] }))]);
       setDocuments(docs.documents); setVoices(voiceResponse.voices || []); setNotice("");
       if (restoreHistory && session) {
         const data = await request(`/api/sessions/${session}`, activeKey).then(r => r.json());
@@ -43,7 +44,7 @@ export default function App() {
       }
     } catch (e) { setNotice(e.message); }
   }
-  useEffect(() => { loadWorkspace(key, true); }, [key]);
+  useEffect(() => { loadWorkspace(key, true); }, [key, session]);
 
   async function newChat() {
     abort.current?.abort(); stopAudio(); releaseBlobs();
@@ -90,7 +91,9 @@ export default function App() {
     try {
       for (const file of files) {
         const body = new FormData(); body.append("file", file);
-        await request("/api/documents", key, { method: "POST", body });
+        if (session) body.append("session_id", session);
+        const uploadUrl = session ? `/api/documents?session_id=${session}` : "/api/documents";
+        await request(uploadUrl, key, { method: "POST", body });
       }
       await loadWorkspace();
     } catch (e) { setNotice(e.message); }
@@ -164,7 +167,7 @@ export default function App() {
         <button className="upload" disabled={uploading || busy} onClick={() => uploadInput.current.click()}><Upload size={17} /> {uploading ? "Đang lập chỉ mục…" : "Thêm tài liệu"}</button>
         <input ref={uploadInput} type="file" accept=".docx,.txt,.pdf" multiple hidden onChange={e => uploadFiles(Array.from(e.target.files))} />
         <p className="small muted">Word (.docx), PDF (.pdf) và văn bản UTF-8 (.txt)</p>
-        <div className="document-list">{documents.map(doc => <div className="document" key={doc.id}><FileText size={15} /><span title={doc.filename}>{doc.filename}</span><button aria-label={`Xóa ${doc.filename}`} disabled={busy || uploading} onClick={() => deleteDoc(doc)}><X size={13} /></button></div>)}
+        <div className="document-list">{documents.map(doc => <div className="document" key={doc.id}><FileText size={15} /><span title={doc.filename}>{doc.filename}</span><span className="doc-scope-tag" style={{ fontSize: "9px", padding: "1px 5px", borderRadius: "4px", background: doc.is_global ? "#1f3c60" : "#4a3b10", color: doc.is_global ? "#8cb4e2" : "#f5d061", flexShrink: 0, margin: "0 4px" }}>{doc.is_global ? "Hệ thống" : "Cá nhân"}</span><button aria-label={`Xóa ${doc.filename}`} disabled={busy || uploading} onClick={() => deleteDoc(doc)}><X size={13} /></button></div>)}
           {!documents.length && <div className="empty-docs">Thêm tài liệu để bắt đầu hỏi đáp có nguồn.</div>}</div>
       </div>
       <div className="sidebar-section"><div className="section-label">GIỌNG ĐỌC</div><select aria-label="Giọng đọc" value={voiceName} onChange={e => setVoiceName(e.target.value)}>{voices.length ? voices.map(v => <option key={v.name} value={v.name}>{v.name}</option>) : <option value="maichi">maichi</option>}</select>

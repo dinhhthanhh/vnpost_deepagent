@@ -106,21 +106,43 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.get("/api/documents")
-    async def documents(scope=Depends(tenant), svc=Depends(get_service)):
+    async def documents(session_id: str | None = None, scope=Depends(tenant), svc=Depends(get_service)):
         kb = await asyncio.to_thread(svc.knowledge.for_tenant, scope)
         snapshot = kb.snapshot
-        return {"documents": [{k: v for k, v in r.items() if k != "stored_name"} for r in snapshot.records],
+        records = snapshot.records
+        if session_id:
+            records = [r for r in records if r.get("is_global", True) or str(r.get("session_id", "")) == str(session_id)]
+        return {"documents": [{k: v for k, v in r.items() if k != "stored_name"} for r in records],
                 "chunks": len(snapshot.nodes), "revision": snapshot.revision}
 
     @app.post("/api/documents", status_code=201)
-    async def upload(file: UploadFile, scope=Depends(tenant), svc=Depends(get_service)):
+    async def upload(request: Request, file: UploadFile, scope=Depends(tenant), svc=Depends(get_service)):
         try:
             raw = await file.read(settings.max_upload_bytes + 1)
             if len(raw) > settings.max_upload_bytes:
                 raise HTTPException(413, "File vượt giới hạn upload")
+            query_params = request.query_params
+            form_data = {}
+            try:
+                form_data = await request.form()
+            except Exception:
+                pass
+            session_id = form_data.get("session_id") or query_params.get("session_id")
+            user_id = form_data.get("user_id") or query_params.get("user_id")
+            is_global_val = form_data.get("is_global") or query_params.get("is_global")
+            is_global = None
+            if is_global_val is not None:
+                is_global = str(is_global_val).lower() in ("true", "1")
             async with svc.ingest_slots:
                 kb = await asyncio.to_thread(svc.knowledge.for_tenant, scope)
-                result = await asyncio.to_thread(kb.ingest, file.filename or "untitled.txt", raw)
+                result = await asyncio.to_thread(
+                    kb.ingest,
+                    file.filename or "untitled.txt",
+                    raw,
+                    is_global=is_global,
+                    session_id=session_id,
+                    user_id=user_id,
+                )
             return {k: v for k, v in result.items() if k != "stored_name"}
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc

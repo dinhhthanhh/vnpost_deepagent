@@ -12,6 +12,8 @@ class RunContext:
     request_id: str
     max_parallel: int
     max_tasks: int
+    session_id: str | None = None
+    user_id: str | None = None
     events: list[dict] = field(default_factory=list)
     sources: dict[str, Source] = field(default_factory=dict)
     chunk_citations: dict[str, str] = field(default_factory=dict)

@@ -51,7 +51,7 @@ def main():
             else:
                 raw = fetch_google_drive_pdf(source)
             
-            result = kb.ingest(filename, raw)
+            result = kb.ingest(filename, raw, is_global=True)
             print(f"Successfully ingested {filename}: {len(raw)} bytes, duplicate={result.get('duplicate', False)}")
         except Exception as e:
             print(f"Error ingesting {filename}: {e}")

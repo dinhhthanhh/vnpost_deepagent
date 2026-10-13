@@ -116,3 +116,30 @@ def test_live_mode_rejects_demo_embedding_and_missing_keys(tmp_path):
     with pytest.raises(ValueError, match="demo-only"):
         Settings(_env_file=None, demo_mode=False, data_dir=tmp_path,
                  api_keys_json='{"1234567890123456":"a"}', llm_api_key="dummy", llm_model="real")
+
+
+def test_metadata_filtering_global_and_session_isolation(settings):
+    kb = KnowledgeBases(settings).for_tenant("test-tenant")
+    # 1. Global system document
+    kb.ingest("global_policy.txt", "Thời hạn hoàn cước hệ thống VNPost là 7 ngày.".encode(), is_global=True)
+    # 2. Session A personal document
+    kb.ingest("user_a_contract.txt", "Hợp đồng riêng khách hàng A mã số HDA-100.".encode(), is_global=False, session_id="session-a")
+    # 3. Session B personal document
+    kb.ingest("user_b_contract.txt", "Hợp đồng riêng khách hàng B mã số HDB-200.".encode(), is_global=False, session_id="session-b")
+
+    # Session A query should retrieve global doc and session A doc, but NEVER session B doc
+    hits_a_global = kb.retrieve("hoàn cước", session_id="session-a")
+    assert any(h["filename"] == "global_policy.txt" for h in hits_a_global)
+
+    hits_a_contract = kb.retrieve("Hợp đồng", session_id="session-a")
+    assert any(h["filename"] == "user_a_contract.txt" for h in hits_a_contract)
+    assert not any(h["filename"] == "user_b_contract.txt" for h in hits_a_contract)
+
+    # Session B query should retrieve global doc and session B doc, but NEVER session A doc
+    hits_b_contract = kb.retrieve("Hợp đồng", session_id="session-b")
+    assert any(h["filename"] == "user_b_contract.txt" for h in hits_b_contract)
+    assert not any(h["filename"] == "user_a_contract.txt" for h in hits_b_contract)
+
+    # Anonymous / General query should not retrieve private session docs
+    hits_general = kb.retrieve("Hợp đồng", session_id=None)
+    assert not any(h["filename"] in ("user_a_contract.txt", "user_b_contract.txt") for h in hits_general)

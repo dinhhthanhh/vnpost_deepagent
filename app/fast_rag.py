@@ -32,7 +32,7 @@ class FastRAGExecutor:
     async def execute(self, tenant: str, message: str, history: list[dict], grounded: bool) -> str:
         run = current_run.get()
         kb = await asyncio.to_thread(self.knowledge.for_tenant, tenant)
-        hits = await asyncio.to_thread(kb.retrieve, message, top_k=self.settings.retrieval_top_k)
+        hits = await asyncio.to_thread(kb.retrieve, message, top_k=self.settings.retrieval_top_k, session_id=run.session_id, user_id=run.user_id)
 
         sources = [run.cite(hit) for hit in hits]
         run.event("retrieval", count=len(sources), revision=kb.snapshot.revision)

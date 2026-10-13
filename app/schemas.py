@@ -41,6 +41,8 @@ class Source(BaseModel):
     chunk_id: str
     excerpt: str
     retrieval_score: float
+    is_global: bool = True
+    session_id: str | None = None
 
 
 class TaskSpec(BaseModel):

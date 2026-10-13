@@ -61,7 +61,7 @@ class ChatService:
         started = time.monotonic()
         request_id, session_id = uuid.uuid4().hex, str(request.session_id or uuid.uuid4())
         run = RunContext(tenant, request_id, self.settings.max_subagents,
-                         self.settings.max_tasks, queue=queue)
+                         self.settings.max_tasks, session_id=session_id, queue=queue)
         run.event("start", request_id=request_id, session_id=session_id)
         token = current_run.set(run)
         try:
