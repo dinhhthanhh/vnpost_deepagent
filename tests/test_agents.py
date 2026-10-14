@@ -19,10 +19,12 @@ from app.service import ChatService
 async def test_real_harness_parallel_rag_and_citations(settings):
     svc = ChatService(settings)
     svc.knowledge.for_tenant("a").ingest("rules.txt", "Hoàn cước có thời hạn 7 ngày.".encode())
-    result = await svc.chat("a", ChatRequest(message="Hoàn cước có thời hạn bao lâu?"))
+    result = await svc.chat("a", ChatRequest(message="Hoàn cước có thời hạn bao lâu?", mode="deep"))
     assert result.grounding_status == "cited" and result.sources
     assert "7 ngày" in result.answer and "[S1]" in result.answer
     assert any(e["type"] == "rag_prefetch_end" and e.get("status") == "ok" for e in result.events)
+    assert sum(e["type"] == "retrieval" for e in result.events) == 1
+    assert any(e["type"] == "retrieval_cache_hit" for e in result.events)
     starts = [e for e in result.events if e["type"] == "task_start"]
     ends = [e for e in result.events if e["type"] == "task_end"]
     assert len(starts) == 2 and max(e["elapsed_ms"] for e in starts) < min(e["elapsed_ms"] for e in ends)
@@ -62,7 +64,7 @@ async def test_native_deepagents_task_tool_also_runs_parallel(settings):
 async def test_task_budget_and_semaphore(settings):
     settings = settings.model_copy(update={"max_delegated_tasks": 1, "max_parallel_subagents": 1})
     svc = ChatService(settings)
-    result = await svc.chat("a", ChatRequest(message="Tìm thời hạn hoàn cước"))
+    result = await svc.chat("a", ChatRequest(message="Tìm thời hạn hoàn cước", mode="deep"))
     assert sum(e["type"] == "task_start" for e in result.events) == 1
     assert any(e["type"] == "task_rejected" for e in result.events)
     await svc.close()
@@ -75,7 +77,7 @@ async def test_single_subagent_failure_preserves_successful_results(settings):
         async def ainvoke(self, *args, **kwargs):
             raise RuntimeError("secret-provider-data")
     svc.harness.subagents["writer-agent"] = svc.harness._tracked_agent("writer-agent", Failing())
-    result = await svc.chat("a", ChatRequest(message="Hoàn cước bao lâu?"))
+    result = await svc.chat("a", ChatRequest(message="Hoàn cước bao lâu?", mode="deep"))
     assert "7 ngày" in result.answer and "secret-provider-data" not in str(result)
     assert any(e.get("status") == "error" for e in result.events)
     await svc.close()
@@ -85,8 +87,8 @@ async def test_parallel_requests_do_not_mix_tenant_sources(settings):
     svc = ChatService(settings)
     svc.knowledge.for_tenant("a").ingest("a.txt", "Thời hạn hoàn cước là 7 ngày.".encode())
     svc.knowledge.for_tenant("b").ingest("b.txt", "Thời hạn hoàn cước là 9 ngày.".encode())
-    a, b = await asyncio.gather(svc.chat("a", ChatRequest(message="Hoàn cước bao lâu?")),
-                               svc.chat("b", ChatRequest(message="Hoàn cước bao lâu?")))
+    a, b = await asyncio.gather(svc.chat("a", ChatRequest(message="Hoàn cước bao lâu?", mode="deep")),
+                               svc.chat("b", ChatRequest(message="Hoàn cước bao lâu?", mode="deep")))
     assert {s.filename for s in a.sources} == {"a.txt"}
     assert {s.filename for s in b.sources} == {"b.txt"}
     assert "9 ngày" not in a.answer and "7 ngày" not in b.answer
@@ -96,8 +98,8 @@ async def test_parallel_requests_do_not_mix_tenant_sources(settings):
 async def test_session_serialization_preserves_both_turns(settings):
     svc = ChatService(settings)
     session_id = uuid.uuid4()
-    await asyncio.gather(svc.chat("a", ChatRequest(session_id=session_id, message="12 + 8", grounded=False)),
-                         svc.chat("a", ChatRequest(session_id=session_id, message="20 - 5", grounded=False)))
+    await asyncio.gather(svc.chat("a", ChatRequest(session_id=session_id, message="12 + 8", grounded=False, mode="deep")),
+                         svc.chat("a", ChatRequest(session_id=session_id, message="20 - 5", grounded=False, mode="deep")))
     history = svc.store.history("a", str(session_id))
     assert len(history) == 4 and "20" in history[1]["content"] and "15" in history[3]["content"]
     assert not svc.session_locks
@@ -111,7 +113,7 @@ async def test_timeout_cancels_run_and_does_not_commit_history(settings, monkeyp
     monkeypatch.setattr(svc.harness, "invoke", slow)
     session = uuid.uuid4()
     with pytest.raises(TimeoutError):
-        await svc.chat("a", ChatRequest(message="query", session_id=session))
+        await svc.chat("a", ChatRequest(message="query", session_id=session, mode="deep"))
     assert not svc.store.history("a", str(session)) and not svc.session_locks
     await svc.close()
 

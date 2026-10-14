@@ -6,6 +6,7 @@ OpenAPI tương tác: `http://127.0.0.1:8080/docs`. Tất cả endpoint dữ li�
 |---|---|---|
 | GET | `/api/health` | Liveness và chế độ hiện tại |
 | POST | `/api/documents` | Multipart `file`, lập chỉ mục DOCX/TXT |
+| POST | `/api/documents/verified` | Admin-only verified public evidence from configured domain |
 | GET | `/api/documents` | Danh sách file, chunk, revision |
 | DELETE | `/api/documents/{sha256}` | Xóa file của tenant, rebuild snapshot |
 | POST | `/api/chat` | Trả JSON hoàn chỉnh; có thể kèm audio URL |
@@ -16,6 +17,12 @@ OpenAPI tương tác: `http://127.0.0.1:8080/docs`. Tất cả endpoint dữ li�
 | POST | `/api/tts` | Tạo WAV, trả URL được bảo vệ |
 | POST | `/api/tts/stream` | Proxy streaming WAV từ ZeroTTS |
 | GET | `/api/audio/{id}` | Tải WAV; kiểm tra tenant và TTL |
+
+## Verified evidence
+
+`POST /api/documents` always stores a file as `user_upload`; it can be searched but never cited as proof. For public evidence, use `POST /api/documents/verified` with both `X-API-Key` and `X-Source-Admin-Key`.
+
+The request requires `source_url=https://vietnampost.vn/...`; other hosts and non-HTTPS URLs are rejected. Configure `TRUSTED_INGEST_KEY` and keep `OFFICIAL_SOURCE_DOMAINS=vietnampost.vn`.
 
 ## Ví dụ chat
 

@@ -1,19 +1,34 @@
 import asyncio
 import logging
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
 
 from app.agents import AgentHarness, validate_answer
+from app.calculator import safe_calculate
 from app.config import Settings
 from app.context import RunContext, current_run
-from app.fast_rag import FastRAGExecutor
+from app.fast_rag import FastRAGExecutor, PreparedRAG
 from app.providers import ProviderClients
 from app.rag import KnowledgeBases
-from app.router import RouterDecision, classify_query_adaptive
+from app.router import RouterDecision, classify_query_adaptive, rule_based_decision
 from app.schemas import ChatRequest, ChatResponse
 from app.store import Store
 from app.tts import TTSError, ZeroTTS
+
+
+_ARITHMETIC = re.compile(r"^[0-9+*/%().\s-]+$")
+
+
+def _simple_calculation(message: str) -> float | int | None:
+    expression = message.strip()
+    if not expression or not _ARITHMETIC.fullmatch(expression) or not re.search(r"[+*/%-]", expression):
+        return None
+    try:
+        return safe_calculate(expression)
+    except (SyntaxError, ValueError):
+        return None
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +72,37 @@ class ChatService:
         await asyncio.to_thread(self.store.prune_audio, self.settings.audio_ttl_seconds)
         return "/api/audio/" + audio_id
 
+    async def _deep_or_fallback(
+        self,
+        request: ChatRequest,
+        history: list[dict],
+        prepared: PreparedRAG | None,
+        route_reason: str,
+    ) -> tuple[str, str, str]:
+        """Bound Deep Agent to one budget and return Tier 1 on timeout.
+
+        ``prepared`` is populated when a Tier-1 source gate escalates, avoiding
+        a second identical retrieval before the deep graph starts.
+        """
+        run = current_run.get()
+        try:
+            async with asyncio.timeout(self.settings.deep_timeout):
+                raw = await self.harness.invoke(
+                    request.message.strip(), history, request.grounded, request.image,
+                    prefetched_evidence=prepared.evidence_json if prepared and request.grounded else None,
+                )
+            return raw, "deep", route_reason
+        except TimeoutError:
+            run.event("deep_timeout", timeout_seconds=self.settings.deep_timeout, fallback="fast")
+            if prepared is None:
+                prepared = await self.fast_rag.prepare(
+                    run.tenant, request.message.strip(), history, request.grounded,
+                )
+            raw = await self.fast_rag.execute(
+                run.tenant, request.message.strip(), history, request.grounded, prepared=prepared,
+            )
+            return raw, "fast_fallback", route_reason + "; hết ngân sách deep, trả lời theo Tier 1"
+
     async def chat(self, tenant: str, request: ChatRequest, queue: asyncio.Queue | None = None) -> ChatResponse:
         started = time.monotonic()
         request_id, session_id = uuid.uuid4().hex, str(request.session_id or uuid.uuid4())
@@ -65,48 +111,95 @@ class ChatService:
         run.event("start", request_id=request_id, session_id=session_id)
         token = current_run.set(run)
         try:
-            # Xác định tuyến xử lý: Fast Path (Direct RAG) vs Deep Agent Path
-            if request.mode == "fast":
-                decision = RouterDecision("fast", "Đường nhanh (Fast Direct RAG) do người dùng yêu cầu", "rule", 1.0)
+            calculation = _simple_calculation(request.message) if not request.image else None
+            if calculation is not None:
+                decision = RouterDecision("fast", "Phép tính số học đơn giản", "rule", 1.0, tier=0)
+            elif request.mode == "fast":
+                decision = RouterDecision("fast", "Đường nhanh do người dùng yêu cầu", "rule", 1.0, tier=1)
             elif request.mode == "deep":
-                decision = RouterDecision("deep", "Đường sâu (Deep Multi-Agent) do người dùng yêu cầu", "rule", 1.0)
-            elif not self.settings.router_enabled:
-                decision = RouterDecision("deep", "Đường sâu (Deep Agent Harness)", "rule", 1.0)
-            else:
+                decision = RouterDecision("deep", "Đường sâu do người dùng yêu cầu", "rule", 1.0, tier=2)
+            elif self.settings.router_enabled:
+                # This is rules/retrieval-first by default; its optional LLM experiment
+                # remains disabled unless LLM_ROUTER_ENABLED=true.
                 decision = await classify_query_adaptive(
-                    self.settings, self.providers, request.message, request.image
+                    self.settings, self.providers, request.message, request.image,
                 )
-            route, route_reason = decision.route, decision.reason
+            else:
+                decision = rule_based_decision(
+                    request.message, request.image, max_characters=self.settings.router_max_characters,
+                )
 
-            run.event("router_decision", route=route, reason=route_reason,
+            if calculation is not None:
+                route, route_reason = "calculator", "deterministic arithmetic"
+            else:
+                route, route_reason = decision.route, decision.reason
+            run.event("router_decision", route=route, tier=decision.tier, reason=route_reason,
                       strategy=decision.strategy, confidence=decision.confidence)
 
-            # Covers capacity queue, session queue and the complete reasoning run.
             async with asyncio.timeout(self.settings.request_timeout):
                 async with self.active, self.session_lock(tenant, session_id):
                     history = await asyncio.to_thread(self.store.history, tenant, session_id)
+                    prepared: PreparedRAG | None = None
+                    # Tier 1 is the default. Its evidence is what decides a low-evidence
+                    # escalation, instead of an LLM classifier guessing from wording.
                     if route == "fast":
-                        run.event("planning", message=f"Đường nhanh (Direct RAG): {route_reason}")
-                        raw = await self.fast_rag.execute(tenant, request.message.strip(), history, request.grounded)
-                    else:
-                        run.event("planning", message=f"Đường sâu (Deep Agent): {route_reason}")
-                        raw = await self.harness.invoke(request.message.strip(), history, request.grounded, request.image)
-                    answer, sources, status, warnings = validate_answer(raw, run.sources, request.grounded, request.message)
-                    await asyncio.to_thread(self.store.save_turn, tenant, session_id,
-                                            request.message, answer, self.settings.max_history,
-                                            {"request_id": request_id, "sources": [s.model_dump() for s in sources],
-                                             "grounding_status": status, "route": route, "route_reason": route_reason,
-                                             "elapsed_ms": round((time.monotonic() - started) * 1000)})
+                        run.event("planning", message=f"Tier 1 — Direct RAG: {route_reason}")
+                        prepared = await self.fast_rag.prepare(
+                            tenant, request.message.strip(), history, request.grounded,
+                        )
+                        if request.mode == "auto" and request.grounded and not prepared.has_sufficient_evidence(self.settings.fast_min_sources, self.settings.fast_min_retrieval_score):
+                            route = "deep"
+                            route_reason += "; cổng nguồn Tier 1 không đủ bằng chứng"
+                            run.event("source_gate", status="escalate", source_count=prepared.source_count,
+                                      required=self.settings.fast_min_sources, top_retrieval_score=prepared.top_retrieval_score, min_retrieval_score=self.settings.fast_min_retrieval_score)
+                            run.event("route_escalated", from_tier=1, to_tier=2, reason="insufficient_evidence")
+                        else:
+                            run.event("source_gate", status="pass", source_count=prepared.source_count,
+                                      required=self.settings.fast_min_sources, top_retrieval_score=prepared.top_retrieval_score, min_retrieval_score=self.settings.fast_min_retrieval_score)
+
+                    if route == "calculator":
+                        raw = f"Kết quả: {calculation}"
+                        answer, sources, status, warnings = raw, [], "calculated", []
+                    elif route == "fast":
+                        if queue is not None:
+                            parts = []
+                            async for delta in self.fast_rag.stream(
+                                tenant, request.message.strip(), history, request.grounded, prepared=prepared,
+                            ):
+                                parts.append(delta)
+                                run.event("token", delta=delta)
+                            raw = "".join(parts)
+                        else:
+                            raw = await self.fast_rag.execute(
+                                tenant, request.message.strip(), history, request.grounded, prepared=prepared,
+                            )
+                    elif route != "calculator":
+                        run.event("planning", message=f"Tier {decision.tier if decision.tier > 1 else 2} — Deep Agent: {route_reason}")
+                        raw, route, route_reason = await self._deep_or_fallback(
+                            request, history, prepared, route_reason,
+                        )
+
+                    if route != "calculator":
+                        answer, sources, status, warnings = validate_answer(
+                            raw, run.sources, request.grounded, request.message,
+                        )
+                    await asyncio.to_thread(
+                        self.store.save_turn, tenant, session_id, request.message, answer,
+                        self.settings.max_history,
+                        {"request_id": request_id, "sources": [s.model_dump() for s in sources],
+                         "grounding_status": status, "route": route, "route_reason": route_reason,
+                         "elapsed_ms": round((time.monotonic() - started) * 1000)},
+                    )
             result = ChatResponse(request_id=request_id, session_id=session_id, answer=answer,
                                   sources=sources, grounding_status=status,
                                   route=route, route_reason=route_reason,
                                   elapsed_ms=round((time.monotonic() - started) * 1000),
                                   events=run.events, warnings=warnings)
-            # Save and deliver validated text BEFORE awaiting TTS.
+            # Deliver validated text before awaiting an optional, slow TTS synthesis.
             await asyncio.to_thread(self.store.save_reply, tenant, request_id, result.model_dump())
             if queue is not None:
                 queue.put_nowait({"type": "answer", "data": result.model_dump()})
-            if request.voice:
+            if request.voice and not request.stream_voice:
                 run.event("speech_start")
                 try:
                     result.audio_url = await self.save_speech(tenant, answer, request.voice_name)

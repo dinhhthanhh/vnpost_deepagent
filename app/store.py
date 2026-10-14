@@ -36,13 +36,14 @@ class Store:
 
     def save_turn(self, tenant: str, session_id: str, user: str, answer: str, max_messages: int, details: dict | None = None):
         history = self.history(tenant, session_id)
-        history.extend([{"role": "user", "content": user},
-                        {"role": "assistant", "content": answer, **(details or {})}])
+        now = time.time()
+        history.extend([{"role": "user", "content": user, "created": now},
+                        {"role": "assistant", "content": answer, "created": now, **(details or {})}])
         # Preserve complete user/assistant pairs even if the configured limit is odd.
         limit = max_messages // 2 * 2
         with self.connect() as db:
             db.execute("INSERT OR REPLACE INTO sessions VALUES (?,?,?,?)",
-                       (tenant, session_id, json.dumps(history[-limit:], ensure_ascii=False), time.time()))
+                       (tenant, session_id, json.dumps(history[-limit:], ensure_ascii=False), now))
 
     def list_sessions(self, tenant: str, limit: int = 50) -> list[dict]:
         with self.connect() as db:

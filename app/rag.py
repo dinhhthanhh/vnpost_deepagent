@@ -32,7 +32,10 @@ from app.embedding_cache import CachedEmbedding
 from app.providers import ProviderClients
 from app.reranker import CrossEncoderReranker
 
-STOPWORDS = set("va la cua co cho cac nhung mot trong voi duoc den tu thi nay do ve theo hay toi ban gi nao bao nhieu tai lieu xin hay the khong thong tin".split())
+STOPWORDS = set(
+    "và là của có cho các những một trong với được đến từ thì này đó về theo hay tôi bạn gì nào bao nhiêu bao lâu mấy ngày năm tại thế như xin hãy không thông tin "
+    "va la cua co cho cac nhung mot trong voi duoc den tu thi nay do ve theo hay toi ban gi nao bao nhieu bao lau may ngay nam tai the nhu xin hay khong thong tin".split()
+)
 
 
 def resolve_embedding_device(requested: str) -> str:
@@ -52,10 +55,78 @@ def resolve_embedding_device(requested: str) -> str:
 
 
 def tokens(text: str) -> list[str]:
-    text = unicodedata.normalize("NFKD", text.lower().replace("đ", "d"))
-    text = "".join(c for c in text if not unicodedata.combining(c))
-    return [t for t in re.findall(r"\w+", text) if t not in STOPWORDS]
+    text_nfc = unicodedata.normalize("NFC", (text or "").lower())
+    text_nfkd = unicodedata.normalize("NFKD", text_nfc.replace("đ", "d"))
+    no_accents = "".join(c for c in text_nfkd if not unicodedata.combining(c))
+    toks_nfc = [t for t in re.findall(r"\w+", text_nfc, flags=re.UNICODE) if t not in STOPWORDS]
+    toks_no_accents = [t for t in re.findall(r"\w+", no_accents) if t not in STOPWORDS]
+    return list(dict.fromkeys(toks_nfc + toks_no_accents))
 
+
+def filter_relevant_hits(query: str, hits: list[dict], min_overlap: int | None = None) -> list[dict]:
+    """Lọc các hit có từ khóa trùng khớp thực sự với câu hỏi (loại bỏ stopwords). Dùng chung cho cả Fast RAG và Deep Agent."""
+    if not hits:
+        return []
+    clean_q = query.strip().lower()
+    q_tokens = [tok for tok in tokens(query) if tok not in STOPWORDS]
+    if not q_tokens:
+        return hits
+
+    q_words = [tok for tok in q_tokens if not tok.isdigit()]
+    filtered = []
+
+    if q_words:
+        q_terms = set(q_words)
+        threshold = min_overlap if min_overlap is not None else (1 if len(q_terms) <= 2 else 2)
+        for hit in hits:
+            excerpt = (hit.get("excerpt", "") or "").lower()
+            e_terms = set(tok for tok in tokens(excerpt) if not tok.isdigit())
+            if len(q_terms & e_terms) >= threshold:
+                filtered.append(hit)
+    else:
+        # Nếu query chỉ gồm số/ngày tháng (ví dụ: "8/3", "20/10", "30/4")
+        dates = re.findall(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b", clean_q)
+        for hit in hits:
+            excerpt = (hit.get("excerpt", "") or "").lower()
+            if dates:
+                if any(d in excerpt for d in dates):
+                    filtered.append(hit)
+            else:
+                e_terms = set(tokens(excerpt))
+                if len(set(q_tokens) & e_terms) >= len(q_tokens):
+                    filtered.append(hit)
+
+    return filtered
+
+
+def embedding_units(text: str) -> list[str]:
+    """Conservative token estimate used only to protect an encoder's input window."""
+    return re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE)
+
+
+def structure_aware_nodes(documents: list[Document], settings: Settings) -> list[TextNode]:
+    """Keep structural units intact; split only units too large for the embedding model."""
+    splitter = SentenceSplitter(
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
+        tokenizer=embedding_units,
+        chunking_tokenizer_fn=lambda s: re.split(r"(?<=[.!?;])\s+", s),
+        include_metadata=True,
+    )
+    nodes = []
+    for document in documents:
+        if len(embedding_units(document.text)) <= settings.chunk_size:
+            nodes.append(TextNode(
+                text=document.text,
+                metadata=document.metadata.copy(),
+                excluded_embed_metadata_keys=document.excluded_embed_metadata_keys,
+                excluded_llm_metadata_keys=document.excluded_llm_metadata_keys,
+            ))
+        else:
+            # A section/page/row is exceptionally long. SentenceSplitter preserves paragraph
+            # and sentence boundaries before using token-level fallback.
+            nodes.extend(splitter.get_nodes_from_documents([document], show_progress=False))
+    return nodes
 
 class DemoHashEmbedding(BaseEmbedding):
     """Deterministic token hashing, ONLY for offline plumbing tests; not semantic AI."""
@@ -81,6 +152,13 @@ class DemoHashEmbedding(BaseEmbedding):
 
 
 def make_embedding(settings: Settings, clients: ProviderClients | None = None) -> BaseEmbedding:
+    # Pydantic loads .env without exporting it. Hugging Face clients read HF_TOKEN
+    # from the process environment, so bridge the configured secret at startup.
+    hf_token = settings.hf_token.get_secret_value()
+    if hf_token:
+        os.environ.setdefault("HF_TOKEN", hf_token)
+    if settings.hf_hub_offline:
+        os.environ["HF_HUB_OFFLINE"] = "1"
     if settings.embedding_provider == "hash":
         return DemoHashEmbedding()
     if settings.embedding_provider == "huggingface":
@@ -117,6 +195,9 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
     is_global = extra_metadata.get("is_global", True) if extra_metadata else True
     session_id = extra_metadata.get("session_id") if extra_metadata else None
     user_id = extra_metadata.get("user_id") if extra_metadata else None
+    authority = extra_metadata.get("authority", "legacy_unverified") if extra_metadata else "legacy_unverified"
+    source_url = extra_metadata.get("source_url") if extra_metadata else None
+    issuer = extra_metadata.get("issuer") if extra_metadata else None
     metadata = {
         "filename": filename,
         "document_id": document_id,
@@ -124,8 +205,11 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
         "session_id": str(session_id) if session_id else "",
         "user_id": str(user_id) if user_id else "",
         "scope": "global" if is_global else "session",
+        "authority": authority,
+        "source_url": source_url or "",
+        "issuer": issuer or "",
     }
-    excluded = ["filename", "document_id", "location", "is_global", "session_id", "user_id", "scope"]
+    excluded = ["filename", "document_id", "location", "is_global", "session_id", "user_id", "scope", "authority", "source_url", "issuer"]
 
     def doc(text, location):
         return Document(text=text, metadata={**metadata, "location": location},
@@ -138,13 +222,96 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
             raise ValueError("TXT phải dùng UTF-8; hãy lưu lại bằng UTF-8.") from exc
         if "\x00" in text or not text.strip():
             raise ValueError("TXT không có nội dung văn bản hợp lệ.")
-        # Paragraph ranges, not invented page numbers.
-        groups, lines = [], text.splitlines()
-        for start in range(0, len(lines), 40):
-            content = "\n".join(lines[start:start + 40]).strip()
+        # Preserve the author's structure for TXT/Markdown exports. In particular,
+        # tariff tables are represented one row at a time with their named columns;
+        # fixed line-count splitting loses that relationship and hurts retrieval.
+        lines = text.splitlines()
+        title = Path(filename).stem
+        for line in lines:
+            match = re.match(r"^#\s+(.+?)\s*$", line)
+            if match:
+                title = match.group(1)
+                break
+
+        documents, paragraph, table_number = [], [], 0
+        section, paragraph_start = title, 1
+
+        def contextualize(content: str) -> str:
+            if section and section != title:
+                return f"# {title}\n\n## {section}\n\n{content}"
+            return f"# {title}\n\n{content}"
+
+        def flush_paragraph(end_line: int):
+            nonlocal paragraph, paragraph_start
+            content = "\n".join(paragraph).strip()
             if content:
-                groups.append(doc(content, f"Dòng {start + 1}–{min(start + 40, len(lines))}"))
-        return groups
+                documents.append(doc(contextualize(content),
+                                     f"{section}; dòng {paragraph_start}–{end_line}"))
+            paragraph = []
+
+        def is_source_preamble(line: str) -> bool:
+            return line.startswith(("Nguồn:", "Vị trí nguồn:", "Ngày thu thập:"))
+
+        line_index = 0
+        while line_index < len(lines):
+            line_number = line_index + 1
+            line = lines[line_index].strip()
+            header = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
+            if header:
+                flush_paragraph(line_number - 1)
+                section = header.group(1)
+                paragraph_start = line_number + 1
+                line_index += 1
+                continue
+            is_numbered_heading = re.match(r"^(?:[IVXLCDM]+|\d+)\.\s+\S", line)
+            if (not paragraph and is_numbered_heading
+                    and line_index + 1 < len(lines) and not lines[line_index + 1].strip()):
+                section = line
+                paragraph_start = line_number + 1
+                line_index += 1
+                continue
+            if is_source_preamble(line):
+                flush_paragraph(line_number - 1)
+                paragraph_start = line_number + 1
+                line_index += 1
+                continue
+            if line.startswith("|"):
+                table_start = line_index
+                table_lines = []
+                while line_index < len(lines) and lines[line_index].strip().startswith("|"):
+                    table_lines.append(lines[line_index].strip())
+                    line_index += 1
+                flush_paragraph(table_start)
+                if len(table_lines) >= 3 and re.match(r"^\|?\s*:?-{3,}", table_lines[1]):
+                    headers = [cell.strip() for cell in table_lines[0].strip("|").split("|")]
+                    table_number += 1
+                    for row_offset, table_row in enumerate(table_lines[2:], 3):
+                        values = [cell.strip() for cell in table_row.strip("|").split("|")]
+                        if len(values) != len(headers) or not any(values):
+                            continue
+                        pairs = [f"{key}: {value}" for key, value in zip(headers, values) if value]
+                        row_text = (f"Bảng {table_number} — {section}\n"
+                                    + "; ".join(pairs) + "\n\n"
+                                    + table_lines[0] + "\n" + table_lines[1] + "\n" + table_row)
+                        documents.append(doc(contextualize(row_text),
+                                             f"{section}; bảng {table_number}, hàng {row_offset}"))
+                else:
+                    documents.append(doc(contextualize("\n".join(table_lines)),
+                                         f"{section}; dòng {table_start + 1}–{line_index}"))
+                paragraph_start = line_index + 1
+                continue
+            if not line:
+                flush_paragraph(line_number - 1)
+                paragraph_start = line_number + 1
+            else:
+                if not paragraph:
+                    paragraph_start = line_number
+                paragraph.append(line)
+            line_index += 1
+        flush_paragraph(len(lines))
+        if not documents:
+            raise ValueError("TXT không có đơn vị nội dung hợp lệ.")
+        return documents
     if suffix == ".pdf":
         import pypdf
         try:
@@ -194,17 +361,22 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
                 start = paragraph_number
             if paragraph.text.strip():
                 buffer.append(paragraph.text.strip())
-            if len(buffer) >= 12:
-                flush()
         elif element.tag.endswith("}tbl"):
             flush()
             table_number += 1
             table = Table(element, word)
-            header = " | ".join(c.text.strip() for c in table.rows[0].cells) if table.rows else ""
-            for row_number, row in enumerate(table.rows, 1):
-                row_text = " | ".join(c.text.strip() for c in row.cells)
-                if row_text.strip(" |"):
-                    text = row_text if row_number == 1 else f"Cột: {header}\nDữ liệu: {row_text}"
+            if not table.rows:
+                continue
+            headers = [c.text.strip() or f"Cột {i}" for i, c in enumerate(table.rows[0].cells, 1)]
+            # Repeat named columns with every row so tariff tables retain cell relationships.
+            table_title = f"Bảng {table_number} — {section}"
+            for row_number, row in enumerate(table.rows[1:], 2):
+                values = [c.text.strip() for c in row.cells]
+                pairs = [f"{header}: {value}" for header, value in zip(headers, values) if value]
+                if pairs:
+                    markdown = " | ".join(headers) + "\n" + " | ".join("---" for _ in headers)
+                    markdown += "\n" + " | ".join(values)
+                    text = f"{table_title}\n" + "; ".join(pairs) + "\n\n" + markdown
                     documents.append(doc(text, f"{section}; bảng {table_number}, hàng {row_number}"))
     flush()
     if not documents:
@@ -239,7 +411,7 @@ class KnowledgeBase:
                  "endpoint": self.settings.embedding_base_url,
                  "revision": self.settings.embedding_revision,
                  "model": self.embedding.model_name, "chunk_size": self.settings.chunk_size,
-                 "chunk_overlap": self.settings.chunk_overlap, "parser": "v1"}
+                 "chunk_overlap": self.settings.chunk_overlap, "parser": "v3-structure-first"}
         return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
     def _snapshot(self, index, nodes, records, revision):
@@ -281,20 +453,21 @@ class KnowledgeBase:
                 "is_global": record.get("is_global", True),
                 "session_id": record.get("session_id"),
                 "user_id": record.get("user_id"),
+                "authority": record.get("authority", "legacy_unverified"),
+                "source_url": record.get("source_url"),
+                "issuer": record.get("issuer"),
             }
             documents.extend(loaded if loaded is not None else read_document(
                 record["filename"], (self.raw_dir / record["stored_name"]).read_bytes(),
                 record["id"], self.settings, extra_metadata=extra_meta))
         if sum(len(d.text) for d in documents) > self.settings.max_corpus_characters:
             raise ValueError("Kho tài liệu vượt MAX_CORPUS_CHARACTERS.")
-        splitter = SentenceSplitter(chunk_size=self.settings.chunk_size,
-                                    chunk_overlap=self.settings.chunk_overlap,
-                                    tokenizer=lambda s: re.findall(r"\w+|[^\w\s]", s),
-                                    chunking_tokenizer_fn=lambda s: re.split(r"(?<=[.!?;])\s+", s),
-                                    include_metadata=True)
-        nodes = splitter.get_nodes_from_documents(documents, show_progress=False)
-        for node in nodes:
-            identity = f"{node.metadata['document_id']}|{node.metadata['location']}|{node.text}"
+        nodes = structure_aware_nodes(documents, self.settings)
+        for ordinal, node in enumerate(nodes):
+            # Text can legitimately repeat within one source (for example a repeated
+            # tariff row or FAQ answer). Include the structural ordinal so the vector
+            # store never overwrites a distinct chunk that happens to have the same text.
+            identity = f"{node.metadata['document_id']}|{node.metadata['location']}|{ordinal}|{node.text}"
             node.id_ = hashlib.sha256(identity.encode()).hexdigest()
         revision = uuid.uuid4().hex
         folder = self.root / "snapshots" / revision
@@ -317,7 +490,8 @@ class KnowledgeBase:
                 shutil.rmtree(old, ignore_errors=True)
 
     def ingest(self, filename: str, raw: bytes, is_global: bool | None = None,
-               session_id: str | None = None, user_id: str | None = None) -> dict:
+               session_id: str | None = None, user_id: str | None = None, *,
+               authority: str = "user_upload", source_url: str | None = None, issuer: str | None = None) -> dict:
         # Client filenames are display metadata; storage names are generated IDs.
         filename = Path(filename.replace("\\", "/")).name[:180]
         if len(raw) > self.settings.max_upload_bytes:
@@ -325,6 +499,8 @@ class KnowledgeBase:
         document_id = hashlib.sha256(raw).hexdigest()
         if is_global is None:
             is_global = False if (session_id or user_id) else True
+        if authority not in {"vnpost_internal", "official_public", "user_upload"}:
+            raise ValueError("Invalid document authority.")
         with self.lock:
             existing = next((r for r in self.snapshot.records if r["id"] == document_id), None)
             if existing:
@@ -335,9 +511,15 @@ class KnowledgeBase:
                 "is_global": is_global,
                 "session_id": str(session_id) if session_id else None,
                 "user_id": str(user_id) if user_id else None,
+                "authority": authority,
+                "source_url": source_url,
+                "issuer": issuer,
             }
             loaded = read_document(filename, raw, document_id, self.settings, extra_metadata=extra_meta)
             record = {"id": document_id, "filename": filename,
+                "authority": authority,
+                "source_url": source_url,
+                "issuer": issuer,
                       "stored_name": document_id + Path(filename).suffix.lower(), "bytes": len(raw),
                       "is_global": is_global,
                       "session_id": str(session_id) if session_id else None,
@@ -359,6 +541,18 @@ class KnowledgeBase:
             self._commit([r for r in self.snapshot.records if r["id"] != document_id])
             (self.raw_dir / record["stored_name"]).unlink(missing_ok=True)
             return True
+
+    def remove_session(self, session_id: str) -> int:
+        """Xóa toàn bộ tài liệu đính kèm riêng của session này khi xóa session."""
+        with self.lock:
+            matched = [r for r in self.snapshot.records if str(r.get("session_id", "")) == str(session_id)]
+            if not matched:
+                return 0
+            matched_ids = {r["id"] for r in matched}
+            self._commit([r for r in self.snapshot.records if r["id"] not in matched_ids])
+            for r in matched:
+                (self.raw_dir / r["stored_name"]).unlink(missing_ok=True)
+            return len(matched)
 
     def retrieve(self, query: str, top_k: int | None = None,
                  session_id: str | None = None, user_id: str | None = None) -> list[dict]:
@@ -398,6 +592,15 @@ class KnowledgeBase:
 
         # LlamaIndex is responsible for actual embedding/vector retrieval with metadata filters
         vector = snapshot.index.as_retriever(similarity_top_k=candidate_k, filters=filters).retrieve(query)
+        vector_hits_map = {hit.node.node_id: float(hit.score or 0.0) for hit in vector}
+
+        scores = snapshot.bm25.get_scores(list(query_terms))
+        min_overlap = 1 if len(query_terms) <= 1 else 2
+        lexical = sorted((i for i, terms in enumerate(snapshot.token_sets)
+                          if ((len(terms & query_terms) >= min_overlap and scores[i] > 0)
+                              or vector_hits_map.get(snapshot.nodes[i].node_id, 0.0) >= self.settings.vector_min_similarity)
+                          and matches_scope(snapshot.nodes[i].metadata)),
+                         key=lambda i: scores[i], reverse=True)[:candidate_k]
 
         fused, by_id = {}, {n.node_id: n for n in snapshot.nodes}
         for rank, i in enumerate(lexical, 1):
@@ -415,8 +618,12 @@ class KnowledgeBase:
                                "filename": node.metadata["filename"], "location": node.metadata["location"],
                                "chunk_id": node_id, "excerpt": node.get_content(metadata_mode=MetadataMode.NONE),
                                "retrieval_score": round(fused[node_id], 6),
+                               "vector_score": round(vector_hits_map.get(node_id, 0.0), 4),
                                "is_global": node.metadata.get("is_global") in (True, "true"),
-                               "session_id": node.metadata.get("session_id") or None})
+                                "session_id": node.metadata.get("session_id") or None,
+                                "authority": node.metadata.get("authority", "legacy_unverified"),
+                                "source_url": node.metadata.get("source_url") or None,
+                                "issuer": node.metadata.get("issuer") or None})
         if self.reranker:
             candidates = self.reranker.rerank(query, candidates)
         return candidates[:k]

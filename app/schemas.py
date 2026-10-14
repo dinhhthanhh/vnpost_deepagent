@@ -11,6 +11,10 @@ class ChatRequest(BaseModel):
     grounded: bool = True
     mode: Literal["auto", "fast", "deep"] = "auto"
     voice: bool = False
+    # The web client can synthesize completed text fragments itself through the
+    # streaming TTS endpoint. Keep this opt-in so API consumers retain the
+    # existing single-WAV behaviour.
+    stream_voice: bool = False
     voice_name: str | None = Field(None, pattern=r"^[a-zA-Z0-9_-]{1,64}$")
 
     @field_validator("message")
@@ -42,6 +46,9 @@ class Source(BaseModel):
     excerpt: str
     retrieval_score: float
     is_global: bool = True
+    authority: Literal["vnpost_internal", "official_public", "user_upload", "legacy_unverified"] = "legacy_unverified"
+    source_url: str | None = None
+    issuer: str | None = None
     session_id: str | None = None
 
 

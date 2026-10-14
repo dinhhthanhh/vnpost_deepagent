@@ -5,6 +5,7 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile
@@ -126,14 +127,9 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
             if len(raw) > settings.max_upload_bytes:
                 raise HTTPException(413, "File vượt giới hạn upload")
             query_params = request.query_params
-            form_data = {}
-            try:
-                form_data = await request.form()
-            except Exception:
-                pass
-            session_id = form_data.get("session_id") or query_params.get("session_id")
-            user_id = form_data.get("user_id") or query_params.get("user_id")
-            is_global_val = form_data.get("is_global") or query_params.get("is_global")
+            session_id = query_params.get("session_id")
+            user_id = query_params.get("user_id")
+            is_global_val = query_params.get("is_global")
             is_global = None
             if is_global_val is not None:
                 is_global = str(is_global_val).lower() in ("true", "1")
@@ -158,6 +154,37 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
         finally:
             await file.close()
 
+    @app.post("/api/documents/verified", status_code=201)
+    async def upload_verified(file: UploadFile, authority: str = "official_public", source_url: str = "", x_source_admin_key: str | None = Header(default=None), scope=Depends(tenant), svc=Depends(get_service)):
+        """Administrative evidence onboarding; ordinary browser uploads stay untrusted."""
+        configured_secret = settings.trusted_ingest_key
+        configured_key = configured_secret.get_secret_value() if hasattr(configured_secret, "get_secret_value") else str(configured_secret)
+        if not configured_key:
+            raise HTTPException(503, "Chua cau hinh TRUSTED_INGEST_KEY")
+        if not x_source_admin_key or not hmac.compare_digest(configured_key, x_source_admin_key):
+            raise HTTPException(403, "Khong co quyen nap nguon da xac minh")
+        if authority != "official_public":
+            raise HTTPException(422, "Only official_public is accepted here")
+        parsed = urlsplit(source_url)
+        hostname = (parsed.hostname or "").lower()
+        allowed = any(hostname == domain or hostname.endswith("." + domain) for domain in settings.official_domains)
+        if parsed.scheme != "https" or not allowed:
+            raise HTTPException(422, "source_url must be HTTPS on configured vietnampost.vn")
+        try:
+            raw = await file.read(settings.max_upload_bytes + 1)
+            if len(raw) > settings.max_upload_bytes:
+                raise HTTPException(413, "File vuot gioi han upload")
+            async with svc.ingest_slots:
+                kb = await asyncio.to_thread(svc.knowledge.for_tenant, scope)
+                result = await asyncio.to_thread(kb.ingest, file.filename or "untitled.txt", raw, is_global=True, authority="official_public", source_url=source_url, issuer="Vietnam Post")
+            return {k: v for k, v in result.items() if k != "stored_name"}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except HTTPException:
+            raise
+        finally:
+            await file.close()
+
     @app.delete("/api/documents/{document_id}")
     async def remove(document_id: str, scope=Depends(tenant), svc=Depends(get_service)):
         if not re.fullmatch(r"[a-f0-9]{64}", document_id):
@@ -173,13 +200,16 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
         return {"sessions": await asyncio.to_thread(svc.store.list_sessions, scope, limit)}
 
     @app.get("/api/sessions/{session_id}")
-    async def history(session_id: UUID, scope=Depends(tenant), svc=Depends(get_service)):
+    async def history(session_id: str, scope=Depends(tenant), svc=Depends(get_service)):
         return {"session_id": str(session_id), "messages": await asyncio.to_thread(svc.store.history, scope, str(session_id))}
 
     @app.delete("/api/sessions/{session_id}")
-    async def delete_session(session_id: UUID, scope=Depends(tenant), svc=Depends(get_service)):
-        await asyncio.to_thread(svc.store.delete_session, scope, str(session_id))
-        return {"deleted": str(session_id)}
+    async def delete_session(session_id: str, scope=Depends(tenant), svc=Depends(get_service)):
+        sid = str(session_id).strip()
+        await asyncio.to_thread(svc.store.delete_session, scope, sid)
+        kb = await asyncio.to_thread(svc.knowledge.for_tenant, scope)
+        await asyncio.to_thread(kb.remove_session, sid)
+        return {"deleted": sid}
 
     @app.get("/api/replies/{request_id}")
     async def reply(request_id: str, scope=Depends(tenant), svc=Depends(get_service)):

@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -17,6 +17,9 @@ class RunContext:
     events: list[dict] = field(default_factory=list)
     sources: dict[str, Source] = field(default_factory=dict)
     chunk_citations: dict[str, str] = field(default_factory=dict)
+    # One request can invoke RAG from a prefetch, a supervisor and a specialist.
+    # Exact query reuse must not hit the index again.
+    retrieval_cache: dict[str, str] = field(default_factory=dict)
     tasks_started: int = 0
     queue: asyncio.Queue | None = None
     start: float = field(default_factory=time.monotonic)

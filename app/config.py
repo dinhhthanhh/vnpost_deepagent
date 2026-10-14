@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     demo_mode: bool | None = None
     router_enabled: bool = Field(False, validation_alias=AliasChoices("ROUTER_ENABLED", "router_enabled"))
     semantic_router_enabled: bool = Field(True, validation_alias=AliasChoices("SEMANTIC_ROUTER_ENABLED", "semantic_router_enabled"))
+    # Experimental only: normal routing does not spend an LLM call.
+    llm_router_enabled: bool = Field(False, validation_alias=AliasChoices("LLM_ROUTER_ENABLED", "llm_router_enabled"))
     router_model: str = Field("", validation_alias=AliasChoices("ROUTER_MODEL", "router_model"))
     router_timeout_seconds: float = Field(8, gt=0, le=60, validation_alias=AliasChoices("ROUTER_TIMEOUT", "ROUTER_TIMEOUT_SECONDS"))
     semantic_router_min_confidence: float = Field(0.72, ge=0.5, le=1)
@@ -30,11 +32,15 @@ class Settings(BaseSettings):
     max_parallel_subagents: int = Field(3, ge=1, le=8, validation_alias=AliasChoices("MAX_SUBAGENTS", "MAX_PARALLEL_SUBAGENTS"))
     max_delegated_tasks: int = Field(8, ge=1, le=32, validation_alias=AliasChoices("MAX_TASKS", "MAX_DELEGATED_TASKS"))
     max_agent_steps: int = Field(35, ge=5, le=100)
+    deep_timeout_seconds: float = Field(35, gt=0, le=300, validation_alias=AliasChoices("DEEP_TIMEOUT", "DEEP_TIMEOUT_SECONDS"))
+    deep_max_agent_steps: int = Field(12, ge=3, le=100, validation_alias=AliasChoices("DEEP_MAX_AGENT_STEPS", "deep_max_agent_steps"))
 
     # Embedding & RAG Settings
     embedding_provider: Literal["hash", "openai", "huggingface"] = "hash"
     embedding_base_url: str = "https://api.openai.com/v1"
     embedding_api_key: SecretStr = SecretStr("")
+    hf_token: SecretStr = SecretStr("")
+    hf_hub_offline: bool = Field(False, validation_alias=AliasChoices("HF_HUB_OFFLINE", "hf_hub_offline"))
     embedding_model: str = "text-embedding-3-small"
     embedding_revision: str = "v1"
     local_embedding_model: str = "intfloat/multilingual-e5-small"
@@ -44,6 +50,9 @@ class Settings(BaseSettings):
     chunk_size: int = Field(512, ge=128, le=2048)
     chunk_overlap: int = Field(64, ge=0)
     retrieval_top_k: int = Field(5, ge=1, le=15)
+    fast_min_sources: int = Field(1, ge=0, le=15, validation_alias=AliasChoices("FAST_MIN_SOURCES", "fast_min_sources"))
+    # Raw hybrid/RRF scores are not calibrated probabilities; keep 0 until evaluated.
+    fast_min_retrieval_score: float = Field(0, ge=0, le=1, validation_alias=AliasChoices("FAST_MIN_RETRIEVAL_SCORE", "fast_min_retrieval_score"))
     vector_min_similarity: float = Field(0.35, ge=0, le=1, validation_alias=AliasChoices("MIN_SIMILARITY", "VECTOR_MIN_SIMILARITY"))
     reranker_enabled: bool = Field(False, validation_alias=AliasChoices("RERANKER_ENABLED", "reranker_enabled"))
     reranker_model: str = Field("BAAI/bge-reranker-v2-m3", validation_alias=AliasChoices("RERANKER_MODEL", "reranker_model"))
@@ -71,6 +80,10 @@ class Settings(BaseSettings):
     max_audio_bytes: int = Field(25_000_000, ge=1024)
     audio_ttl_seconds: int = Field(3600, ge=60, validation_alias=AliasChoices("AUDIO_TTL", "AUDIO_TTL_SECONDS"))
     api_keys_json: str = "{}"
+    # Only administrators holding this separate secret may label a document as evidence.
+    trusted_ingest_key: SecretStr = SecretStr("")
+    # Public facts may be verified only from this explicit allowlist.
+    official_source_domains: str = "vietnampost.vn"
 
     # Short clean property aliases
     @property
@@ -84,6 +97,10 @@ class Settings(BaseSettings):
     @property
     def llm_timeout(self) -> float:
         return self.llm_timeout_seconds
+
+    @property
+    def deep_timeout(self) -> float:
+        return self.deep_timeout_seconds
 
     @property
     def max_requests(self) -> int:
@@ -136,6 +153,10 @@ class Settings(BaseSettings):
     @property
     def api_keys(self) -> dict[str, str]:
         return json.loads(self.api_keys_json)
+    @property
+    def official_domains(self) -> set[str]:
+        return {item.strip().lower().lstrip(".") for item in self.official_source_domains.split(",") if item.strip()}
+
 
     @model_validator(mode="after")
     def validate_config(self):

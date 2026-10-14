@@ -54,3 +54,18 @@ def test_api_rejects_invalid_inputs_and_limits(settings):
 def test_anonymous_demo_blocked_for_remote_peers(settings):
     with TestClient(create_app(settings), client=("203.0.113.1", 1234)) as client:
         assert client.get("/api/documents").status_code == 401
+
+def test_verified_upload_requires_admin_key_and_official_host(settings):
+    settings = settings.model_copy(update={"trusted_ingest_key": "source-admin-secret"})
+    with TestClient(create_app(settings)) as client:
+        payload = {"file": ("source.txt", b"Official evidence", "text/plain")}
+        assert client.post("/api/documents/verified?source_url=https://vietnampost.vn/vi", files=payload).status_code == 403
+        headers = {"X-Source-Admin-Key": "source-admin-secret"}
+        rejected = client.post("/api/documents/verified?source_url=https://example.com/", headers=headers, files=payload)
+        assert rejected.status_code == 422
+        accepted = client.post("/api/documents/verified?source_url=https://vietnampost.vn/vi", headers=headers, files=payload)
+        assert accepted.status_code == 201
+        assert accepted.json()["authority"] == "official_public"
+        regular = client.post("/api/documents", files={"file": ("note.txt", b"Untrusted note", "text/plain")})
+        assert regular.status_code == 201
+        assert regular.json()["authority"] == "user_upload"

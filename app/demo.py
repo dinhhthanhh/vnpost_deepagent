@@ -57,9 +57,14 @@ class DemoChatModel(BaseChatModel):
         if self.role == "fast_rag":
             from langchain_core.messages import SystemMessage
             sys_text = next((message_text(m) for m in messages if isinstance(m, SystemMessage)), "")
-            cites = re.findall(r"\[(S\d+)\]", sys_text)
+            evidence_part = sys_text.split("--- TÀI LIỆU THAM KHẢO ---")[-1] if "--- TÀI LIỆU THAM KHẢO ---" in sys_text else sys_text
+            cites = re.findall(r"\[(S\d+)\]", evidence_part)
             if cites:
-                return AIMessage(content=f"Dựa trên tài liệu [{cites[0]}], thông tin tìm thấy: {sys_text[:200]} [{cites[0]}].")
+                idx = evidence_part.find(f"[{cites[0]}]")
+                block = evidence_part[idx:idx + 400]
+                lines = [l.strip() for l in block.split("\n") if l.strip() and not l.strip().startswith(f"[{cites[0]}")]
+                content_text = " ".join(lines) if lines else block
+                return AIMessage(content=f"Dựa trên tài liệu, thông tin tìm thấy: {content_text} [{cites[0]}].")
             return AIMessage(content="Chưa tìm thấy bằng chứng phù hợp trong kho tài liệu.")
         if results:
             data = json.loads(message_text(results[-1]))
