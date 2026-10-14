@@ -1,7 +1,10 @@
 import json
+import logging
 import httpx
 
 from app.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_chat_messages(data: dict) -> bool:
@@ -14,15 +17,19 @@ def _sanitize_chat_messages(data: dict) -> bool:
 
 
 def _patch_request_sync(request: httpx.Request):
-    if request.content and request.url.path.endswith("/chat/completions"):
-        try:
-            data = json.loads(request.content)
-            if _sanitize_chat_messages(data):
-                new_b = json.dumps(data).encode("utf-8")
-                request.stream = httpx.ByteStream(new_b)
-                request.headers["content-length"] = str(len(new_b))
-        except Exception:
-            pass
+    if not request.content or not request.url.path.endswith("/chat/completions"):
+        return
+    # Fast path: only parse JSON if request actually contains null content
+    if b'"content": null' not in request.content and b'"content":null' not in request.content:
+        return
+    try:
+        data = json.loads(request.content)
+        if _sanitize_chat_messages(data):
+            new_b = json.dumps(data).encode("utf-8")
+            request.stream = httpx.ByteStream(new_b)
+            request.headers["content-length"] = str(len(new_b))
+    except Exception as exc:
+        logger.warning("Failed to patch null chat message content: %s", exc)
 
 
 async def _patch_request_async(request: httpx.Request):

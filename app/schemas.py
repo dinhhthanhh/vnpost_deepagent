@@ -32,9 +32,25 @@ class ChatRequest(BaseModel):
         value = value.strip()
         if not value:
             return None
-        if not (value.startswith("data:image/") or value.startswith(("http://", "https://"))):
-            raise ValueError("Ảnh phải là định dạng data URL (data:image/...) hoặc liên kết http(s)")
-        return value
+        if value.startswith("data:image/"):
+            return value
+        if value.startswith(("http://", "https://")):
+            import ipaddress
+            from urllib.parse import urlparse
+            parsed = urlparse(value)
+            host = (parsed.hostname or "").lower()
+            if not host:
+                raise ValueError("URL ảnh không hợp lệ")
+            if host in {"localhost", "127.0.0.1", "::1"}:
+                raise ValueError("Không cho phép URL ảnh trỏ về máy chủ nội bộ (SSRF)")
+            try:
+                ip = ipaddress.ip_address(host)
+                if ip.is_private or ip.is_loopback or ip.is_link_local:
+                    raise ValueError("Không cho phép URL ảnh trỏ về mạng nội bộ (SSRF)")
+            except ValueError:
+                pass
+            return value
+        raise ValueError("Ảnh phải là định dạng data URL (data:image/...) hoặc liên kết http(s)")
 
 
 class Source(BaseModel):

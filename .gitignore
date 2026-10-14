@@ -11,3 +11,8 @@ frontend/node_modules/
 frontend/dist/
 test-results/
 *.log
+
+# Local reference docs and templates
+Hướng dẫn cài đặt và chạy*.md
+Mipo – Nghiên cứu kiến trúc Deep Agent + RAG + TTS*.md
+agent.template/

@@ -222,7 +222,10 @@ async def _semantic_route(
         timeout=settings.router_timeout,
         max_retries=0,
         use_responses_api=False,
-        extra_body={"thinking": False},
+        extra_body={
+            "thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
+        },
         http_client=clients.sync if clients else None,
         http_async_client=clients.async_ if clients else None,
     )

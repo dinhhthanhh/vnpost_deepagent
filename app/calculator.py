@@ -33,6 +33,11 @@ def safe_calculate(expression: str) -> float | int:
         return value
 
     try:
-        return evaluate(tree)
+        res = evaluate(tree)
+        if isinstance(res, float):
+            res = round(res, 10)
+            if res.is_integer():
+                res = int(res)
+        return res
     except (ZeroDivisionError, OverflowError) as exc:
         raise ValueError("Phép tính không hợp lệ") from exc

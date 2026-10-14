@@ -13,9 +13,18 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 
 
 def message_text(message) -> str:
-    if isinstance(message.content, str):
-        return message.content
-    return "\n".join(block.get("text", "") for block in message.content if isinstance(block, dict))
+    content = getattr(message, "content", message)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                parts.append(block.get("text", ""))
+        return "\n".join(p for p in parts if p)
+    return str(content or "")
 
 
 class DemoChatModel(BaseChatModel):

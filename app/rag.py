@@ -397,14 +397,14 @@ class Snapshot:
 class KnowledgeBase:
     """Immutable read snapshots, serialized writes; intended for a small/medium pilot."""
 
-    def __init__(self, root: Path, settings: Settings, embedding: BaseEmbedding):
+    def __init__(self, root: Path, settings: Settings, embedding: BaseEmbedding, ignore_fingerprint: bool = False):
         self.root, self.settings, self.embedding = root, settings, embedding
         self.reranker = CrossEncoderReranker(settings) if settings.reranker_enabled else None
         self.lock = threading.RLock()
         self.root.mkdir(parents=True, exist_ok=True)
         self.raw_dir = self.root / "documents"
         self.raw_dir.mkdir(exist_ok=True)
-        self.snapshot = self._load()
+        self.snapshot = self._load(ignore_fingerprint=ignore_fingerprint)
 
     def _fingerprint(self):
         value = {"provider": self.settings.embedding_provider,
@@ -419,14 +419,16 @@ class KnowledgeBase:
         return Snapshot(index, nodes, BM25Plus(term_lists) if nodes else None,
                         [set(t) for t in term_lists], records, revision)
 
-    def _load(self):
+    def _load(self, ignore_fingerprint: bool = False):
         pointer = self.root / "current.json"
         if not pointer.exists():
             return self._snapshot(None, [], [], "empty")
-        manifest = json.loads(pointer.read_text())
-        if manifest["fingerprint"] != self._fingerprint():
+        manifest = json.loads(pointer.read_text(encoding="utf-8"))
+        if not ignore_fingerprint and manifest.get("fingerprint") != self._fingerprint():
             raise ValueError("Embedding/chunk config đã đổi; chạy scripts/reindex.py để dựng lại KB.")
         folder = self.root / "snapshots" / manifest["revision"]
+        if not folder.exists() and ignore_fingerprint:
+            return self._snapshot(None, [], manifest.get("records", []), manifest.get("revision", "empty"))
         index = load_index_from_storage(StorageContext.from_defaults(persist_dir=str(folder)),
                                         embed_model=self.embedding) if manifest["records"] else None
         nodes = list(index.docstore.docs.values()) if index else []
@@ -444,6 +446,22 @@ class KnowledgeBase:
                 node.metadata["session_id"] = ""
                 node.metadata["user_id"] = ""
         return self._snapshot(index, nodes, manifest["records"], manifest["revision"])
+
+    def reindex(self) -> Snapshot:
+        """Atomically rebuild the index from existing raw documents under current settings/embedding.
+
+        The live pointer 'current.json' is only updated via os.replace AFTER the new
+        snapshot and vectors are completely built and stored, ensuring zero corrupted
+        state if interrupted.
+        """
+        pointer = self.root / "current.json"
+        if not pointer.exists():
+            raise ValueError("Tenant has no KB to reindex.")
+        manifest = json.loads(pointer.read_text(encoding="utf-8"))
+        records = manifest.get("records", [])
+        with self.lock:
+            self._commit(records)
+            return self.snapshot
 
     def _commit(self, records: list[dict], preloaded: dict[str, list[Document]] | None = None):
         documents = []
@@ -632,7 +650,11 @@ class KnowledgeBase:
 class KnowledgeBases:
     def __init__(self, settings: Settings, clients: ProviderClients | None = None):
         self.settings = settings
-        namespace = f"{settings.embedding_provider}|{settings.embedding_base_url}|{settings.embedding_model}|{settings.local_embedding_model}|{settings.embedding_revision}"
+        is_pyvi = (settings.embedding_provider == "huggingface" and
+                   "vietnamese-bi-encoder" in settings.local_embedding_model.lower())
+        namespace = (f"{settings.embedding_provider}|{settings.embedding_base_url}|"
+                     f"{settings.embedding_model}|{settings.local_embedding_model}|"
+                     f"{settings.embedding_revision}|pyvi={is_pyvi}")
         self.embedding = CachedEmbedding(make_embedding(settings, clients), settings.data_dir.resolve() / "embedding-cache.sqlite3", namespace)
         self.items: dict[str, KnowledgeBase] = {}
         self.lock = threading.Lock()

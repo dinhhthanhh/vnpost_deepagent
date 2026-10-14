@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr = SecretStr("")
     llm_model: str = "your-tool-calling-model"
     subagent_model: str = ""
+    llm_thinking: bool = Field(False, validation_alias=AliasChoices("LLM_THINKING", "llm_thinking"))
     llm_timeout_seconds: float = Field(45, gt=0, le=300, validation_alias=AliasChoices("LLM_TIMEOUT", "LLM_TIMEOUT_SECONDS"))
     request_timeout_seconds: float = Field(120, gt=0, le=600, validation_alias=AliasChoices("REQUEST_TIMEOUT", "REQUEST_TIMEOUT_SECONDS"))
     max_active_requests: int = Field(4, ge=1, le=32, validation_alias=AliasChoices("MAX_REQUESTS", "MAX_ACTIVE_REQUESTS"))
