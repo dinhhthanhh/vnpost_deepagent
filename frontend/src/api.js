@@ -1,10 +1,14 @@
-const DEFAULT_KEY = "458d41f783134eb3715cc8f371af8351";
-
-export async function request(path, key = DEFAULT_KEY, options = {}) {
+export async function request(path, key = null, options = {}) {
   const headers = { ...(options.headers || {}) };
-  const activeKey = key || DEFAULT_KEY;
-  if (activeKey) headers["X-API-Key"] = activeKey;
-  const response = await fetch(path, { ...options, headers });
+  if (key) {
+    headers["X-API-Key"] = key;
+  }
+  const fetchOptions = {
+    credentials: "same-origin",
+    ...options,
+    headers,
+  };
+  const response = await fetch(path, fetchOptions);
   if (!response.ok) {
     let message = `HTTP ${response.status}`;
     try { const data = await response.json(); message = typeof data.detail === "string" ? data.detail : "Dữ liệu gửi chưa hợp lệ."; } catch {}

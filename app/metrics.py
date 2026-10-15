@@ -1,4 +1,4 @@
-﻿"""Lightweight per-request LLM telemetry for routing benchmarks."""
+"""Lightweight per-request LLM telemetry for routing benchmarks."""
 
 from uuid import UUID
 

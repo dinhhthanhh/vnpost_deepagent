@@ -13,14 +13,25 @@ class TTSError(Exception):
 
 
 def spoken_text(text: str) -> str:
+    # 1. Xóa mã trích dẫn [S1], [S2]... và khối code
     text = re.sub(r"\[S\d+\]", "", text)
-    text = re.sub(r"```[\s\S]*?```", " [Đoạn mã được hiển thị trong câu trả lời.] ", text)
+    text = re.sub(r"```[\s\S]*?```", " Đoạn mã được hiển thị trong câu trả lời. ", text)
+    # 2. Xóa dòng kẻ phân cách bảng Markdown (ví dụ: | --- | :---: | --- |) trước khi thay dấu |
+    text = re.sub(r"(?m)^\s*\|?(?:\s*:?-{2,}:?\s*\|)+\s*:?-{2,}:?\s*\|?\s*$", " ", text)
+    # 3. Chuyển link Markdown [text](url) thành text và xóa URL trần
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
     text = re.sub(r"https?://\S+", "", text)
     text = re.sub(r"(?m)^\s*[#>*-]+\s*", "", text)
-    # Chuẩn hóa ngày tháng dạng dd/mm/yyyy -> ngày dd tháng mm năm yyyy
+    # 4. Chuẩn hóa ngày tháng dd/mm/yyyy và khoảng số (ví dụ: 24-36 giờ -> 24 đến 36 giờ)
     text = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", r"ngày \1 tháng \2 năm \3", text)
-    # Chuẩn hóa số điện thoại / hotline có dấu chấm phân cách
+    text = re.sub(r"\b(\d+)\s*-\s*(\d+)\s*(giờ|ngày|tuần|tháng|năm|kg|g|gam|đồng)\b", r"\1 đến \2 \3", text, flags=re.IGNORECASE)
+    # 5. Chuẩn hóa số tiền Việt Nam (125.000đ -> 125000 đồng) và đơn vị khối lượng
+    text = re.sub(r"(?<=\d)\.(?=\d{3}(?!\d))", "", text)
+    text = re.sub(r"\b(\d+(?:,\d+)?)\s*(?:đ/kg|đồng/kg)\b", r"\1 đồng một ki lô gam", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:,\d+)?)\s*(?:đ|vnđ|vnd)\b", r"\1 đồng", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:,\d+)?)\s*kg\b", r"\1 ki lô gam", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+(?:,\d+)?)\s*g\b", r"\1 gam", text, flags=re.IGNORECASE)
+    # 6. Chuẩn hóa số điện thoại / hotline có dấu chấm phân cách
     text = re.sub(r"(\d{4})\.(\d{2})\.(\d{2})\.(\d{2})", r"\1 \2 \3 \4", text)
     text = text.replace("|", ", ").replace("`", "").replace("**", "").replace("*", "")
     return re.sub(r"\s+", " ", text).strip()
@@ -49,7 +60,7 @@ class ZeroTTS:
         self.owns_client = client is None
         self.last_health = "disabled" if not settings.tts_enabled else "unknown"
 
-    def payload(self, text: str, voice: str | None, mode: str):
+    def payload(self, text: str, voice: str | None, mode: str, **kwargs):
         if not self.settings.tts_enabled:
             raise TTSError("TTS chưa bật; cấu hình TTS_ENABLED=true.")
         text = spoken_text(text)
@@ -61,12 +72,25 @@ class ZeroTTS:
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", voice):
             raise TTSError("Tên giọng không hợp lệ.")
         if mode == "openai":
-            return "v1/audio/speech", {"model": "ZeroTTS", "input": text, "voice": voice,
-                                        "response_format": "wav", "speed": 1.0}
-        return "tts", {"text": text, "voice": voice, "cfg_scale": 1.0, "audio_temperature": 0.8}
+            return "v1/audio/speech", {
+                "model": "ZeroTTS",
+                "input": text,
+                "voice": voice,
+                "response_format": "wav",
+                "speed": kwargs.get("speed", 1.0)
+            }
+        return "tts", {
+            "text": text,
+            "voice": voice,
+            "cfg_scale": kwargs.get("cfg_scale", 1.0),
+            "audio_temperature": kwargs.get("audio_temperature", 0.8),
+            "audio_repetition_penalty": kwargs.get("audio_repetition_penalty", 1.2),
+            "audio_topk": kwargs.get("audio_topk", 25),
+            "audio_topp": kwargs.get("audio_topp", 0.95),
+        }
 
-    async def synthesize(self, text: str, voice: str | None = None, mode: str | None = None) -> bytes:
-        endpoint, payload = self.payload(text, voice, mode or self.settings.tts_mode)
+    async def synthesize(self, text: str, voice: str | None = None, mode: str | None = None, **kwargs) -> bytes:
+        endpoint, payload = self.payload(text, voice, mode or self.settings.tts_mode, **kwargs)
         chunks, size = [], 0
         try:
             async with asyncio.timeout(self.settings.tts_timeout_seconds):
@@ -96,8 +120,8 @@ class ZeroTTS:
         except (httpx.HTTPError, ValueError) as exc:
             raise TTSError("Không lấy được danh sách giọng đọc.") from exc
 
-    async def open_stream(self, text: str, voice: str | None = None):
-        _, payload = self.payload(text, voice, "standard")
+    async def open_stream(self, text: str, voice: str | None = None, **kwargs):
+        _, payload = self.payload(text, voice, "standard", **kwargs)
         try:
             response = await self.client.send(self.client.build_request("POST", "tts/stream", json=payload), stream=True)
             response.raise_for_status()

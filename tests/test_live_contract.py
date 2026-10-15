@@ -40,8 +40,7 @@ async def test_live_provider_contract_with_real_clients(tmp_path):
         if "ROLE: rag" in system and not has_tool:
             message["tool_calls"] = [{"id": "search", "type": "function", "function": {"name": "search_documents", "arguments": json.dumps({"query": "thời hạn hoàn cước"})}}]
         elif "ROLE: supervisor" in system and not has_tool:
-            tasks = [{"id": "research", "agent": "rag-agent", "description": "thời hạn hoàn cước"}]
-            message["tool_calls"] = [{"id": "parallel", "type": "function", "function": {"name": "parallel_tasks", "arguments": json.dumps({"tasks": tasks})}}]
+            message["tool_calls"] = [{"id": "task_call", "type": "function", "function": {"name": "task", "arguments": json.dumps({"subagent_type": "rag-agent", "description": "thời hạn hoàn cước"})}}]
         else:
             message["content"] = "Thời hạn hoàn cước là 7 ngày [S1]."
         return httpx.Response(200, json={"id": "chat-test", "object": "chat.completion", "created": 1, "model": "tool-model",

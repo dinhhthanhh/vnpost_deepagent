@@ -66,19 +66,11 @@ class CachedEmbedding(BaseEmbedding):
             if key in self._query_cache:
                 self._query_cache.move_to_end(key)
                 return self._query_cache[key]
-        with _connect(self._path) as db:
-            row = db.execute("SELECT value FROM vectors WHERE key=?", (key,)).fetchone()
-        if row:
-            vector = _blob_to_vector(row[0])
-            with self._query_lock:
-                self._query_cache[key] = vector
-            return vector
         vector = self._inner.get_query_embedding(query)
-        with _connect(self._path) as db:
-            db.execute("INSERT OR REPLACE INTO vectors VALUES (?,?)", (key, _vector_to_blob(vector)))
         with self._query_lock:
             self._query_cache[key] = vector
-            if len(self._query_cache) > 1024:
+            self._query_cache.move_to_end(key)
+            while len(self._query_cache) > 1024:
                 self._query_cache.popitem(last=False)
         return vector
 

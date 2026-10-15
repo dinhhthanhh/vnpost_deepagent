@@ -101,3 +101,40 @@ async def test_fast_rag_execution_in_service(settings):
         assert any(e["type"] == "source_gate" and e["status"] == "pass" for e in result.events)
     finally:
         await svc.close()
+
+
+async def test_service_uses_local_shortcuts_without_llm(settings):
+    svc = ChatService(settings)
+    try:
+        calculation = await svc.chat("a", ChatRequest(message="125.000 + 35.000"))
+        assert calculation.route == "calculator"
+        assert calculation.grounding_status == "computed"
+        assert "160000" in calculation.answer
+
+        today = await svc.chat("a", ChatRequest(message="hôm nay là ngày bao nhiêu"))
+        assert today.route == "local"
+        assert today.grounding_status == "computed"
+        assert "Hôm nay là ngày" in today.answer
+    finally:
+        await svc.close()
+
+
+def test_router_temporal_calculation():
+    decision1 = rule_based_decision("12/3 năm sau là ngày thứ mấy")
+    assert decision1.route == "deep"
+    assert decision1.tier == 2
+
+    decision2 = rule_based_decision("thứ 4 tuần sau nữa nữa là ngày thứ mấy")
+    assert decision2.route == "deep"
+    assert decision2.tier == 2
+
+def test_router_postal_operations_use_specialist_route():
+    for question in (
+        "Tra cứu đơn EB123456789VN",
+        "Bưu cục gần tôi mở cửa lúc mấy giờ?",
+        "Mã bưu chính của quận Hoàn Kiếm là gì?",
+    ):
+        decision = rule_based_decision(question)
+        assert decision.route == "deep"
+        assert decision.tier == 2
+        assert "postal_ops" in decision.signals

@@ -1,3 +1,4 @@
+# Secrets and local runtime data
 .env
 .venv/
 data/
@@ -11,8 +12,23 @@ frontend/node_modules/
 frontend/dist/
 test-results/
 *.log
+*.tmp
 
-# Local reference docs and templates
+# Generated datasets, reports, and local API clients
+datasets/
+evaluation/
+reports/
+postman/
+scripts/compare_architectures.py
+scripts/finalize_understand_graph.py
+scripts/generate_understand_batches.py
+
+# Local reference docs and workspace metadata
 Hướng dẫn cài đặt và chạy*.md
-Mipo – Nghiên cứu kiến trúc Deep Agent + RAG + TTS*.md
+Mipo*.md
 agent.template/
+.postman/
+reference/
+.agents/
+.ua/
+.understand-anything/

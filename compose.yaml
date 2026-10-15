@@ -4,6 +4,7 @@ services:
     env_file: .env
     environment:
       DATA_DIR: /data
+      HF_HOME: /data/cache/huggingface
     ports:
       - "127.0.0.1:8080:8080"
     volumes:

@@ -8,12 +8,12 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import Settings
-from app.schemas import ChatRequest, SpeechRequest
+from app.schemas import ChatRequest, S3IngestRequest, SpeechRequest
 from app.service import ChatService
 from app.tts import TTSError
 
@@ -185,6 +185,94 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
         finally:
             await file.close()
 
+    @app.post("/api/documents/s3", status_code=201)
+    async def ingest_from_s3(body: S3IngestRequest, scope=Depends(tenant), svc=Depends(get_service)):
+        """Đồng bộ và nạp tài liệu từ S3 (Presigned GET URL hoặc S3 Bucket + Key)."""
+        import httpx
+        from urllib.parse import urlparse
+
+        raw_bytes = b""
+        filename = body.filename
+
+        if body.url:
+            parsed = urlparse(body.url)
+            if parsed.scheme not in {"http", "https"}:
+                raise HTTPException(422, "URL phải là http hoặc https")
+            if not filename:
+                filename = Path(parsed.path).name or "s3_document.pdf"
+            if settings.s3_allowed_domains:
+                try:
+                    from app.schemas import validate_safe_url
+                    validate_safe_url(body.url, allowed_domains=settings.s3_allowed_domains)
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from exc
+            try:
+                chunks = []
+                total_bytes = 0
+                max_bytes = settings.max_upload_bytes
+                timeout_config = httpx.Timeout(30.0, connect=10.0)
+                async with httpx.AsyncClient(timeout=timeout_config, follow_redirects=False) as client:
+                    async with client.stream("GET", body.url) as resp:
+                        if resp.status_code != 200:
+                            raise HTTPException(502, f"Không tải được file từ S3 URL, HTTP status: {resp.status_code}")
+                        content_len = resp.headers.get("content-length")
+                        if content_len:
+                            try:
+                                if int(content_len) > max_bytes:
+                                    raise HTTPException(413, f"File vượt quá dung lượng tối đa ({max_bytes} bytes)")
+                            except ValueError:
+                                pass
+                        async for chunk in resp.aiter_bytes(chunk_size=65536):
+                            total_bytes += len(chunk)
+                            if total_bytes > max_bytes:
+                                raise HTTPException(413, f"File vượt quá dung lượng tối đa ({max_bytes} bytes)")
+                            chunks.append(chunk)
+                raw_bytes = b"".join(chunks)
+            except Exception as exc:
+                if isinstance(exc, HTTPException):
+                    raise
+                raise HTTPException(502, f"Lỗi kết nối khi tải tài liệu từ S3 URL: {exc}") from exc
+        elif body.bucket and body.key:
+            if not filename:
+                filename = Path(body.key).name or "s3_document.pdf"
+            try:
+                import boto3
+                s3_client = boto3.client("s3")
+                resp = await asyncio.to_thread(s3_client.get_object, Bucket=body.bucket, Key=body.key)
+                raw_bytes = await asyncio.to_thread(resp["Body"].read)
+            except ImportError:
+                raise HTTPException(501, "Server chưa cài đặt boto3; hãy dùng S3 presigned URL hoặc cài boto3")
+            except Exception as exc:
+                raise HTTPException(502, f"Lỗi đọc từ S3 bucket/key: {exc}") from exc
+        else:
+            raise HTTPException(422, "Cần cung cấp url (presigned) hoặc bucket + key")
+
+        if len(raw_bytes) > settings.max_upload_bytes:
+            raise HTTPException(413, "File vượt giới hạn kích thước upload")
+
+        try:
+            async with svc.ingest_slots:
+                kb = await asyncio.to_thread(svc.knowledge.for_tenant, scope)
+                result = await asyncio.to_thread(
+                    kb.ingest,
+                    filename,
+                    raw_bytes,
+                    is_global=body.is_global,
+                    session_id=body.session_id,
+                    user_id=body.user_id,
+                    authority=body.authority,
+                    source_url=body.source_url or (f"s3://{body.bucket}/{body.key}" if body.bucket and body.key else body.url),
+                    issuer=body.issuer or "Vietnam Post",
+                )
+            return {k: v for k, v in result.items() if k != "stored_name"}
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("s3_ingest_failed error_type=%s", type(exc).__name__)
+            raise HTTPException(502, "Không lập chỉ mục được tài liệu S3") from exc
+
     @app.delete("/api/documents/{document_id}")
     async def remove(document_id: str, scope=Depends(tenant), svc=Depends(get_service)):
         if not re.fullmatch(r"[a-f0-9]{64}", document_id):
@@ -204,12 +292,27 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
         return {"session_id": str(session_id), "messages": await asyncio.to_thread(svc.store.history, scope, str(session_id))}
 
     @app.delete("/api/sessions/{session_id}")
-    async def delete_session(session_id: str, scope=Depends(tenant), svc=Depends(get_service)):
+    async def delete_session(
+        session_id: str,
+        background_tasks: BackgroundTasks,
+        scope=Depends(tenant),
+        svc=Depends(get_service),
+    ):
         sid = str(session_id).strip()
         await asyncio.to_thread(svc.store.delete_session, scope, sid)
-        kb = await asyncio.to_thread(svc.knowledge.for_tenant, scope)
-        await asyncio.to_thread(kb.remove_session, sid)
-        return {"deleted": sid}
+
+        async def cleanup_session_documents():
+            try:
+                async with svc.ingest_slots:
+                    kb = await asyncio.to_thread(svc.knowledge.for_tenant, scope)
+                    removed = await asyncio.to_thread(kb.remove_session, sid)
+                logger.info("session_documents_removed tenant=%s session_id=%s count=%s", scope, sid, removed)
+            except Exception:
+                logger.exception("session_document_cleanup_failed tenant=%s session_id=%s", scope, sid)
+
+        # Rebuilding the RAG snapshot can take seconds; it must not delay the UI.
+        background_tasks.add_task(cleanup_session_documents)
+        return {"deleted": sid, "document_cleanup": "scheduled"}
 
     @app.get("/api/replies/{request_id}")
     async def reply(request_id: str, scope=Depends(tenant), svc=Depends(get_service)):
@@ -228,7 +331,16 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
     @app.post("/api/tts")
     async def speech(body: SpeechRequest, scope=Depends(tenant), svc=Depends(get_service)):
         try:
-            url = await svc.save_speech(scope, body.text, body.voice, body.mode)
+            url = await svc.save_speech(
+                scope, body.text, body.voice, body.mode,
+                cfg_scale=body.cfg_scale,
+                audio_temperature=body.audio_temperature,
+                text_temperature=body.text_temperature,
+                audio_topk=body.audio_topk,
+                audio_topp=body.audio_topp,
+                audio_repetition_penalty=body.audio_repetition_penalty,
+                speed=body.speed,
+            )
             return {"audio_url": url}
         except TTSError as exc:
             raise HTTPException(502, str(exc)) from exc
@@ -236,7 +348,16 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
     @app.post("/api/tts/stream")
     async def speech_stream(body: SpeechRequest, scope=Depends(tenant), svc=Depends(get_service)):
         try:
-            upstream = await svc.tts.open_stream(body.text, body.voice)
+            upstream = await svc.tts.open_stream(
+                body.text, body.voice,
+                cfg_scale=body.cfg_scale,
+                audio_temperature=body.audio_temperature,
+                text_temperature=body.text_temperature,
+                audio_topk=body.audio_topk,
+                audio_topp=body.audio_topp,
+                audio_repetition_penalty=body.audio_repetition_penalty,
+                speed=body.speed,
+            )
         except TTSError as exc:
             raise HTTPException(502, str(exc)) from exc
 

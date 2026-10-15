@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -24,6 +24,9 @@ class RunContext:
     queue: asyncio.Queue | None = None
     start: float = field(default_factory=time.monotonic)
     slots: asyncio.Semaphore = field(init=False)
+    # The service emits final, validated TTS segments after validation.
+    stream_voice: bool = False
+    voice_name: str | None = None
 
     def __post_init__(self):
         self.slots = asyncio.Semaphore(self.max_parallel)
@@ -45,6 +48,12 @@ class RunContext:
         self.sources[citation_id] = source
         self.chunk_citations[chunk_id] = citation_id
         return source
+
+    def emit_token(self, delta: str):
+        """Phát token chữ ra SSE, không phát marker nội bộ của mô hình."""
+        if not delta or "[[NO_EVIDENCE]]" in delta:
+            return
+        self.event("token", delta=delta)
 
 
 current_run: ContextVar[RunContext] = ContextVar("current_run")

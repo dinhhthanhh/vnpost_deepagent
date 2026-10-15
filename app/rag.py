@@ -58,9 +58,8 @@ def tokens(text: str) -> list[str]:
     text_nfc = unicodedata.normalize("NFC", (text or "").lower())
     text_nfkd = unicodedata.normalize("NFKD", text_nfc.replace("đ", "d"))
     no_accents = "".join(c for c in text_nfkd if not unicodedata.combining(c))
-    toks_nfc = [t for t in re.findall(r"\w+", text_nfc, flags=re.UNICODE) if t not in STOPWORDS]
     toks_no_accents = [t for t in re.findall(r"\w+", no_accents) if t not in STOPWORDS]
-    return list(dict.fromkeys(toks_nfc + toks_no_accents))
+    return list(dict.fromkeys(toks_no_accents))
 
 
 def filter_relevant_hits(query: str, hits: list[dict], min_overlap: int | None = None) -> list[dict]:
@@ -595,10 +594,6 @@ class KnowledgeBase:
                 return True
             return False
 
-        scores = snapshot.bm25.get_scores(list(query_terms))
-        lexical = sorted((i for i, terms in enumerate(snapshot.token_sets)
-                          if (terms & query_terms) and matches_scope(snapshot.nodes[i].metadata)),
-                         key=lambda i: scores[i], reverse=True)[:candidate_k]
 
         # LlamaIndex MetadataFilters: is_global == 'true' OR session_id == current_session
         filter_list = [MetadataFilter(key="is_global", value="true", operator=FilterOperator.EQ)]

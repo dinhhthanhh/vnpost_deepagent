@@ -1054,6 +1054,12 @@ button:disabled {
   color: #3730a3;
 }
 
+.route-tag.calculator,
+.route-tag.local {
+  background: #dcfce7;
+  color: #15803d;
+}
+
 .download-wav-link {
   color: #2563eb;
   text-decoration: none;

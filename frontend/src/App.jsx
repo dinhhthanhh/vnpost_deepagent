@@ -33,6 +33,7 @@ import {
 import { audioBlob, request, streamChat } from "./api";
 import { playWavStream } from "./wav-stream";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 
 marked.setOptions({
   breaks: true,
@@ -167,7 +168,7 @@ function AppStoreBadge() {
   );
 }
 
-// Xử lý hiển thị văn bản Markdown đẹp mắt và highlight mã trích nguồn [S1], [S2]
+// Xử lý hiển thị văn bản Markdown đẹp mắt, an toàn chống XSS và highlight mã trích nguồn [S1], [S2]
 function FormattedAnswer({ text }) {
   if (!text) return null;
   try {
@@ -176,10 +177,20 @@ function FormattedAnswer({ text }) {
       /\[(S\d+)\]/g,
       '<span class="citation-badge">[$1]</span>'
     );
+    // Sanitize HTML strictly before injecting into DOM to prevent XSS
+    const cleanHtml = DOMPurify.sanitize(rawHtml, {
+      ALLOWED_TAGS: [
+        "p", "br", "strong", "em", "u", "s", "ul", "ol", "li",
+        "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "code",
+        "table", "thead", "tbody", "tr", "th", "td", "span", "a", "hr"
+      ],
+      ALLOWED_ATTR: ["class", "href", "target", "rel", "title"],
+      ALLOW_DATA_ATTR: false
+    });
     return (
       <div
         className="answer-text markdown-body"
-        dangerouslySetInnerHTML={{ __html: rawHtml }}
+        dangerouslySetInnerHTML={{ __html: cleanHtml }}
       />
     );
   } catch (err) {
@@ -188,7 +199,8 @@ function FormattedAnswer({ text }) {
 }
 
 export default function App() {
-  const [key] = useState("458d41f783134eb3715cc8f371af8351");
+  // Session-based authentication / dynamic token; no static secret hardcoded in client bundle
+  const [key, setKey] = useState(() => sessionStorage.getItem("auth-token") || "");
   const [health, setHealth] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -354,15 +366,19 @@ export default function App() {
   }
 
   async function deleteSession(sid) {
-    if (!confirm("Xóa đoạn trò chuyện này?")) return;
+    if (!sid) return;
+    setNotice("Đang xóa đoạn trò chuyện…");
     try {
-      await request(`/api/sessions/${sid}`, key, { method: "DELETE" });
+      await request(`/api/sessions/${encodeURIComponent(sid)}`, key, { method: "DELETE" });
+      setSessions((prev) => prev.filter((s) => s.id !== sid));
       if (session === sid) {
-        newChat();
+        await newChat();
       }
+      setNotice("Đã xóa đoạn trò chuyện.");
       await loadSessions(key);
     } catch (e) {
-      setNotice(e.message);
+      setNotice(`Lỗi xóa phiên: ${e.message}`);
+      await loadSessions(key);
     }
   }
 
@@ -535,8 +551,30 @@ export default function App() {
         if (error.name !== "AbortError") setNotice(error.message);
       });
     };
+
+    const enqueueSegment = (segmentText, segmentVoice) => {
+      if (!segmentText) return;
+      hasText = true;
+      queue = queue.then(async () => {
+        if (stream.current !== current || controller.signal.aborted) return;
+        const response = await request("/api/tts/stream", key, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: segmentText, voice: segmentVoice || voiceName }),
+          signal: controller.signal,
+        });
+        await playWavStream(response, context, {
+          signal: controller.signal,
+          onFirstAudio: () => setStreamingAudio(true),
+        });
+      }).catch((error) => {
+        if (error.name !== "AbortError") setNotice(error.message);
+      });
+    };
+
     return {
       add: (text) => enqueue(text),
+      addSegment: (text, voice) => enqueueSegment(text, voice),
       get hasText() { return hasText; },
       finish: () => {
         enqueue("", true);
@@ -626,6 +664,9 @@ export default function App() {
                   : m
               )
             );
+          } else if (item.type === "tts_segment") {
+            speech?.addSegment(item.text, item.voice);
+            setEvents((previous) => [...previous.slice(-30), item]);
           } else if (item.type === "answer" || item.type === "done") {
             receivedAnswer = true;
             // Fast RAG has already supplied text as tokens; Deep Agent replies
@@ -718,9 +759,9 @@ export default function App() {
   }
 
   // Phân loại lịch sử chat THẬT (Từ backend SQLite)
-  const isToday = (dateStr) => {
-    if (!dateStr) return false;
-    const date = new Date(dateStr);
+  const isToday = (dateVal) => {
+    if (!dateVal) return false;
+    const date = typeof dateVal === "number" ? new Date(dateVal * 1000) : new Date(dateVal);
     const today = new Date();
     return (
       date.getDate() === today.getDate() &&
@@ -729,8 +770,8 @@ export default function App() {
     );
   };
 
-  const realTodaySessions = sessions.filter((s) => isToday(s.updated_at || s.created_at));
-  const realEarlierSessions = sessions.filter((s) => !isToday(s.updated_at || s.created_at));
+  const realTodaySessions = sessions.filter((s) => isToday(s.updated || s.updated_at || s.created_at));
+  const realEarlierSessions = sessions.filter((s) => !isToday(s.updated || s.updated_at || s.created_at));
 
   return (
     <div className="mipo-layout">
@@ -847,6 +888,7 @@ export default function App() {
                             {s.title}
                           </span>
                           <button
+                            type="button"
                             className="delete-item-btn"
                             title="Xóa phiên"
                             onClick={(e) => {
@@ -854,7 +896,7 @@ export default function App() {
                               deleteSession(s.id);
                             }}
                           >
-                            <X size={12} />
+                            <Trash2 size={13} />
                           </button>
                         </div>
                       ))}
@@ -878,6 +920,7 @@ export default function App() {
                             {s.title}
                           </span>
                           <button
+                            type="button"
                             className="delete-item-btn"
                             title="Xóa phiên"
                             onClick={(e) => {
@@ -885,7 +928,7 @@ export default function App() {
                               deleteSession(s.id);
                             }}
                           >
-                            <X size={12} />
+                            <Trash2 size={13} />
                           </button>
                         </div>
                       ))}
@@ -1097,7 +1140,7 @@ export default function App() {
                             <div className="message-sub-info">
                               {message.route && (
                                 <span className={`route-tag ${message.route}`}>
-                                  {message.route === "fast" ? "Fast RAG" : "Deep Agent"}
+                                  {message.route === "calculator" ? "Tính toán" : message.route === "local" ? "Phản hồi tức thì" : message.route === "fast" || message.route === "fast_fallback" ? "Fast RAG" : "Deep Agent"}
                                 </span>
                               )}
                               <span className="latency-text">

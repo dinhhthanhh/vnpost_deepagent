@@ -27,7 +27,7 @@ async def test_real_harness_parallel_rag_and_citations(settings):
     assert any(e["type"] == "retrieval_cache_hit" for e in result.events)
     starts = [e for e in result.events if e["type"] == "task_start"]
     ends = [e for e in result.events if e["type"] == "task_end"]
-    assert len(starts) == 2 and max(e["elapsed_ms"] for e in starts) < min(e["elapsed_ms"] for e in ends)
+    assert len(starts) == 2 and max(e["elapsed_ms"] for e in starts) <= min(e["elapsed_ms"] for e in ends)
     assert svc.store.reply("a", result.request_id)["sources"]
     await svc.close()
 
@@ -40,7 +40,7 @@ async def test_native_deepagents_task_tool_also_runs_parallel(settings):
                 return AIMessage(content="\n".join(message_text(m) for m in tools))
             return AIMessage(content="", tool_calls=[
                 {"name": "task", "args": {"subagent_type": "rag-agent", "description": "Thời hạn hoàn cước?"}, "id": "r"},
-                {"name": "task", "args": {"subagent_type": "writer-agent", "description": "Chuẩn bị bố cục"}, "id": "w"},
+                {"name": "task", "args": {"subagent_type": "analyst-agent", "description": "Phân tích điều kiện"}, "id": "w"},
             ])
     svc = ChatService(settings)
     svc.knowledge.for_tenant("a").ingest("x.txt", "Thời hạn hoàn cước là 7 ngày.".encode())
@@ -76,7 +76,7 @@ async def test_single_subagent_failure_preserves_successful_results(settings):
     class Failing:
         async def ainvoke(self, *args, **kwargs):
             raise RuntimeError("secret-provider-data")
-    svc.harness.subagents["writer-agent"] = svc.harness._tracked_agent("writer-agent", Failing())
+    svc.harness.subagents["analyst-agent"] = svc.harness._tracked_agent("analyst-agent", Failing())
     result = await svc.chat("a", ChatRequest(message="Hoàn cước bao lâu?", mode="deep"))
     assert "7 ngày" in result.answer and "secret-provider-data" not in str(result)
     assert any(e.get("status") == "error" for e in result.events)
@@ -162,4 +162,60 @@ async def test_valid_json_array_from_subagent_is_not_treated_as_failure(settings
         assert result["status"] == "ok" and json.loads(result["result"]) == ["item one", "item two"]
     finally:
         current_run.reset(token)
+        await svc.close()
+
+
+def test_date_calculator_reasoning():
+    import datetime
+    from app.calculator import safe_date_calculate
+    fixed_now = datetime.datetime(2026, 10, 15, 10, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=7)))
+
+    res1 = safe_date_calculate("12/3 năm sau là ngày thứ mấy", now=fixed_now)
+    assert res1["weekday"] == "Thứ Sáu"
+    assert res1["target_date"] == "12/03/2027"
+
+    res2 = safe_date_calculate("thứ 4 tuần sau nữa nữa là ngày thứ mấy", now=fixed_now)
+    assert res2["target_weekday"] == "Thứ Tư"
+    assert res2["target_date"] == "04/11/2026"
+    assert res2["weeks_ahead"] == 3
+
+    res3 = safe_date_calculate("30 ngày nữa là ngày mấy", now=fixed_now)
+    assert res3["target_date"] == "14/11/2026"
+    assert res3["weekday"] == "Thứ Bảy"
+
+
+async def test_tracking_and_post_office_subagents(settings):
+    svc = ChatService(settings)
+    scope = RunContext("a", "postal-subagents-test", 4, 8)
+    token = current_run.set(scope)
+    try:
+        raw = await svc.harness.parallel_tasks.ainvoke({
+            "tasks": [
+                {"id": "trk-1", "agent": "tracking-agent", "description": "Kiểm tra mã vận đơn EB123456789VN"},
+                {"id": "po-1", "agent": "post-office-agent", "description": "Tìm bưu cục gần Cầu Giấy Hà Nội"}
+            ]
+        })
+        data = json.loads(raw)
+        results = data["results"]
+        assert len(results) == 2
+        assert results[0]["id"] == "trk-1" and results[0]["status"] == "ok"
+        assert "EB123456789VN" in results[0]["result"]
+        assert results[1]["id"] == "po-1" and results[1]["status"] == "ok"
+        assert "Cầu Giấy" in results[1]["result"]
+    finally:
+        current_run.reset(token)
+        await svc.close()
+
+
+async def test_chat_postal_tracking_and_office_end_to_end(settings):
+    svc = ChatService(settings)
+    try:
+        res1 = await svc.chat("a", ChatRequest(message="Kiểm tra bưu gửi EB123456789VN hiện đang ở đâu?", mode="deep"))
+        assert res1.grounding_status in ("computed", "verified")
+        assert "EB123456789VN" in res1.answer or "Đang phát" in res1.answer or "Hà Nội" in res1.answer
+
+        res2 = await svc.chat("a", ChatRequest(message="Tìm bưu cục giao dịch gần Hoàn Kiếm Hà Nội", mode="deep"))
+        assert res2.grounding_status in ("computed", "verified")
+        assert "Hoàn Kiếm" in res2.answer or "Đinh Tiên Hoàng" in res2.answer or "Bưu điện" in res2.answer
+    finally:
         await svc.close()

@@ -107,7 +107,7 @@ def test_embedding_cache_reuses_vectors_and_separates_query_from_document(tmp_pa
         before = db.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]
     reloaded.get_query_embedding("hoàn cước")
     with __import__("sqlite3").connect(tmp_path / "cache.sqlite3") as db:
-        assert db.execute("SELECT COUNT(*) FROM vectors").fetchone()[0] == before + 1
+        assert db.execute("SELECT COUNT(*) FROM vectors").fetchone()[0] == before
 
 
 def test_live_mode_rejects_demo_embedding_and_missing_keys(tmp_path):
@@ -168,3 +168,25 @@ def test_metadata_filtering_global_and_session_isolation(settings):
     # Anonymous / General query should not retrieve private session docs
     hits_general = kb.retrieve("Hợp đồng", session_id=None)
     assert not any(h["filename"] in ("user_a_contract.txt", "user_b_contract.txt") for h in hits_general)
+
+
+def test_tokens_unique_no_accents():
+    from app.rag import tokens
+    # Từ "tính" chỉ được trả về 1 token là "tinh", không được trả về cả "tính" và "tinh"
+    toks = tokens("tính")
+    assert toks == ["tinh"]
+    assert len(toks) == 1
+
+
+def test_filter_relevant_hits_min_overlap():
+    from app.rag import filter_relevant_hits
+    # Với query 4 từ khóa: "quy trình hoàn hàng" -> q_terms = {"quy", "trinh", "hoan", "hang"}
+    # Ngưỡng min_overlap = 2.
+    # Excerpt chỉ chứa 1 từ trùng ("quy") không được lọt qua cổng.
+    hits = [
+        {"excerpt": "quy định chung", "filename": "1.txt"},
+        {"excerpt": "quy trình hoàn hàng bưu chính", "filename": "2.txt"},
+    ]
+    res = filter_relevant_hits("quy trình hoàn hàng", hits)
+    assert len(res) == 1
+    assert res[0]["filename"] == "2.txt"

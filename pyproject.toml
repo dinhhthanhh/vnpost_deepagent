@@ -29,6 +29,9 @@ include = ["app*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+  "ignore::langchain_core._api.beta_decorator.LangChainBetaWarning",
+]
 
 [tool.ruff]
 line-length = 100

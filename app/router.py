@@ -119,6 +119,31 @@ def rule_based_decision(
             route_ms=round((time.perf_counter() - t0) * 1000, 2),
         )
 
+    # Tầng 2: Tính toán và suy luận thời gian / lịch trình
+    if sig.temporal_calc:
+        return RouterDecision(
+            "deep",
+            "Tính toán và suy luận thời gian / lịch trình (Tầng 2)",
+            "rule",
+            0.98,
+            tier=2,
+            signals=hits,
+            route_ms=round((time.perf_counter() - t0) * 1000, 2),
+        )
+
+    # Tầng 2: dữ liệu thời gian thực của bưu gửi hoặc mạng lưới bưu cục
+    # cần các tool tracking/post-office, vốn chỉ có ở Deep Agent.
+    if sig.postal_ops:
+        return RouterDecision(
+            "deep",
+            "Tra cứu định vị bưu gửi / mạng lưới bưu cục qua Sub-agent chuyên trách (Tầng 2)",
+            "rule",
+            0.99,
+            tier=2,
+            signals=hits,
+            route_ms=round((time.perf_counter() - t0) * 1000, 2),
+        )
+
     # Tầng 3: Nhiều bước / tính toán số học / nhiều câu hỏi kết hợp (có , và hoặc nhiều ?)
     multi_task = sig.multistep or sig.multi_question or sig.calc or bool(re.search(r",\s*và\s+", t))
     if multi_task:

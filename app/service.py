@@ -18,17 +18,11 @@ from app.store import Store
 from app.tts import TTSError, ZeroTTS
 
 
-_ARITHMETIC = re.compile(r"^[0-9+*/%().\s-]+$")
+from app.fastpath import local_answer
+from app.signals import analyze
+from app.terminology import postprocess_func
 
 
-def _simple_calculation(message: str) -> float | int | None:
-    expression = message.strip()
-    if not expression or not _ARITHMETIC.fullmatch(expression) or not re.search(r"[+*/%-]", expression):
-        return None
-    try:
-        return safe_calculate(expression)
-    except (SyntaxError, ValueError):
-        return None
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +55,8 @@ class ChatService:
             else:
                 self.session_locks[key] = (lock, users - 1)
 
-    async def save_speech(self, tenant: str, text: str, voice=None, mode=None) -> str:
-        data = await self.tts.synthesize(text, voice, mode)
+    async def save_speech(self, tenant: str, text: str, voice=None, mode=None, **kwargs) -> str:
+        data = await self.tts.synthesize(text, voice, mode, **kwargs)
         audio_id = uuid.uuid4().hex
         folder = self.settings.data_dir.resolve() / "audio" / tenant
         folder.mkdir(parents=True, exist_ok=True)
@@ -90,6 +84,7 @@ class ChatService:
                 raw = await self.harness.invoke(
                     request.message.strip(), history, request.grounded, request.image,
                     prefetched_evidence=prepared.evidence_json if prepared and request.grounded else None,
+                    thread_id=f"{run.tenant}:{run.session_id}:{run.request_id}",
                 )
             return raw, "deep", route_reason
         except TimeoutError:
@@ -106,14 +101,22 @@ class ChatService:
     async def chat(self, tenant: str, request: ChatRequest, queue: asyncio.Queue | None = None) -> ChatResponse:
         started = time.monotonic()
         request_id, session_id = uuid.uuid4().hex, str(request.session_id or uuid.uuid4())
-        run = RunContext(tenant, request_id, self.settings.max_subagents,
-                         self.settings.max_tasks, session_id=session_id, queue=queue)
+        run = RunContext(
+            tenant,
+            request_id,
+            self.settings.max_subagents,
+            self.settings.max_tasks,
+            session_id=session_id,
+            queue=queue,
+            stream_voice=bool(request.voice and request.stream_voice),
+            voice_name=request.voice_name or self.settings.tts_voice,
+        )
         run.event("start", request_id=request_id, session_id=session_id)
         token = current_run.set(run)
         try:
-            calculation = _simple_calculation(request.message) if not request.image else None
-            if calculation is not None:
-                decision = RouterDecision("fast", "Phép tính số học đơn giản", "rule", 1.0, tier=0)
+            shortcut = local_answer(request.message, chitchat=analyze(request.message).chitchat) if not request.image else None
+            if shortcut is not None:
+                decision = RouterDecision("fast", "Đường tắt cục bộ không gọi LLM", "rule", 1.0, tier=0)
             elif request.mode == "fast":
                 decision = RouterDecision("fast", "Đường nhanh do người dùng yêu cầu", "rule", 1.0, tier=1)
             elif request.mode == "deep":
@@ -129,8 +132,9 @@ class ChatService:
                     request.message, request.image, max_characters=self.settings.router_max_characters,
                 )
 
-            if calculation is not None:
-                route, route_reason = "calculator", "deterministic arithmetic"
+            if shortcut is not None:
+                route = "calculator" if shortcut.kind == "calc" else "local"
+                route_reason = f"local {shortcut.kind}"
             else:
                 route, route_reason = decision.route, decision.reason
             run.event("router_decision", route=route, tier=decision.tier, reason=route_reason,
@@ -157,9 +161,13 @@ class ChatService:
                             run.event("source_gate", status="pass", source_count=prepared.source_count,
                                       required=self.settings.fast_min_sources, top_retrieval_score=prepared.top_retrieval_score, min_retrieval_score=self.settings.fast_min_retrieval_score)
 
-                    if route == "calculator":
-                        raw = f"Kết quả: {calculation}"
-                        answer, sources, status, warnings = raw, [], "calculated", []
+                    if route in {"calculator", "local"}:
+                        raw = shortcut.text
+                        status = "computed" if shortcut.kind in {"calc", "date"} else "unverified"
+                        answer, sources, warnings = raw, [], []
+                        if queue is not None:
+                            for chunk in re.findall(r"\S+\s*|\s+", raw):
+                                run.emit_token(chunk)
                     elif route == "fast":
                         if queue is not None:
                             parts = []
@@ -167,22 +175,26 @@ class ChatService:
                                 tenant, request.message.strip(), history, request.grounded, prepared=prepared,
                             ):
                                 parts.append(delta)
-                                run.event("token", delta=delta)
+                                run.emit_token(delta)
                             raw = "".join(parts)
                         else:
                             raw = await self.fast_rag.execute(
                                 tenant, request.message.strip(), history, request.grounded, prepared=prepared,
                             )
-                    elif route != "calculator":
+                    elif route not in {"calculator", "local"}:
                         run.event("planning", message=f"Tier {decision.tier if decision.tier > 1 else 2} — Deep Agent: {route_reason}")
                         raw, route, route_reason = await self._deep_or_fallback(
                             request, history, prepared, route_reason,
                         )
+                        if queue is not None:
+                            for chunk in re.findall(r"\S+\s*|\s+", raw):
+                                run.emit_token(chunk)
 
-                    if route != "calculator":
+                    if route not in {"calculator", "local"}:
                         answer, sources, status, warnings = validate_answer(
                             raw, run.sources, request.grounded, request.message,
                         )
+                    answer = postprocess_func(answer)
                     await asyncio.to_thread(
                         self.store.save_turn, tenant, session_id, request.message, answer,
                         self.settings.max_history,
@@ -199,6 +211,22 @@ class ChatService:
             await asyncio.to_thread(self.store.save_reply, tenant, request_id, result.model_dump())
             if queue is not None:
                 queue.put_nowait({"type": "answer", "data": result.model_dump()})
+            if request.voice and request.stream_voice and queue is not None:
+                from app.tts import spoken_text
+                clean_speech = spoken_text(answer)
+                if clean_speech:
+                    raw_parts = [p.strip() for p in re.split(r"(?<=[.!?;])\s+|\n+", clean_speech) if p.strip()]
+                    segments, current = [], ""
+                    for part in raw_parts:
+                        current = f"{current} {part}".strip() if current else part
+                        if len(current) >= 35:
+                            segments.append(current)
+                            current = ""
+                    if current:
+                        segments.append(current)
+                    voice_target = request.voice_name or self.settings.tts_voice
+                    for idx, seg in enumerate(segments):
+                        run.event("tts_segment", index=idx, total=len(segments), text=seg, voice=voice_target)
             if request.voice and not request.stream_voice:
                 run.event("speech_start")
                 try:
@@ -220,5 +248,6 @@ class ChatService:
             current_run.reset(token)
 
     async def close(self):
+        await self.harness.close()
         await self.tts.close()
         await self.providers.close()

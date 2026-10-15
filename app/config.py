@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     trusted_ingest_key: SecretStr = SecretStr("")
     # Public facts may be verified only from this explicit allowlist.
     official_source_domains: str = "vietnampost.vn"
+    # Specific S3 domains / bucket endpoints allowed for ingest (empty means allow public domains if SSRF-safe)
+    allowed_s3_domains: str = Field("", validation_alias=AliasChoices("ALLOWED_S3_DOMAINS", "allowed_s3_domains"))
+    checkpointer_enabled: bool = Field(True, validation_alias=AliasChoices("CHECKPOINTER_ENABLED", "checkpointer_enabled"))
 
     # Short clean property aliases
     @property
@@ -157,6 +160,10 @@ class Settings(BaseSettings):
     @property
     def official_domains(self) -> set[str]:
         return {item.strip().lower().lstrip(".") for item in self.official_source_domains.split(",") if item.strip()}
+
+    @property
+    def s3_allowed_domains(self) -> set[str]:
+        return {item.strip().lower().lstrip(".") for item in self.allowed_s3_domains.split(",") if item.strip()}
 
 
     @model_validator(mode="after")
