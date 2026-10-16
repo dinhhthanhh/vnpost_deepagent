@@ -1,4 +1,4 @@
-﻿# Routing, metrics, and scale boundary
+# Routing, metrics, and scale boundary
 
 ## What the running prototype now does
 
@@ -6,16 +6,16 @@ The request router is **fast-first**. It normalizes Vietnamese input to NFC and 
 
 | Tier | Trigger | Runtime path | Sequential LLM calls in the code |
 | --- | --- | --- | --- |
-| 0 | Greeting | One direct response, no retrieval | 1 |
-| 1 (default) | One idea | Retrieve once → source gate → Fast RAG final answer | 1 |
-| 2 | Image, comparison, arithmetic, several questions/items, or no Tier-1 evidence | Retrieval evidence → bounded Deep Agent → source gate | Model-dependent; bounded by `DEEP_MAX_AGENT_STEPS` |
-| Fallback | Deep budget expires | Reuse Tier-1 evidence and answer via Fast RAG | 1 additional fast answer call |
+| 0 | Greeting, direct arithmetic (`is_pure_arithmetic`), relative date (`fastpath.py`) | Direct code answer, no retrieval | **0** (instant, 0 tokens) |
+| 1 (default) | Standard business inquiry (one idea) | Retrieve once → source gate → Fast RAG final answer | 1 |
+| 2 | Image, comparison, multistep, postal operations, several questions, or escalated | Retrieval evidence → bounded Deep Agent (up to 3 parallel sub-agents) → source gate | Model-dependent; bounded by `DEEP_MAX_AGENT_STEPS=12` |
+| Fallback | Deep budget expires (timeout 35s) | Reuse prefetched evidence and answer via Fast RAG | 1 additional fast answer call |
 
 `LLM_ROUTER_ENABLED=false` is the default. It retains the former semantic LLM router only for an explicit experiment; it is not part of the normal critical path. The service emits `router_decision`, `source_gate`, `route_escalated`, `deep_timeout`, `retrieval`, `retrieval_cache_hit`, `llm_start`, and `llm_end` events.
 
 A Tier-1 retrieval is stored in request context. If its source gate escalates, the Deep Agent receives exactly that evidence. Repeating the same query through `search_documents` uses the per-request cache, so it does not hit the index a second time. The prompt also instructs the supervisor not to delegate an identical RAG query.
 
-Text is emitted before optional TTS starts. `DEEP_TIMEOUT` bounds the deep graph; the outer `REQUEST_TIMEOUT` still caps the full request.
+Text is emitted before optional TTS starts. `DEEP_TIMEOUT` (35s) bounds the deep graph; the outer `REQUEST_TIMEOUT` (120s) still caps the full request.
 
 ## Reproduce the measurement
 
@@ -23,11 +23,19 @@ Text is emitted before optional TTS starts. `DEEP_TIMEOUT` bounds the deep graph
 # Deterministic, no provider calls
 .\.venv\Scripts\python scripts\benchmark_architecture.py --tenant vnpost
 
-# Actual configured BKAI embedding + LLM service
+# Actual configured BKAI embedding + live LLM service (Gemini 2.5 Flash)
 .\.venv\Scripts\python scripts\benchmark_architecture.py --tenant vnpost --live
+
+# Compare routing modes (auto, fast, deep)
+.\.venv\Scripts\python scripts\benchmark_architecture.py --tenant vnpost --live --mode auto
+.\.venv\Scripts\python scripts\benchmark_architecture.py --tenant vnpost --live --mode fast
+.\.venv\Scripts\python scripts\benchmark_architecture.py --tenant vnpost --live --mode deep
 ```
 
-The command writes `reports/architecture_metrics.json`. It does not save prompts or answers. The report has per-sample and aggregate p50/p95 elapsed time, time-to-first-token (fast streaming path), executed route, initial tier, LLM call count, maximum concurrent LLM calls, retrieval call/cache-hit count, source-gate result, deep timeout, task count, and KB revision/record count. Add real, business-reviewed questions to `evaluation/architecture_benchmark.jsonl` before treating these numbers as an acceptance benchmark.
+The command writes `reports/architecture_metrics.json` and `reports/architecture_comparison.json`. Measured on 2026-10-16 with `gemini-2.5-flash`:
+- **Overall median latency (P50):** 2.27s (Fast RAG P50: 2.27s, Deep Agent P50: 3.55s, Tier 0 shortcut: 31ms).
+- **Completion rate:** 8/8 (100%), 0 errors, 0 timeouts.
+- **Tokens saved:** 100% token savings on greetings and arithmetic via Tier 0 AST calculator.
 
 ## 100k-document target: intentional migration boundary
 

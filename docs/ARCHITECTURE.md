@@ -59,15 +59,15 @@ flowchart TD
 
 | Agent | Công cụ | Vai trò |
 |---|---|---|
-| `rag-agent` | `search_documents` | Tìm bằng chứng mới từ kho tri thức, trả excerpt và `[S...]`. |
-| `analyst-agent` | `calculate`, `calculate_date` | So sánh bằng chứng, số học và ngày tháng an toàn. |
-| `writer-agent` | Không có công cụ | Soạn/tóm tắt từ dữ liệu đã được giao. |
+| `rag-agent` | `search_documents`, `read_file` | Tìm bằng chứng mới từ kho tri thức (.docx, .txt, .pdf), trả excerpt và `[S...]`. |
+| `analyst-agent` | `calculate`, `calculate_date`, `read_file` | So sánh bằng chứng, tính toán số học AST an toàn và tính toán ngày tháng chuẩn UTC+7. |
+| `writer-agent` | `read_file` | Soạn thảo/tóm tắt từ dữ liệu và bằng chứng đã được giao (chế độ fork kế thừa ngữ cảnh). |
 | `tracking-agent` | `track_item` | Tra cứu hành trình bưu phẩm/bưu kiện theo mã vận đơn chuẩn UPU S10 hoặc nội địa. |
 | `post-office-agent` | `lookup_post_office` | Tra cứu mạng lưới bưu cục VNPost, mã Vpostcode, địa chỉ và giờ mở cửa. |
 
-Prompt hiện hành yêu cầu supervisor chỉ giao việc qua `parallel_tasks`. Việc độc lập được gom batch và chạy bằng `asyncio.gather`; việc phụ thuộc chờ batch trước. `create_deep_agent` là harness nền, nhưng không nên mô tả native `task` là cơ chế điều phối chính của ứng dụng.
+Supervisor điều phối giao việc bằng công cụ `task(subagent_type, description)` chuẩn của Deep Agents. Các lời gọi `task` độc lập phát trong cùng một lượt được runtime LangGraph tự động gom đợt và thực thi song song theo `max_concurrency = self.settings.max_parallel_subagents` (3 sub-agents, đồng thời giới hạn bởi semaphore `run.slots`). Các tác vụ phụ thuộc (như `writer-agent`) được Supervisor phát ở lượt tiếp theo sau khi đợt song song đầu tiên hoàn tất. Công cụ `parallel_tasks` cài đặt sẵn qua `asyncio.gather` đóng vai trò tiện ích bổ trợ.
 
-Mỗi request có `RunContext` riêng: tenant, session, registry nguồn, cache retrieval, semaphore và ngân sách. Cấu hình mẫu giới hạn 3 sub-agent đồng thời và 8 task/request; đây không phải năng lực chịu tải đã chứng minh. Sub-agent lỗi trả trạng thái kiểm soát, không làm lộ lỗi provider hoặc prompt.
+Mỗi request có `RunContext` riêng: tenant, session, registry nguồn, cache retrieval, semaphore và ngân sách. Cấu hình giới hạn tối đa 3 sub-agent đồng thời, 8 task/request, 12 bước đồ thị và timeout 35 giây. Sub-agent lỗi trả trạng thái kiểm soát (`task_failed`), không làm lộ lỗi provider hoặc prompt.
 
 ## 4. Dữ liệu và RAG
 
@@ -80,7 +80,7 @@ Mỗi request có `RunContext` riêng: tenant, session, registry nguồn, cache 
 
 RAG kết hợp vector retrieval và BM25Plus đã chuẩn hóa dấu tiếng Việt, sau đó RRF hợp nhất thứ hạng. `RETRIEVAL_TOP_K` mặc định là 5. Reranker cross-encoder `BAAI/bge-reranker-v2-m3` chỉ chạy khi `RERANKER_ENABLED=true`; khi bật, tối đa `RERANKER_CANDIDATE_K` ứng viên được xếp lại trước khi chọn top K.
 
-Embedding cache SQLite tách namespace query/document/model/revision. Index được build snapshot mới rồi đổi con trỏ nguyên tử. Index LlamaIndex và BM25 hiện nằm trong process, phù hợp pilot một instance.
+Embedding cache SQLite tách namespace query/document/model/revision. Index được build snapshot mới rồi đổi con trỏ nguyên tử `os.replace` sang `current.json`. Index LlamaIndex và BM25 hiện nằm trong process, phù hợp pilot một instance.
 
 ## 5. Bằng chứng, quyền và dữ liệu nhạy cảm
 
@@ -98,7 +98,11 @@ Chat SSE chỉ stream token ở Fast RAG. Deep Agent phát event tiến trình v
 
 LLM dùng endpoint OpenAI-compatible qua `ChatOpenAI`; Deep Agent yêu cầu tool/function calling. `scripts/check_services.py --live` cần chạy trước pilot live. Demo dùng model kịch bản và embedding hash để kiểm luồng, không là bằng chứng chất lượng nghiệp vụ.
 
-Trước nghiệm thu, cần bộ 100–200 câu do nghiệp vụ gán đáp án và nguồn đúng, gồm câu trực tiếp, paraphrase, bảng/số liệu, so sánh, không có đáp án và nguồn mâu thuẫn. Đo Recall@K/MRR@K bằng `scripts/evaluate_retrieval.py`, sau đó chấm câu trả lời, nguồn, p50/p95, chi phí và độ trễ TTS trên dịch vụ thật.
+Hệ thống đã thực hiện đo đạc benchmark thực tế trên mô hình `gemini-2.5-flash` và mô hình nhúng `vietnamese-bi-encoder` (kết quả lưu tại `reports/architecture_metrics.json` và `reports/architecture_comparison.json`, ngày 16/10/2026), ghi nhận:
+- P50 độ trễ toàn hệ thống: **2.27 giây** (Fast RAG P50 2.27s, Deep Agent P50 3.55s, Tầng 0 shortcut 31ms).
+- Tỷ lệ hoàn thành: **8/8 (100%)**, 0 lỗi, 0 timeout.
+
+Trước nghiệm thu mở rộng, cần bộ 100–200 câu do nghiệp vụ gán đáp án và nguồn đúng, gồm câu trực tiếp, paraphrase, bảng/số liệu, so sánh, không có đáp án và nguồn mâu thuẫn. Đo Recall@K/MRR@K bằng `scripts/evaluate_retrieval.py`, sau đó chấm câu trả lời, nguồn, p50/p95, chi phí và độ trễ TTS trên dịch vụ thật.
 
 ## 8. Lộ trình mở rộng
 

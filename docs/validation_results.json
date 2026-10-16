@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
-  "date": "2026-10-13",
-  "python_tests": 50,
+  "version": "1.1.0",
+  "date": "2026-10-16",
+  "python_tests": 141,
   "failures": 0,
   "errors": 0,
   "frontend_tests": 11,
@@ -12,6 +12,14 @@
     "answerContains7Days": true,
     "horizontalOverflow": false
   },
-  "providers": "mocked HTTP / offline scripted model; no real LLM weights or VNPost TTS calls",
+  "live_benchmark": {
+    "model": "gemini-2.5-flash",
+    "embedding": "bkai-foundation-models/vietnamese-bi-encoder",
+    "overall_p50_ms": 2266,
+    "fast_rag_p50_ms": 2266,
+    "deep_agent_p50_ms": 3547,
+    "tier0_shortcut_ms": 31,
+    "success_rate": "8/8 (100%)"
+  },
   "word_pages": 10
 }

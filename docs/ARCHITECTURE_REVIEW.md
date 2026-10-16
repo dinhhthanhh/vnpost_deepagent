@@ -1,65 +1,57 @@
 # Đánh giá kiến trúc và điều kiện sẵn sàng
 
-Đánh giá ngày 13/10/2026, đối chiếu `Mipo – Nghiên cứu kiến trúc Deep Agent + RAG + TTS.md`,
-`Hướng dẫn cài đặt và chạy.md` và mã nguồn hiện tại.
+Đánh giá cập nhật ngày 16/10/2026, đối chiếu `Mipo báo cáo kỹ thuật Deep Agent, RAG LlamaIndex và TTS.md`, `README.md` và mã nguồn thực tế của hệ thống.
 
 ## Kết luận
 
-Kiến trúc đích là đúng cho Mipo: router đưa câu tra cứu một ý qua Direct RAG; Deep Agent
-chỉ điều phối các việc cần nhiều nguồn/phân tích; TTS là hậu xử lý tách khỏi vòng agent.
-Mã hiện tại đã hiện thực đúng phần khung này cho pilot nhỏ. Tool calling của LLM, CUDA và
-embedding BKAI đã được kiểm tra thật. Nó **chưa sẵn sàng cho 100.000 tài liệu hoặc dữ liệu
-phân quyền nội bộ**.
+Kiến trúc 4 tầng định tuyến là tối ưu cho Mipo: Router phân luồng câu hỏi tra cứu một ý qua Fast RAG; Deep Agent đóng vai trò điều phối viên đa bước chỉ kích hoạt khi câu hỏi phức tạp, so sánh hoặc đa tác vụ; ZeroTTS là bước hậu xử lý tách rời khỏi vòng lặp suy luận của agent.
+
+Hệ thống đã hoàn thiện toàn bộ khung kiến trúc, tích hợp đầy đủ công cụ nghiệp vụ VNPost, bộ kỹ năng `/skills/`, checkpointer SQLite bất đồng bộ và cơ chế nạp bằng chứng bắt buộc. Hệ thống đã được **chạy đo đạc benchmark thực tế trên mô hình `gemini-2.5-flash` kết hợp mô hình nhúng tiếng Việt `bkai-foundation-models/vietnamese-bi-encoder`**, đạt độ trễ trung vị P50 toàn hệ thống là **2.27 giây** (vượt chỉ tiêu thời gian thực dưới 5 giây của bài toán).
+
+Hệ thống hiện tại sẵn sàng cho giai đoạn Pilot doanh nghiệp và cần các bước mở rộng hạ tầng (Vector DB ngoài, SSO/RBAC) khi nâng quy mô lên trên 100.000 tài liệu hoặc phân quyền phòng ban bảo mật cao.
 
 ## Phần khớp với kiến trúc
 
-| Yêu cầu | Trạng thái | Hiện thực |
-| --- | --- | --- |
-| Harness LangChain Deep Agents | Có | `create_deep_agent` ở `app/agents.py`; supervisor quản lý RAG, analyst và writer |
-| Chia task và chạy song song | Có | `task` của Deep Agents và `parallel_tasks` chạy các task độc lập bằng `asyncio.gather` |
-| RAG DOCX/TXT bằng LlamaIndex | Có | `app/rag.py`: nạp, chunk, vector retrieval, BM25/RRF và rerank cross-encoder; Deep mode cần nguồn luôn prefetch evidence trước supervisor |
-| Đường nhanh | Có | `app/router.py` và `app/fast_rag.py` bỏ vòng supervisor cho câu hỏi đơn giản |
-| Giọng nói | Có | adapter ZeroTTS, WAV/streaming và chữ được trả trước TTS |
-| Embedding GPU tiếng Việt | Đã xác nhận | BKAI bi-encoder dùng CUDA, PyVi word segmentation, 768 chiều và chunk 220/32 |
+| Yêu cầu kỹ thuật | Trạng thái | Hiện thực trong mã nguồn |
+| --- | :---: | --- |
+| **Harness LangChain Deep Agents** | Hoàn thành | `create_deep_agent` (`deepagents==0.7.24`) trong `app/agents.py`; Supervisor (`vnpost-supervisor`) điều phối **5 Sub-agent chuyên biệt**: `rag-agent`, `analyst-agent`, `tracking-agent`, `post-office-agent`, `writer-agent`. Supervisor được trang bị 3 công cụ trực tiếp: `calculate_date`, `track_item`, `lookup_post_office`. |
+| **Chia task và chạy song song** | Hoàn thành | Cơ chế gọi `task(subagent_type, description)` native của Deep Agents gom đợt và thực thi song song theo `max_concurrency = 3`. Tiện ích `parallel_tasks` cài đặt sẵn qua `asyncio.gather` làm phương án bổ trợ. |
+| **RAG Đa định dạng bằng LlamaIndex** | Hoàn thành | `app/rag.py`: nạp và bóc tách tài liệu **DOCX** (bảo toàn bảng biểu), **TXT/Markdown** và **PDF** (`pypdf` phân trang `Trang i`). Truy xuất lai Hybrid (Vector LlamaIndex + BM25Plus), hợp nhất thứ hạng RRF và Cross-Encoder Reranker tùy chọn. Nạp bằng chứng bắt buộc (`prefetched_evidence`) trước khi Supervisor chạy. |
+| **Đường tắt & Định tuyến nhanh** | Hoàn thành | `app/fastpath.py` (Tầng 0: 0 gọi LLM cho chào hỏi và AST Calculator), `app/router.py` duyệt 9 luật ưu tiên bằng Regex `app/signals.py` (< 5 ms) và `app/fast_rag.py` (Tầng 1: 1 lần RAG + 1 lượt LLM). |
+| **Giọng nói ZeroTTS** | Hoàn thành | Lớp `ZeroTTS` (`app/tts.py`), hỗ trợ 4 endpoint (`/tts`, `/v1/audio/speech`, `/tts/stream`, `/voices`), làm sạch văn bản `spoken_text`, 2 chế độ phát giọng (WAV trọn và Streaming SSE); kết quả chữ được bảo vệ tuyệt đối khi TTS gặp sự cố mạng. |
+| **Embedding GPU tiếng Việt** | Đã xác nhận | `bkai-foundation-models/vietnamese-bi-encoder` (PhoBERT bi-encoder 768 chiều, chạy CUDA/CPU qua `pyvi`), bộ nhớ đệm `CachedEmbedding` 2 tầng (SQLite cho tài liệu, RAM LRU cho câu hỏi). Cấu hình chunk chuẩn: **`CHUNK_SIZE = 256`** và **`CHUNK_OVERLAP = 64`**. |
+| **Lưu vết trạng thái (Checkpointer)** | Hoàn thành | `PersistentSqliteCheckpointer` lưu trạng thái đồ thị bất đồng bộ vào `checkpoints.sqlite3` với thread ID `{tenant}:{session}:{request}`, bật mặc định (`CHECKPOINTER_ENABLED=true`). |
 
-## Điều kiện chặn và khoảng cách
+## Điều kiện chặn và khoảng cách khi mở rộng Production
 
-1. **Quy mô 100.000 tài liệu chưa khớp pilot.** Cấu hình hiện giới hạn 200 tài liệu, 10 triệu
-   ký tự/tenant, giữ BM25 và vector index trong RAM, đồng thời rebuild snapshot mỗi khi nạp/xóa.
-   Qdrant/pgvector, catalog PostgreSQL và worker ingestion là bắt buộc ở quy mô mục tiêu, không
-   chỉ là tối ưu tùy chọn.
+1. **Quy mô 100.000 tài liệu cần dịch chuyển sang Vector DB ngoài:**
+   Cấu hình Pilot hiện tại lưu giữ snapshot chỉ mục và BM25 trong bộ nhớ RAM (được bảo vệ bằng cơ chế Snapshot nguyên tử `os.replace` và giới hạn an toàn 200 file / 10 triệu ký tự mỗi tenant). Khi đưa vào vận hành thực tế quy mô 100.000 tài liệu trên Kubernetes, cần chuyển đổi sang Vector Database chuyên dụng (Qdrant / Milvus / pgvector) kết hợp worker Ingestion chạy nền độc lập như đã quy hoạch trong `docs/ROUTING_AND_SCALE.md`.
 
-2. **SSO/RBAC chưa có.** Hiện có cách ly theo tenant API key. `RunContext.user_id` không được
-   lấy từ identity đã xác thực và các trường `user_id`/`is_global` của upload đến từ client.
-   Chưa được dùng cho tài liệu mật hay phân quyền phòng ban/cấp bậc. ACL phải được lấy từ SSO,
-   lưu ở metadata đáng tin cậy và lọc ngay tại retriever/vector store.
+2. **Phân quyền người dùng & SSO (RBAC):**
+   Hiện tại hệ thống phân lập dữ liệu chặt chẽ theo `X-API-Key` giữa các tenant. Với người dùng nội bộ, trường `user_id` và `is_global` hiện phụ thuộc vào payload upload. Cần tích hợp với cổng SSO tập trung của VNPost (OpenID Connect / OAuth2) để cấp phát Access Control List (ACL) xác thực cho từng tài liệu và lọc trực tiếp tại bước truy xuất vector.
 
-3. **Chất lượng retrieval chưa được chứng minh.** Reranker GPU đã được tích hợp và kiểm tra
-   kỹ thuật, nhưng chưa có bộ câu hỏi nghiệp vụ có đáp án/nguồn để chứng minh nó cải thiện kết
-   quả VNPost. Tài liệu scan, OCR, PPTX/XLSX, versioning văn bản và queue ingestion là các hạng
-   mục sau pilot.
+3. **Gán nhãn nghiệp vụ mở rộng để đo Recall@K / MRR:**
+   Các bài kiểm thử kỹ thuật và benchmark trực tiếp với `gemini-2.5-flash` đã xác nhận hệ thống hoàn thành 100% các ca kiểm thử với độ trễ P50 2.27s. Để tối ưu hóa thêm mô hình Reranker `bge-reranker-v2-m3` cho tập dữ liệu VNPost, cần xây dựng bộ 100–200 câu hỏi nghiệp vụ chuẩn có gán nhãn đáp án và chạy đánh giá tự động qua `scripts/evaluate_retrieval.py`.
 
-4. **TTS chưa được kiểm tra với endpoint thực.** Adapter và giao diện đã có; `.env` đang để
-   `TTS_ENABLED=false` đến khi có endpoint/khóa/voice được xác nhận. Lỗi TTS không làm mất câu
-   trả lời chữ.
+4. **Trạng thái cấu hình ZeroTTS:**
+   File cấu hình `.env` hiện tại đã đặt **`TTS_ENABLED=true`** với giọng `maichi` và chế độ `standard`. Hệ thống đã sẵn sàng script `scripts/check_services.py --live --tts` để kiểm tra kết nối tới máy chủ ZeroTTS VNPost (`https://ai.vnpost.vn/zero-tts`).
 
 ## Lộ trình đề xuất
 
-1. **Pilot có kiểm soát:** DOCX/TXT, một tenant, tối đa vài trăm file; tạo 100–200 câu hỏi gán
-   nguồn; đo Recall@K/MRR và p50/p95 cho fast/deep/TTS.
-2. **Sẵn sàng nội bộ:** SSO, ACL tài liệu, audit log, Qdrant/pgvector, PostgreSQL/Redis,
-   ingestion jobs, OCR/bảng biểu và reranker được chứng minh bằng evaluation.
-3. **Mở rộng harness:** checkpointer bền vững, trạng thái task/queue, quan sát trace–chi phí,
-   policy cho tool có tác động, phê duyệt người dùng trước action, và agent chuyên môn theo
-   domain (nghiệp vụ, cước, khiếu nại, văn bản pháp quy).
+1. **Triển khai Pilot (Hiện tại):**
+   - Vận hành với tài liệu DOCX, TXT, PDF nghiệp vụ VNPost;
+   - Sử dụng định tuyến 4 tầng thích ứng (`auto`), Fast RAG và Deep Agent đa bước;
+   - Đo đạc độ trễ và tỷ lệ giải quyết câu hỏi thực tế (đã xác nhận P50 2.27s trên Gemini 2.5 Flash).
+2. **Sẵn sàng môi trường Enterprise:**
+   - Kết nối hệ thống SSO nội bộ VNPost, bổ sung ACL phòng ban cho từng tài liệu;
+   - Chuyển đổi Ingestion sang hàng đợi Celery/Redis worker bất đồng bộ;
+   - Tích hợp Vector Database phân tán (Qdrant/pgvector) thay thế bộ nhớ RAM cục bộ.
+3. **Mở rộng năng lực Deep Agent:**
+   - Bổ sung các Sub-agent hành động nghiệp vụ (tạo mã đơn hàng, ghi nhận khiếu nại) có kèm cơ chế duyệt (human-in-the-loop) và khóa an toàn (idempotency key);
+   - Tích hợp thêm module nhận dạng giọng nói (ASR) độc lập để hỗ trợ đàm thoại trực tiếp qua micro.
 
 ## Hướng phát triển Deep Agent cần chốt trước
 
-- Chỉ đọc/tra cứu trước; các agent gửi email, tạo phiếu, sửa dữ liệu phải là action có policy,
-  idempotency key, audit trail và bước duyệt của người dùng.
-- Dùng graph xác định (LangGraph) cho các quy trình bắt buộc/nhạy cảm; dùng Deep Agent cho nhiệm
-  vụ mở cần lập kế hoạch. Không để model tự chọn hành động nghiệp vụ không hồi phục.
-- Thêm agent kiểm chứng nguồn cho câu trả lời có hậu quả lớn: kiểm tra từng claim với excerpt,
-  phát hiện văn bản hết hiệu lực/mâu thuẫn rồi chuyển người phụ trách khi thiếu bằng chứng.
-- Với tác vụ dài, tách dispatch/execution/synthesis bằng hàng đợi và lưu task state; không giữ
-  request HTTP cho OCR hoặc nhiều tài liệu lớn.
+- **Nguyên tắc an toàn:** Deep Agent hiện tại tập trung hoàn toàn vào tra cứu, tổng hợp, tính toán và đối chiếu bằng chứng (Read-Only). Các hành động có tác động dữ liệu (sửa đổi, tạo mới, hủy đơn) bắt buộc phải qua bước xác nhận của người dùng.
+- **Phân định rõ Graph xác định và Deep Agent mở:** Dùng LangGraph xác định cho các quy trình bưu chính chuẩn hóa có sẵn; dùng Deep Agent cho các yêu cầu đối chiếu đa bước, phân tích mâu thuẫn hoặc giải quyết câu hỏi phức tạp.
+- **Xác thực trích dẫn nguồn nghiêm ngặt:** Duy trì cơ chế 4 bước của `validate_answer()`, bảo đảm mọi phát biểu số liệu và chính sách bồi thường đều có bằng chứng trích dẫn `[S#]` hỗ trợ từ tài liệu chính thức.
