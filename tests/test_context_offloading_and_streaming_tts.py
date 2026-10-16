@@ -60,7 +60,7 @@ async def test_context_offloading_and_read_file(settings):
     scope = RunContext(tenant, "req-rf", 3, 8)
     token = current_run.set(scope)
     try:
-        scope.retrieval_cache["cache_key"] = json.dumps({"sources": [{"citation_id": "S1", "excerpt": "Sample"}]})
+        scope.retrieval_cache["/evidence/prefetched_sources.json"] = json.dumps({"sources": [{"citation_id": "S1", "excerpt": "Sample"}]})
         content = svc.harness.read_file.invoke({"path": "/evidence/prefetched_sources.json"})
         assert "sources" in content
     finally:

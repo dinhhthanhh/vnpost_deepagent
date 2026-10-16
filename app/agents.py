@@ -7,7 +7,7 @@ import uuid
 import warnings
 from typing import Annotated, Any
 
-from deepagents import SubAgent, create_deep_agent
+from deepagents import create_deep_agent
 from deepagents.backends import StateBackend
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from langchain.agents import create_agent
@@ -163,9 +163,6 @@ class AgentHarness:
                     cached = run.retrieval_cache.get("/evidence/prefetched_sources.json")
                     if cached:
                         return cached
-                    for v in run.retrieval_cache.values():
-                        if v and "sources" in v:
-                            return v
             except Exception:
                 pass
             return json.dumps({"error": f"File '{clean_path}' not found"})
