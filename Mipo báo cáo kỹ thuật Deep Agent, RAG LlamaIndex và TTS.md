@@ -536,7 +536,7 @@ Trước khi đưa vào TTS, văn bản trả lời được chuyển đổi san
 | Nhóm | Tham số cấu hình | Giá trị vận hành thực tế (`.env`) | Giá trị mặc định (`config.py`) |
 | :--- | :--- | :--- | :--- |
 | **Định tuyến** | `ROUTER_ENABLED` / `LLM_ROUTER_ENABLED` | `true` / `false` (không bật LLM router) | `false` / `false` |
-| **Mô hình LLM** | `LLM_MODEL` / `SUBAGENT_MODEL` | `gemini-2.5-flash` (hoặc Qwen3.5-35B on-premise) | `gemini-2.5-flash` / `""` |
+| **Mô hình LLM** | `LLM_MODEL` / `SUBAGENT_MODEL` | `gemini-2.5-flash` | `your-tool-calling-model` / `""` |
 | **Thị giác máy tính** | `LLM_SUPPORTS_VISION` | `true` (tự động nhận diện qua tên model gemini, gpt-4o, -vl) | `false` |
 | **Giới hạn thời gian** | `REQUEST_TIMEOUT` / `LLM_TIMEOUT` / `DEEP_TIMEOUT` | `120s` / `60s` / `35s` | `120s` / `45s` / `35s` |
 | **Giới hạn đồng thời** | `MAX_REQUESTS` / `MAX_SUBAGENTS` / `MAX_TASKS` | `4` câu hỏi / `3` sub-agents / `8` tasks | `4` / `3` / `8` |
