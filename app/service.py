@@ -115,6 +115,16 @@ class ChatService:
         token = current_run.set(run)
         try:
             shortcut = local_answer(request.message, chitchat=analyze(request.message).chitchat) if not request.image else None
+            if request.image and not self.settings.supports_vision:
+                from app.fastpath import LocalAnswer
+                shortcut = LocalAnswer(
+                    kind="chitchat",
+                    text=(
+                        f"Mô hình ngôn ngữ hiện tại ({self.settings.llm_model}) là mô hình chuyên xử lý văn bản, "
+                        "chưa hỗ trợ nhận diện hình ảnh trực tiếp (Vision/OCR). "
+                        "Vui lòng nhập nội dung câu hỏi hoặc mã vận đơn bằng văn bản để tôi hỗ trợ bạn tốt nhất nhé!"
+                    ),
+                )
             if shortcut is not None:
                 decision = RouterDecision("fast", "Đường tắt cục bộ không gọi LLM", "rule", 1.0, tier=0)
             elif request.mode == "fast":

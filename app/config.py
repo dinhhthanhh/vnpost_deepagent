@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     llm_model: str = "your-tool-calling-model"
     subagent_model: str = ""
     llm_thinking: bool = Field(False, validation_alias=AliasChoices("LLM_THINKING", "llm_thinking"))
+    llm_supports_vision: bool = Field(False, validation_alias=AliasChoices("LLM_SUPPORTS_VISION", "llm_supports_vision"))
     llm_timeout_seconds: float = Field(45, gt=0, le=300, validation_alias=AliasChoices("LLM_TIMEOUT", "LLM_TIMEOUT_SECONDS"))
     request_timeout_seconds: float = Field(120, gt=0, le=600, validation_alias=AliasChoices("REQUEST_TIMEOUT", "REQUEST_TIMEOUT_SECONDS"))
     max_active_requests: int = Field(4, ge=1, le=32, validation_alias=AliasChoices("MAX_REQUESTS", "MAX_ACTIVE_REQUESTS"))
@@ -64,7 +65,7 @@ class Settings(BaseSettings):
     max_corpus_characters: int = Field(10_000_000, ge=10000, validation_alias=AliasChoices("MAX_CORPUS_CHARS", "MAX_CORPUS_CHARACTERS"))
     max_docx_expanded_bytes: int = Field(60_000_000, ge=1024, validation_alias=AliasChoices("MAX_DOCX_BYTES", "MAX_DOCX_EXPANDED_BYTES"))
     max_upload_bytes: int = Field(15_000_000, ge=1024)
-    max_documents: int = Field(200, ge=1, le=10000)
+    max_documents: int = Field(200, ge=1, le=1_000_000)
     max_history_messages: int = Field(16, ge=2, le=100, validation_alias=AliasChoices("MAX_HISTORY", "MAX_HISTORY_MESSAGES"))
     allow_hash_embedding: bool = Field(False, validation_alias=AliasChoices("ALLOW_HASH", "ALLOW_HASH_EMBEDDING"))
     allow_anonymous_demo: bool = Field(True, validation_alias=AliasChoices("ALLOW_ANONYMOUS", "ALLOW_ANONYMOUS_DEMO"))
@@ -101,6 +102,13 @@ class Settings(BaseSettings):
     @property
     def llm_timeout(self) -> float:
         return self.llm_timeout_seconds
+
+    @property
+    def supports_vision(self) -> bool:
+        if self.llm_supports_vision:
+            return True
+        model = (self.llm_model or "").lower()
+        return any(v in model for v in ("-vl", "vision", "gpt-4o", "gemini", "claude-3"))
 
     @property
     def deep_timeout(self) -> float:

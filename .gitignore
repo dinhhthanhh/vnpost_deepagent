@@ -17,7 +17,8 @@ test-results/
 # Generated datasets, reports, and local API clients
 datasets/
 evaluation/
-reports/
+reports/*
+!reports/*.json
 postman/
 scripts/compare_architectures.py
 scripts/finalize_understand_graph.py
@@ -26,6 +27,7 @@ scripts/generate_understand_batches.py
 # Local reference docs and workspace metadata
 Hướng dẫn cài đặt và chạy*.md
 Mipo*.md
+!Mipo báo cáo kỹ thuật Deep Agent, RAG LlamaIndex và TTS.md
 agent.template/
 .postman/
 reference/

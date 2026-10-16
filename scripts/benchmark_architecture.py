@@ -134,7 +134,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             started = time.perf_counter()
             request = ChatRequest(
                 message=sample["message"], grounded=sample.get("grounded", True),
-                mode=sample.get("mode", "auto"), voice=False,
+                mode=args.mode or sample.get("mode", "auto"), voice=False,
             )
             try:
                 # Passing a queue enables fast-token events; no prompt/completion is retained.
@@ -167,6 +167,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             "llm_router_enabled": settings.llm_router_enabled,
             "deep_timeout_seconds": settings.deep_timeout,
             "deep_max_agent_steps": settings.deep_max_agent_steps,
+            "forced_mode": args.mode,
         },
         "knowledge_base": kb_metadata(settings, args.tenant),
         "summary": aggregate(rows),
@@ -181,6 +182,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--live", action="store_true", help="Call providers configured in .env; default is deterministic demo model")
+    parser.add_argument("--mode", choices=["auto", "fast", "deep"], help="Force one route mode for every sample")
     args = parser.parse_args()
     args.dataset = args.dataset.resolve()
     args.output = args.output.resolve()
