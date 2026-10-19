@@ -529,9 +529,9 @@ export default function App() {
     let hasText = false;
     const enqueue = (text, flush = false) => {
       pending += text;
-      const matches = [...pending.matchAll(/[.!??](?=\s|$)/g)];
+      const matches = [...pending.matchAll(/[,.!?:;\n](?=\s|$)/g)];
       const boundary = matches.length ? matches.at(-1).index + 1 : 0;
-      const chunk = flush ? pending.trim() : (boundary >= 32 ? pending.slice(0, boundary).trim() : "");
+      const chunk = flush ? pending.trim() : (boundary >= 24 ? pending.slice(0, boundary).trim() : "");
       if (!chunk) return;
       pending = flush ? "" : pending.slice(boundary);
       hasText = true;
@@ -723,22 +723,36 @@ export default function App() {
 
   async function readAnswer(message) {
     stopAudio();
-    if (message.blob) {
-      audio.current = new Audio(message.blob);
-      audio.current.play().catch((e) => setNotice(e.message));
+    const text = message.answer || message.text;
+    if (!text) return;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      setNotice("Trình duyệt không hỗ trợ Web Audio.");
       return;
     }
+    const controller = new AbortController();
+    const context = new AudioContextClass();
+    stream.current = { controller, context };
+    context.resume().catch(() => {});
+    setStreamingAudio(true);
+
     try {
-      setNotice("Đang tạo giọng đọc ZeroTTS…");
-      const data = await request("/api/tts", key, {
+      const response = await request("/api/tts/stream", key, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: message.answer || message.text, voice: voiceName }),
-      }).then((r) => r.json());
-      await prepareAudio(data.audio_url, message.id);
-      setNotice("");
+        body: JSON.stringify({ text, voice: voiceName }),
+        signal: controller.signal,
+      });
+      await playWavStream(response, context, {
+        signal: controller.signal,
+        onFirstAudio: () => setStreamingAudio(true),
+      });
     } catch (e) {
-      setNotice(e.message);
+      if (e.name !== "AbortError") setNotice(e.message);
+    } finally {
+      if (stream.current?.controller === controller) {
+        setStreamingAudio(false);
+      }
     }
   }
 
