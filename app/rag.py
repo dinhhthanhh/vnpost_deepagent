@@ -87,6 +87,30 @@ def filter_relevant_hits(query: str, hits: list[dict], min_overlap: int | None =
     return filtered
 
 
+def resolve_search_query(message: str, history: list[dict] | None = None) -> str:
+    """Nếu câu hỏi hiện tại ngắn hoặc mang tính tham chiếu (follow-up), kết hợp ngữ cảnh lượt trước để truy vấn RAG chính xác."""
+    clean = (message or "").strip()
+    words = clean.split()
+    if not history or len(words) > 10:
+        return clean
+    referential_keywords = (
+        "tài liệu nào", "ở đâu", "bao nhiêu", "như thế nào", "thời gian", "khi nào",
+        "chi tiết", "cụ thể", "vùng", "cước", "phí", "nó", "dịch vụ này", "gói này",
+        "tại sao", "ai", "mã nào", "bảng giá", "bảng cước", "quy định ở đâu",
+    )
+    is_referential = len(words) <= 5 or any(kw in clean.lower() for kw in referential_keywords)
+    if not is_referential:
+        return clean
+    last_user_query = ""
+    for turn in reversed(history):
+        if turn.get("role") == "user" and turn.get("content"):
+            last_user_query = turn["content"].strip()
+            break
+    if not last_user_query or last_user_query.lower() == clean.lower():
+        return clean
+    return f"{last_user_query} ({clean})"
+
+
 def embedding_units(text: str) -> list[str]:
     """Conservative token estimate used only to protect an encoder's input window."""
     return re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE)
@@ -250,14 +274,14 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
             line_number = line_index + 1
             line = lines[line_index].strip()
             header = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
-            if header:
+            if header and len(line) <= 200:
                 flush_paragraph(line_number - 1)
                 section = header.group(1)
                 paragraph_start = line_number + 1
                 line_index += 1
                 continue
             is_numbered_heading = re.match(r"^(?:[IVXLCDM]+|\d+)\.\s+\S", line)
-            if (not paragraph and is_numbered_heading
+            if (not paragraph and is_numbered_heading and len(line) <= 120
                     and line_index + 1 < len(lines) and not lines[line_index + 1].strip()):
                 section = line
                 paragraph_start = line_number + 1

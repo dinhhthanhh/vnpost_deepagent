@@ -27,7 +27,7 @@ from app.context import current_run
 from app.demo import DemoChatModel, message_text
 from app.metrics import RunMetricsCallback
 from app.providers import ProviderClients
-from app.rag import STOPWORDS, KnowledgeBases, filter_relevant_hits, tokens
+from app.rag import STOPWORDS, KnowledgeBases, filter_relevant_hits, resolve_search_query, tokens
 from app.schemas import TaskSpec
 from app.terminology import build_terminology_hint, find_matched_terminology, load_terminology
 
@@ -401,8 +401,9 @@ class AgentHarness:
             else:
                 run.event("rag_prefetch_start")
                 try:
+                    search_query = resolve_search_query(message, history)
                     async with run.slots:
-                        mandatory_evidence = await self.search_documents.ainvoke({"query": message})
+                        mandatory_evidence = await self.search_documents.ainvoke({"query": search_query})
                     if mandatory_evidence:
                         run.retrieval_cache["/evidence/prefetched_sources.json"] = mandatory_evidence
                     run.event("rag_prefetch_end", status="ok")
@@ -439,12 +440,12 @@ class AgentHarness:
                     fn = s.get("filename", "")
                     heading = s.get("heading") or s.get("page_label") or ""
                     exc = s.get("excerpt", "")
-                    clean_exc = " ".join(exc.split())
-                    if len(clean_exc) > 700:
-                        clean_exc = clean_exc[:697] + "..."
+                    clean_exc = exc.strip()
+                    if len(clean_exc) > 2500:
+                        clean_exc = clean_exc[:2497] + "..."
                     header = f"[{cid}] {fn}" + (f" ({heading})" if heading else "")
-                    summary_items.append(f"{header}: {clean_exc}")
-                evidence_summary = "\n".join(summary_items) if summary_items else mandatory_evidence
+                    summary_items.append(f"{header}:\n{clean_exc}")
+                evidence_summary = "\n\n".join(summary_items) if summary_items else mandatory_evidence
             except Exception:
                 evidence_summary = mandatory_evidence
 

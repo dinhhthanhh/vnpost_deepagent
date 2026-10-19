@@ -11,7 +11,7 @@ from app.context import current_run
 from app.demo import message_text
 from app.prompts import FAST_RAG_SYSTEM_PROMPT, fast_user_message
 from app.providers import ProviderClients
-from app.rag import KnowledgeBases, filter_relevant_hits
+from app.rag import KnowledgeBases, filter_relevant_hits, resolve_search_query
 from app.terminology import build_terminology_hint, find_matched_terminology, load_terminology
 
 
@@ -89,13 +89,14 @@ class FastRAGExecutor:
                 direct_answer=math_ans,
             )
 
+        search_query = resolve_search_query(message, history)
         kb = await asyncio.to_thread(self.knowledge.for_tenant, tenant)
         raw_hits = await asyncio.to_thread(
-            kb.retrieve, message, top_k=self.settings.retrieval_top_k,
+            kb.retrieve, search_query, top_k=self.settings.retrieval_top_k,
             session_id=run.session_id, user_id=run.user_id,
         )
         # Lọc các hit thực sự có từ khóa liên quan tới câu hỏi để không làm nhiễu Source Gate
-        hits = filter_relevant_hits(message, raw_hits)
+        hits = filter_relevant_hits(search_query, raw_hits)
         sources = [run.cite(hit) for hit in hits]
         run.event(
             "retrieval", count=len(sources), candidates=len(raw_hits), revision=kb.snapshot.revision,
