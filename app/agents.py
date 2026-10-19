@@ -19,13 +19,19 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, MessagesState, StateGraph
 from pydantic import Field
 
-from app.checkpointer import PersistentSqliteCheckpointer
-
-warnings.filterwarnings("ignore", category=LangChainBetaWarning)
-
 from app import prompts
 from app.calculator import safe_calculate, safe_date_calculate
+from app.checkpointer import PersistentSqliteCheckpointer
+from app.config import Settings
+from app.context import current_run
+from app.demo import DemoChatModel, message_text
+from app.metrics import RunMetricsCallback
+from app.providers import ProviderClients
+from app.rag import STOPWORDS, KnowledgeBases, filter_relevant_hits, tokens
+from app.schemas import TaskSpec
 from app.terminology import build_terminology_hint, find_matched_terminology, load_terminology
+
+warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 
 
 def _load_enterprise_skills() -> dict[str, Any]:
@@ -42,15 +48,6 @@ def _load_enterprise_skills() -> dict[str, Any]:
             except Exception:
                 pass
     return files
-
-
-from app.config import Settings
-from app.context import current_run
-from app.demo import DemoChatModel, message_text
-from app.metrics import RunMetricsCallback
-from app.providers import ProviderClients
-from app.rag import KnowledgeBases, STOPWORDS, tokens, filter_relevant_hits
-from app.schemas import TaskSpec
 
 
 def create_model(settings: Settings, role: str, clients: ProviderClients | None = None):
@@ -167,11 +164,81 @@ class AgentHarness:
                 pass
             return json.dumps({"error": f"File '{clean_path}' not found"})
 
+        @tool
+        def create_draft_booking(
+            sender_name: str,
+            sender_phone: str,
+            sender_address: str,
+            receiver_name: str,
+            receiver_phone: str,
+            receiver_address: str,
+            weight_grams: int,
+            length_cm: float = 0.0,
+            width_cm: float = 0.0,
+            height_cm: float = 0.0,
+            service_type: str = "EMS",
+            declared_value: float = 0.0,
+        ) -> str:
+            """Tạo bản nháp đơn gửi hàng VNPost và tính toán khối lượng quy đổi cồng kềnh (hệ số 6000), ước tính cước phí. Đơn nháp cần người dùng xác nhận (HITL) trước khi phát hành mã vận đơn."""
+            from app.postal_actions import create_draft_booking as _create_draft_booking
+            return _create_draft_booking(
+                sender_name=sender_name,
+                sender_phone=sender_phone,
+                sender_address=sender_address,
+                receiver_name=receiver_name,
+                receiver_phone=receiver_phone,
+                receiver_address=receiver_address,
+                weight_grams=weight_grams,
+                length_cm=length_cm,
+                width_cm=width_cm,
+                height_cm=height_cm,
+                service_type=service_type,
+                declared_value=declared_value,
+            )
+
+        @tool
+        def confirm_booking(draft_id: str) -> str:
+            """Xác nhận đơn hàng sau khi có sự đồng ý của người dùng (HITL). Phát hành mã vận đơn chính thức chuẩn UPU của VNPost (EB...VN/CP...VN) và lên lịch điều phối thu gom."""
+            from app.postal_actions import confirm_booking as _confirm_booking
+            return _confirm_booking(draft_id)
+
+        @tool
+        def create_draft_complaint(
+            item_code: str,
+            customer_name: str,
+            customer_phone: str,
+            complaint_type: str,
+            description: str,
+            claimed_amount: float = 0.0,
+            sent_date: str | None = None,
+        ) -> str:
+            """Tiếp nhận yêu cầu khiếu nại bưu gửi VNPost. Kiểm tra thời hiệu (06 tháng nội địa, 12 tháng quốc tế), tính định mức bồi thường trần và lập hồ sơ nháp chờ duyệt (HITL)."""
+            from app.postal_actions import create_draft_complaint as _create_draft_complaint
+            return _create_draft_complaint(
+                item_code=item_code,
+                customer_name=customer_name,
+                customer_phone=customer_phone,
+                complaint_type=complaint_type,
+                description=description,
+                claimed_amount=claimed_amount,
+                sent_date=sent_date,
+            )
+
+        @tool
+        def confirm_complaint(draft_ticket_id: str) -> str:
+            """Xác nhận nộp khiếu nại chính thức vào hệ thống CRM CSKH VNPost sau khi có sự đồng ý của khách hàng (HITL), cấp mã Ticket và cam kết SLA tối đa 20 ngày."""
+            from app.postal_actions import confirm_complaint as _confirm_complaint
+            return _confirm_complaint(draft_ticket_id)
+
         self.search_documents = search_documents
         self.calculate = calculate
         self.calculate_date = calculate_date
         self.track_item = track_item
         self.lookup_post_office = lookup_post_office
+        self.create_draft_booking = create_draft_booking
+        self.confirm_booking = confirm_booking
+        self.create_draft_complaint = create_draft_complaint
+        self.confirm_complaint = confirm_complaint
         self.read_file = read_file
         self.enterprise_skills = _load_enterprise_skills()
         descriptions = {
@@ -179,6 +246,8 @@ class AgentHarness:
             "analyst-agent": "So sánh, phân tích bằng chứng được giao, tính toán số học và tính toán ngày tháng/lịch trình.",
             "tracking-agent": "Tra cứu định vị hành trình, trạng thái bưu gửi VNPost theo mã vận đơn (ItemCode).",
             "post-office-agent": "Tra cứu mạng lưới bưu cục, địa chỉ, giờ mở cửa, số điện thoại và mã bưu chính quốc gia Vpostcode.",
+            "booking-agent": "Tạo đơn gửi hàng bưu phẩm/bưu kiện, tính cước thể tích (chuẩn chia 6000), tạo nháp và chốt đơn sau khi khách xác nhận (HITL).",
+            "complaint-agent": "Tiếp nhận khiếu nại, đối chiếu thời hiệu 06/12 tháng, ước tính bồi thường và lập Ticket khiếu nại sau khi khách duyệt (HITL).",
             "writer-agent": "Soạn/tóm tắt nội dung từ bằng chứng có sẵn, giữ nguồn và số liệu.",
         }
         roles = {
@@ -186,6 +255,8 @@ class AgentHarness:
             "analyst-agent": ("analyst", prompts.ANALYST, [calculate, calculate_date, read_file]),
             "tracking-agent": ("tracking", prompts.TRACKING, [track_item]),
             "post-office-agent": ("post_office", prompts.POST_OFFICE, [lookup_post_office]),
+            "booking-agent": ("booking", prompts.BOOKING, [create_draft_booking, confirm_booking]),
+            "complaint-agent": ("complaint", prompts.COMPLAINT, [create_draft_complaint, confirm_complaint]),
             "writer-agent": ("writer", prompts.WRITER, [read_file]),
         }
         self.subagents = {}
@@ -220,7 +291,7 @@ class AgentHarness:
             """Run a bounded batch of INDEPENDENT tasks concurrently and return results in input order.
 
             Dependent tasks must be dispatched in a later batch with prior evidence included.
-            Available agents: rag-agent, analyst-agent, tracking-agent, post-office-agent, writer-agent.
+            Available agents: rag-agent, analyst-agent, tracking-agent, post-office-agent, booking-agent, complaint-agent, writer-agent.
             """
             if len({t.id for t in tasks}) != len(tasks):
                 return json.dumps({"error": "Task IDs must be unique within a batch", "results": []})
@@ -252,15 +323,19 @@ class AgentHarness:
         self.parallel_tasks = parallel_tasks
 
         if getattr(settings, "checkpointer_enabled", True):
-            db_path = settings.data_dir / "checkpoints.sqlite3"
-            self.checkpointer = PersistentSqliteCheckpointer(db_path)
+            if getattr(settings, "checkpointer_type", "memory") == "sqlite":
+                db_path = settings.data_dir / "checkpoints.sqlite3"
+                self.checkpointer = PersistentSqliteCheckpointer(db_path)
+            else:
+                from langgraph.checkpoint.memory import MemorySaver
+                self.checkpointer = MemorySaver()
         else:
             self.checkpointer = None
 
         state_backend = StateBackend()
         self.graph = create_deep_agent(
             model=create_model(settings, "supervisor", clients), system_prompt=prompts.SUPERVISOR,
-            tools=[calculate_date, track_item, lookup_post_office], subagents=specs, backend=state_backend,
+            tools=[calculate_date, create_draft_booking, confirm_booking, create_draft_complaint, confirm_complaint], subagents=specs, backend=state_backend,
             skills=["/skills/"],
             checkpointer=self.checkpointer,
             middleware=[FilesystemMiddleware(backend=state_backend, tools=["read_file"])],
@@ -268,7 +343,7 @@ class AgentHarness:
         )
 
     async def close(self):
-        if self.checkpointer:
+        if self.checkpointer and hasattr(self.checkpointer, "aclose"):
             await self.checkpointer.aclose()
 
 

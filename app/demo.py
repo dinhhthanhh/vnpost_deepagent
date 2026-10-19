@@ -89,7 +89,7 @@ class DemoChatModel(BaseChatModel):
             if cites:
                 idx = evidence_part.find(f"[{cites[0]}]")
                 block = evidence_part[idx:idx + 400]
-                lines = [l.strip() for l in block.split("\n") if l.strip() and not l.strip().startswith(f"[{cites[0]}")]
+                lines = [line.strip() for line in block.split("\n") if line.strip() and not line.strip().startswith(f"[{cites[0]}")]
                 content_text = " ".join(lines) if lines else block
                 return AIMessage(content=f"Dựa trên tài liệu, thông tin tìm thấy: {content_text} [{cites[0]}].")
             return AIMessage(content="Chưa tìm thấy bằng chứng phù hợp trong kho tài liệu.")

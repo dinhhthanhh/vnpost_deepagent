@@ -5,13 +5,26 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+if (!(Test-Path ".env")) { Copy-Item .env.example .env }
+
+$uv = (Get-Command uv -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+if ($uv) {
+    if (!(Test-Path ".venv")) {
+        Write-Host "Khởi tạo môi trường bằng uv..."
+        & $uv sync
+    }
+    & $uv run python -c "from app.config import Settings; s = Settings(); print('LLM Model:', s.llm_model)"
+    if ($LASTEXITCODE -ne 0) { throw "Cấu hình không hợp lệ" }
+    Write-Host "Mở http://127.0.0.1:$Port sau khi máy chủ khởi động. Dừng bằng Ctrl+C."
+    & $uv run uvicorn app.main:app --host 127.0.0.1 --port $Port --workers 1 --no-proxy-headers
+    exit $LASTEXITCODE
+}
+
 $conda = (Get-Command conda -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
 if (-not $conda) {
     $knownInstall = Join-Path $env:USERPROFILE "miniconda3\\condabin\\conda.bat"
     if (Test-Path $knownInstall) { $conda = $knownInstall }
 }
-
-if (!(Test-Path ".env")) { Copy-Item .env.example .env }
 
 if ($conda) {
     & $conda run --name $EnvironmentName python --version 2>$null

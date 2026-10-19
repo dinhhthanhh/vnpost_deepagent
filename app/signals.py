@@ -35,6 +35,8 @@ _POSTAL_OPS = re.compile(
     r"\b[a-z]{2}\d{9}[a-z]{2}\b"
     r"|mã vận đơn|tra cứu đơn|định vị bưu gửi|hành trình bưu gửi|kiểm tra vận đơn"
     r"|bưu cục|vpostcode|mã bưu chính|giờ mở cửa|điểm phục vụ"
+    r"|tạo đơn|đặt gửi|tạo vận đơn|muốn gửi|cần gửi|gửi hàng đi|lấy hàng|gom hàng"
+    r"|mở khiếu nại|tạo khiếu nại|nộp khiếu nại|muốn khiếu nại|cần khiếu nại|yêu cầu bồi thường|đòi bồi thường|báo hỏng|báo mất"
 )
 
 

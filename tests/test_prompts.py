@@ -1,15 +1,11 @@
 from app.prompts import (
-    ANALYST,
-    COMMON,
-    FAST_RAG_SYSTEM_PROMPT,
-    NO_EVIDENCE_MARKER,
     NO_EVIDENCE_TEMPLATE,
     RAG,
     SUPERVISOR,
-    WRITER,
     fast_user_message,
     finalize_answer,
 )
+
 
 def test_marker():
     assert finalize_answer("[[NO_EVIDENCE]]") == (NO_EVIDENCE_TEMPLATE, False)

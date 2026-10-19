@@ -26,8 +26,11 @@ class VietnameseBiEncoderEmbedding(BaseEmbedding):
     def __init__(self, **data: Any):
         super().__init__(**data)
         try:
-            from pyvi import ViTokenizer
-            from sentence_transformers import SentenceTransformer
+            import importlib
+            pyvi = importlib.import_module("pyvi")
+            ViTokenizer = pyvi.ViTokenizer
+            st = importlib.import_module("sentence_transformers")
+            SentenceTransformer = st.SentenceTransformer
         except ImportError as exc:
             raise RuntimeError(
                 "Vietnamese local embedding requires the 'local-embedding' optional dependency. "
@@ -37,7 +40,8 @@ class VietnameseBiEncoderEmbedding(BaseEmbedding):
         actual_device = self.device
         if actual_device == "auto":
             try:
-                import torch
+                import importlib
+                torch = importlib.import_module("torch")
                 actual_device = "cuda" if torch.cuda.is_available() else "cpu"
             except ImportError:
                 actual_device = "cpu"

@@ -57,7 +57,10 @@ class Settings(BaseSettings):
     fast_min_retrieval_score: float = Field(0, ge=0, le=1, validation_alias=AliasChoices("FAST_MIN_RETRIEVAL_SCORE", "fast_min_retrieval_score"))
     vector_min_similarity: float = Field(0.35, ge=0, le=1, validation_alias=AliasChoices("MIN_SIMILARITY", "VECTOR_MIN_SIMILARITY"))
     reranker_enabled: bool = Field(False, validation_alias=AliasChoices("RERANKER_ENABLED", "reranker_enabled"))
-    reranker_model: str = Field("BAAI/bge-reranker-v2-m3", validation_alias=AliasChoices("RERANKER_MODEL", "reranker_model"))
+    reranker_provider: Literal["local", "api"] = Field("local", validation_alias=AliasChoices("RERANKER_PROVIDER", "reranker_provider"))
+    reranker_base_url: str = Field("https://ai.vnpost.vn/vllm-qwen3-reranker-8b/rerank", validation_alias=AliasChoices("RERANKER_BASE_URL", "reranker_base_url"))
+    reranker_api_key: SecretStr = Field(SecretStr(""), validation_alias=AliasChoices("RERANKER_API_KEY", "reranker_api_key"))
+    reranker_model: str = Field("Qwen/Qwen3-Reranker-8B", validation_alias=AliasChoices("RERANKER_MODEL", "reranker_model"))
     reranker_device: Literal["auto", "cuda", "cpu"] = Field("auto", validation_alias=AliasChoices("RERANKER_DEVICE", "reranker_device"))
     reranker_candidate_k: int = Field(15, ge=2, le=50, validation_alias=AliasChoices("RERANKER_CANDIDATE_K", "reranker_candidate_k"))
     reranker_max_length: int = Field(512, ge=64, le=2048, validation_alias=AliasChoices("RERANKER_MAX_LENGTH", "reranker_max_length"))
@@ -89,6 +92,7 @@ class Settings(BaseSettings):
     # Specific S3 domains / bucket endpoints allowed for ingest (empty means allow public domains if SSRF-safe)
     allowed_s3_domains: str = Field("", validation_alias=AliasChoices("ALLOWED_S3_DOMAINS", "allowed_s3_domains"))
     checkpointer_enabled: bool = Field(True, validation_alias=AliasChoices("CHECKPOINTER_ENABLED", "checkpointer_enabled"))
+    checkpointer_type: Literal["memory", "sqlite"] = Field("memory", validation_alias=AliasChoices("CHECKPOINTER_TYPE", "checkpointer_type"))
 
     # Short clean property aliases
     @property
@@ -202,7 +206,7 @@ class Settings(BaseSettings):
                 raise ValueError("Hash embeddings are demo-only; configure a semantic embedding")
             if self.embedding_provider == "openai" and not self.embedding_api_key.get_secret_value():
                 raise ValueError("Configure EMBEDDING_API_KEY (local servers can use a dummy value)")
-        for url in (self.llm_base_url, self.embedding_base_url, self.tts_base_url):
-            if not url.startswith(("http://", "https://")):
+        for url in (self.llm_base_url, self.embedding_base_url, self.tts_base_url, self.reranker_base_url):
+            if url and not url.startswith(("http://", "https://")):
                 raise ValueError("API base URLs must use http(s)")
         return self

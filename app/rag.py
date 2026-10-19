@@ -39,19 +39,8 @@ STOPWORDS = set(
 
 
 def resolve_embedding_device(requested: str) -> str:
-    """Resolve the embedding device without silently accepting a missing requested GPU."""
-    try:
-        import torch
-    except ImportError as exc:
-        if requested == "cuda":
-            raise RuntimeError("EMBEDDING_DEVICE=cuda requires the PyTorch CUDA build.") from exc
-        return "cpu"
-    available = torch.cuda.is_available()
-    if requested == "auto":
-        return "cuda" if available else "cpu"
-    if requested == "cuda" and not available:
-        raise RuntimeError("EMBEDDING_DEVICE=cuda was requested but PyTorch cannot see an NVIDIA GPU.")
-    return requested
+    """Resolve embedding device for fallback CPU/CUDA."""
+    return "cpu" if requested in ("auto", "cpu") else requested
 
 
 def tokens(text: str) -> list[str]:
@@ -171,7 +160,12 @@ def make_embedding(settings: Settings, clients: ProviderClients | None = None) -
                                                 embed_batch_size=settings.embedding_batch_size,
                                                 max_length=settings.embedding_max_length)
 
-        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+        import importlib
+        try:
+            mod = importlib.import_module("llama_index.embeddings.huggingface")
+            HuggingFaceEmbedding = mod.HuggingFaceEmbedding
+        except ImportError as exc:
+            raise RuntimeError("HuggingFace embedding requires 'local-embedding' extras.") from exc
         is_e5 = "e5" in settings.local_embedding_model.lower()
         return HuggingFaceEmbedding(model_name=settings.local_embedding_model,
                                    query_instruction="query: " if is_e5 else "",
@@ -396,9 +390,9 @@ class Snapshot:
 class KnowledgeBase:
     """Immutable read snapshots, serialized writes; intended for a small/medium pilot."""
 
-    def __init__(self, root: Path, settings: Settings, embedding: BaseEmbedding, ignore_fingerprint: bool = False):
-        self.root, self.settings, self.embedding = root, settings, embedding
-        self.reranker = CrossEncoderReranker(settings) if settings.reranker_enabled else None
+    def __init__(self, root: Path, settings: Settings, embedding: BaseEmbedding, ignore_fingerprint: bool = False, clients: ProviderClients | None = None):
+        self.root, self.settings, self.embedding, self.clients = root, settings, embedding, clients
+        self.reranker = CrossEncoderReranker(settings, clients=clients) if settings.reranker_enabled else None
         self.lock = threading.RLock()
         self.root.mkdir(parents=True, exist_ok=True)
         self.raw_dir = self.root / "documents"
@@ -645,6 +639,7 @@ class KnowledgeBase:
 class KnowledgeBases:
     def __init__(self, settings: Settings, clients: ProviderClients | None = None):
         self.settings = settings
+        self.clients = clients
         is_pyvi = (settings.embedding_provider == "huggingface" and
                    "vietnamese-bi-encoder" in settings.local_embedding_model.lower())
         namespace = (f"{settings.embedding_provider}|{settings.embedding_base_url}|"
@@ -658,5 +653,5 @@ class KnowledgeBases:
         with self.lock:
             if tenant not in self.items:
                 self.items[tenant] = KnowledgeBase(self.settings.data_dir.resolve() / "kb" / tenant,
-                                                 self.settings, self.embedding)
+                                                 self.settings, self.embedding, clients=self.clients)
             return self.items[tenant]

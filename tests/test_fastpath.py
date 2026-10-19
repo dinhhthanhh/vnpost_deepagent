@@ -1,6 +1,8 @@
 import pytest
+
+from app.calculator import _vn_numbers
 from app.fastpath import local_answer
-from app.calculator import _vn_numbers, safe_calculate
+
 
 @pytest.mark.parametrize("q,expect", [
     ("1+1=?", "= **2**"), ("1+1=", "= **2**"), ("3002x2", "= **6004**"), ("3002 x 2 = ?", "= **6004**"),

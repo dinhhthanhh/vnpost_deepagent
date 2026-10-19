@@ -6,23 +6,18 @@ import uuid
 from contextlib import asynccontextmanager
 
 from app.agents import AgentHarness, validate_answer
-from app.calculator import safe_calculate
 from app.config import Settings
 from app.context import RunContext, current_run
 from app.fast_rag import FastRAGExecutor, PreparedRAG
+from app.fastpath import local_answer
 from app.providers import ProviderClients
 from app.rag import KnowledgeBases
 from app.router import RouterDecision, classify_query_adaptive, rule_based_decision
 from app.schemas import ChatRequest, ChatResponse
-from app.store import Store
-from app.tts import TTSError, ZeroTTS
-
-
-from app.fastpath import local_answer
 from app.signals import analyze
+from app.store import Store
 from app.terminology import postprocess_func
-
-
+from app.tts import TTSError, ZeroTTS
 
 logger = logging.getLogger(__name__)
 

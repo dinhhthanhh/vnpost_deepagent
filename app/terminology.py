@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import unicodedata
 from pathlib import Path
@@ -53,7 +52,7 @@ def load_terminology(file_path: str = "terminology.json") -> dict[str, str]:
 
     if p.is_file():
         try:
-            with open(p, "r", encoding="utf-8") as f:
+            with open(p, encoding="utf-8") as f:
                 custom = json.load(f)
                 if isinstance(custom, dict):
                     terms.update({str(k).lower(): str(v) for k, v in custom.items()})

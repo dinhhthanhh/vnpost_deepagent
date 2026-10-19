@@ -167,6 +167,7 @@ async def test_valid_json_array_from_subagent_is_not_treated_as_failure(settings
 
 def test_date_calculator_reasoning():
     import datetime
+
     from app.calculator import safe_date_calculate
     fixed_now = datetime.datetime(2026, 10, 15, 10, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=7)))
 

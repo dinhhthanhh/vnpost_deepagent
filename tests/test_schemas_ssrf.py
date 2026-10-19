@@ -1,5 +1,7 @@
 import pytest
+
 from app.schemas import ChatRequest
+
 
 @pytest.mark.parametrize("bad_url", [
     "http://10.0.0.5/test.png",
@@ -9,6 +11,8 @@ from app.schemas import ChatRequest
     "http://[::ffff:10.0.0.5]/test.png",
     "http://127.0.0.1/test.png",
     "http://localhost/test.png",
+    "http://100.64.0.1/test.png",
+    "http://100.127.255.254/test.png",
 ])
 def test_ssrf_rejects_internal_ips(bad_url):
     with pytest.raises(ValueError, match="mạng nội bộ|máy chủ nội bộ"):

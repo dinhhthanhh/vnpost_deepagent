@@ -6,9 +6,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+
 
 def is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Kiểm tra xem địa chỉ IP có thuộc dải cấm (private, loopback, link-local, reserved, multicast, unspecified)."""
+    """Kiểm tra xem địa chỉ IP có thuộc dải cấm (private, loopback, link-local, reserved, multicast, unspecified, CGNAT RFC 6598)."""
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
         ip = ip.ipv4_mapped
     return (
@@ -18,6 +20,8 @@ def is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
         or ip.is_reserved
         or ip.is_multicast
         or ip.is_unspecified
+        or not ip.is_global
+        or (isinstance(ip, ipaddress.IPv4Address) and ip in _CGNAT_NETWORK)
     )
 
 
@@ -135,7 +139,15 @@ class Source(BaseModel):
 
 class TaskSpec(BaseModel):
     id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,40}$")
-    agent: Literal["rag-agent", "analyst-agent", "writer-agent", "tracking-agent", "post-office-agent"]
+    agent: Literal[
+        "rag-agent",
+        "analyst-agent",
+        "writer-agent",
+        "tracking-agent",
+        "post-office-agent",
+        "booking-agent",
+        "complaint-agent",
+    ]
     description: str = Field(min_length=1, max_length=8000)
 
 

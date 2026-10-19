@@ -1,11 +1,8 @@
 import os
 import tempfile
 import uuid
-import pytest
-from langchain_core.messages import HumanMessage
+
 from app.checkpointer import PersistentSqliteCheckpointer
-from app.context import RunContext, current_run
-from app.demo import DemoChatModel
 from app.schemas import ChatRequest
 from app.service import ChatService
 

@@ -1,6 +1,5 @@
 import asyncio
 import json
-import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -10,10 +9,9 @@ from app.agents import create_model
 from app.config import Settings
 from app.context import current_run
 from app.demo import message_text
-from app.providers import ProviderClients
-from app.rag import KnowledgeBases, filter_relevant_hits, tokens
-
 from app.prompts import FAST_RAG_SYSTEM_PROMPT, fast_user_message
+from app.providers import ProviderClients
+from app.rag import KnowledgeBases, filter_relevant_hits
 from app.terminology import build_terminology_hint, find_matched_terminology, load_terminology
 
 

@@ -1,7 +1,8 @@
 import sqlite3
-import pytest
+
 from app.embedding_cache import CachedEmbedding
 from app.rag import DemoHashEmbedding
+
 
 def test_query_embedding_is_ram_only_and_not_in_sqlite(tmp_path):
     db_path = tmp_path / "test_cache.sqlite3"

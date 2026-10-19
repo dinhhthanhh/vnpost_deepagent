@@ -4,6 +4,7 @@ import json
 import re
 
 from app.config import Settings
+from app.embedding_cache import CachedEmbedding
 from app.rag import KnowledgeBase, make_embedding
 
 parser = argparse.ArgumentParser()
@@ -18,8 +19,13 @@ pointer = root / "current.json"
 if not pointer.exists():
     raise SystemExit("Tenant has no KB to reindex.")
 
-# Download/load the embedding model before touching any live index data.
-embedding = make_embedding(settings)
+
+is_pyvi = (settings.embedding_provider == "huggingface" and
+           "vietnamese-bi-encoder" in settings.local_embedding_model.lower())
+namespace = (f"{settings.embedding_provider}|{settings.embedding_base_url}|"
+             f"{settings.embedding_model}|{settings.local_embedding_model}|"
+             f"{settings.embedding_revision}|pyvi={is_pyvi}")
+embedding = CachedEmbedding(make_embedding(settings), settings.data_dir.resolve() / "embedding-cache.sqlite3", namespace)
 
 # Atomic rebuild: KnowledgeBase.reindex() builds the new snapshot in a new revision directory
 # and only swaps the live pointer 'current.json' via atomic rename upon complete success.

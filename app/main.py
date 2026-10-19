@@ -6,7 +6,6 @@ import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
-from uuid import UUID
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -188,8 +187,9 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
     @app.post("/api/documents/s3", status_code=201)
     async def ingest_from_s3(body: S3IngestRequest, scope=Depends(tenant), svc=Depends(get_service)):
         """Đồng bộ và nạp tài liệu từ S3 (Presigned GET URL hoặc S3 Bucket + Key)."""
-        import httpx
         from urllib.parse import urlparse
+
+        import httpx
 
         raw_bytes = b""
         filename = body.filename

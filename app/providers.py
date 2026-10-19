@@ -1,5 +1,6 @@
 import json
 import logging
+
 import httpx
 
 from app.config import Settings

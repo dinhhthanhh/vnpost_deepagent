@@ -1,12 +1,12 @@
 import array
 import asyncio
-from collections import OrderedDict
 import contextlib
 import hashlib
 import json
-from pathlib import Path
 import sqlite3
 import threading
+from collections import OrderedDict
+from pathlib import Path
 
 from llama_index.core.base.embeddings.base import BaseEmbedding
 from pydantic import PrivateAttr

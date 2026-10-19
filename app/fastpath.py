@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 try:
     from zoneinfo import ZoneInfo

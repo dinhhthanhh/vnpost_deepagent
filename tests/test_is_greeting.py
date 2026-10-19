@@ -1,6 +1,6 @@
-import pytest
-from app.fast_rag import is_greeting
 from app.agents import validate_answer
+from app.fast_rag import is_greeting
+
 
 def test_greeting_not_swallowing_business_questions():
     assert not is_greeting("Hello, quy trình hoàn hàng thế nào?")
