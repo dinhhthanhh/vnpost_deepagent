@@ -18,12 +18,12 @@ import numpy as np
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from app.centroids import CentroidStore
-from app.config import Settings
-from app.demo import message_text
-from app.providers import ProviderClients
-from app.signals import Signals, analyze
-from app.text import norm
+from app.agents.signals import Signals, analyze
+from app.core.config import Settings
+from app.core.demo import message_text
+from app.core.providers import ProviderClients
+from app.core.text import norm
+from app.rag.centroids import CentroidStore
 
 Route = Literal["fast", "deep"]
 

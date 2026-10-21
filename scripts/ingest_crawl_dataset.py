@@ -12,7 +12,7 @@ import re
 import threading
 from pathlib import Path
 
-from app.config import Settings
+from app.core.config import Settings
 from app.rag import KnowledgeBase, make_embedding, read_document
 
 

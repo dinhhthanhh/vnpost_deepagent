@@ -19,4 +19,4 @@ RUN pip install --no-cache-dir -e ".[local-embedding]" && \
 COPY --from=ui /ui/dist/ ./frontend/dist/
 USER chatbot
 EXPOSE 8080
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--no-proxy-headers"]
+CMD ["python", "-m", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--no-proxy-headers"]

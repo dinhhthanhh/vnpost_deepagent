@@ -27,10 +27,10 @@ from llama_index.core.vector_stores import (
 )
 from rank_bm25 import BM25Plus
 
-from app.config import Settings
-from app.embedding_cache import CachedEmbedding
-from app.providers import ProviderClients
-from app.reranker import CrossEncoderReranker
+from app.core.config import Settings
+from app.core.providers import ProviderClients
+from app.rag.embedding_cache import CachedEmbedding
+from app.rag.reranker import CrossEncoderReranker
 
 STOPWORDS = set(
     "và là của có cho các những một trong với được đến từ thì này đó về theo hay tôi bạn gì nào bao nhiêu bao lâu mấy ngày năm tại thế như xin hãy không thông tin "
@@ -40,15 +40,31 @@ STOPWORDS = set(
 
 def resolve_embedding_device(requested: str) -> str:
     """Resolve embedding device for fallback CPU/CUDA."""
-    return "cpu" if requested in ("auto", "cpu") else requested
+    if requested == "auto":
+        import importlib
+        try:
+            torch = importlib.import_module("torch")
+            cuda = getattr(torch, "cuda", None)
+            if cuda and hasattr(cuda, "is_available") and cuda.is_available():
+                return "cuda"
+        except Exception:
+            pass
+        return "cpu"
+    return requested
 
 
-def tokens(text: str) -> list[str]:
+def tokenize_words(text: str) -> list[str]:
+    """Tokenize Vietnamese text without accent marks and stopwords, preserving term frequencies."""
     text_nfc = unicodedata.normalize("NFC", (text or "").lower())
     text_nfkd = unicodedata.normalize("NFKD", text_nfc.replace("đ", "d"))
     no_accents = "".join(c for c in text_nfkd if not unicodedata.combining(c))
-    toks_no_accents = [t for t in re.findall(r"\w+", no_accents) if t not in STOPWORDS]
-    return list(dict.fromkeys(toks_no_accents))
+    return [t for t in re.findall(r"\w+", no_accents) if t not in STOPWORDS]
+
+
+def tokens(text: str, unique: bool = True) -> list[str]:
+    """Extract normalized tokens. By default unique=True for backward compatibility with tests/citations."""
+    words = tokenize_words(text)
+    return list(dict.fromkeys(words)) if unique else words
 
 
 def filter_relevant_hits(query: str, hits: list[dict], min_overlap: int | None = None) -> list[dict]:
@@ -178,7 +194,7 @@ def make_embedding(settings: Settings, clients: ProviderClients | None = None) -
         # This PhoBERT bi-encoder must receive Vietnamese text with word segmentation.
         # Its published SentenceTransformers configuration is 256 tokens / 768 dimensions.
         if settings.local_embedding_model.lower() == "bkai-foundation-models/vietnamese-bi-encoder":
-            from app.vietnamese_embedding import VietnameseBiEncoderEmbedding
+            from app.rag.vietnamese_embedding import VietnameseBiEncoderEmbedding
             return VietnameseBiEncoderEmbedding(model_name=settings.local_embedding_model,
                                                 device=device,
                                                 embed_batch_size=settings.embedding_batch_size,
@@ -432,7 +448,7 @@ class KnowledgeBase:
         return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
     def _snapshot(self, index, nodes, records, revision):
-        term_lists = [tokens(n.text) or ["__empty__"] for n in nodes]
+        term_lists = [tokenize_words(n.text) or ["__empty__"] for n in nodes]
         return Snapshot(index, nodes, BM25Plus(term_lists) if nodes else None,
                         [set(t) for t in term_lists], records, revision)
 
@@ -531,11 +547,21 @@ class KnowledgeBase:
         filename = Path(filename.replace("\\", "/")).name[:180]
         if len(raw) > self.settings.max_upload_bytes:
             raise ValueError("File vượt giới hạn upload.")
-        document_id = hashlib.sha256(raw).hexdigest()
+        raw_hash = hashlib.sha256(raw).hexdigest()
         if is_global is None:
             is_global = False if (session_id or user_id) else True
         if authority not in {"vnpost_internal", "official_public", "user_upload"}:
             raise ValueError("Invalid document authority.")
+
+        if is_global:
+            document_id = raw_hash
+        elif session_id:
+            document_id = hashlib.sha256(f"sess:{session_id}:{raw_hash}".encode()).hexdigest()
+        elif user_id:
+            document_id = hashlib.sha256(f"user:{user_id}:{raw_hash}".encode()).hexdigest()
+        else:
+            document_id = raw_hash
+
         with self.lock:
             existing = next((r for r in self.snapshot.records if r["id"] == document_id), None)
             if existing:
@@ -628,18 +654,22 @@ class KnowledgeBase:
         scores = snapshot.bm25.get_scores(list(query_terms))
         min_overlap = 1 if len(query_terms) <= 1 else 2
         lexical = sorted((i for i, terms in enumerate(snapshot.token_sets)
-                          if ((len(terms & query_terms) >= min_overlap and scores[i] > 0)
-                              or vector_hits_map.get(snapshot.nodes[i].node_id, 0.0) >= self.settings.vector_min_similarity)
+                          if len(terms & query_terms) >= min_overlap and scores[i] > 0
                           and matches_scope(snapshot.nodes[i].metadata)),
                          key=lambda i: scores[i], reverse=True)[:candidate_k]
 
         fused, by_id = {}, {n.node_id: n for n in snapshot.nodes}
         for rank, i in enumerate(lexical, 1):
             node_id = snapshot.nodes[i].node_id
-            fused[node_id] = fused.get(node_id, 0) + 1 / (60 + rank)
-        for rank, hit in enumerate(vector, 1):
-            if (hit.score or 0) >= self.settings.vector_min_similarity:
-                fused[hit.node.node_id] = fused.get(hit.node.node_id, 0) + 1 / (60 + rank)
+            fused[node_id] = fused.get(node_id, 0.0) + 1 / (60 + rank)
+
+        valid_vector_hits = [
+            hit for hit in vector
+            if (hit.score or 0) >= self.settings.vector_min_similarity
+            and matches_scope(hit.node.metadata)
+        ]
+        for rank, hit in enumerate(valid_vector_hits, 1):
+            fused[hit.node.node_id] = fused.get(hit.node.node_id, 0.0) + 1 / (60 + rank)
         candidates = []
         for node_id in sorted(fused, key=fused.get, reverse=True)[:candidate_k]:
             node = by_id[node_id]

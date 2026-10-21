@@ -1,5 +1,6 @@
 import app.router as router
 import app.service as service_module
+from app.api.schemas import ChatRequest
 from app.router import (
     RouterDecision,
     _parse_semantic_response,
@@ -7,7 +8,6 @@ from app.router import (
     classify_query_adaptive,
     rule_based_decision,
 )
-from app.schemas import ChatRequest
 from app.service import ChatService
 
 

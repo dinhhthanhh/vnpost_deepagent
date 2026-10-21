@@ -36,7 +36,7 @@ py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 Copy-Item .env.example .env
 .venv\Scripts\python.exe scripts\seed_demo.py
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8080
+.venv\Scripts\python.exe -m uvicorn app.api.main:app --host 127.0.0.1 --port 8080
 ```
 
 Mở [http://127.0.0.1:8080](http://127.0.0.1:8080). Demo dùng model và embedding giả lập để kiểm tra luồng; không đại diện cho chất lượng của LLM thật.
@@ -48,7 +48,7 @@ python3.12 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 cp .env.example .env
 .venv/bin/python scripts/seed_demo.py
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8080
+.venv/bin/python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8080
 ```
 
 ## Cấu hình môi trường

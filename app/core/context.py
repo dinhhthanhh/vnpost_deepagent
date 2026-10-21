@@ -3,7 +3,7 @@ import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
-from app.schemas import Source
+from app.api.schemas import Source
 
 
 @dataclass

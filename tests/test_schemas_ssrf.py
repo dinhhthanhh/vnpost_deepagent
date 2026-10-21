@@ -1,6 +1,6 @@
 import pytest
 
-from app.schemas import ChatRequest
+from app.api.schemas import ChatRequest
 
 
 @pytest.mark.parametrize("bad_url", [
@@ -31,6 +31,6 @@ def test_ssrf_allows_valid_data_url():
     "http://[::1]/doc.pdf",
 ])
 def test_s3_ingest_schema_ssrf_rejects_internal_ips(bad_url):
-    from app.schemas import S3IngestRequest
+    from app.api.schemas import S3IngestRequest
     with pytest.raises(ValueError, match="mạng nội bộ|máy chủ nội bộ"):
         S3IngestRequest(url=bad_url)

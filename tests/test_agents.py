@@ -9,10 +9,10 @@ from deepagents.middleware.filesystem import FilesystemMiddleware
 from langchain_core.messages import AIMessage, ToolMessage
 
 from app.agents import validate_answer
-from app.calculator import safe_calculate
-from app.context import RunContext, current_run
-from app.demo import DemoChatModel, message_text
-from app.schemas import ChatRequest, TaskSpec
+from app.agents.calculator import safe_calculate
+from app.api.schemas import ChatRequest, TaskSpec
+from app.core.context import RunContext, current_run
+from app.core.demo import DemoChatModel, message_text
 from app.service import ChatService
 
 
@@ -168,7 +168,7 @@ async def test_valid_json_array_from_subagent_is_not_treated_as_failure(settings
 def test_date_calculator_reasoning():
     import datetime
 
-    from app.calculator import safe_date_calculate
+    from app.agents.calculator import safe_date_calculate
     fixed_now = datetime.datetime(2026, 10, 15, 10, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=7)))
 
     res1 = safe_date_calculate("12/3 năm sau là ngày thứ mấy", now=fixed_now)
@@ -220,3 +220,103 @@ async def test_chat_postal_tracking_and_office_end_to_end(settings):
         assert "Hoàn Kiếm" in res2.answer or "Đinh Tiên Hoàng" in res2.answer or "Bưu điện" in res2.answer
     finally:
         await svc.close()
+
+
+def test_citation_claim_mismatch_warning():
+    from app.agents import validate_answer
+    # S1 excerpt is about tariff fees
+    sources = {"S1": {"excerpt": "Cước chuyển phát nhanh EMS là 50000 đồng.", "filename": "cuoc.txt"}}
+    # Answer cites [S1] for an unsupported claim without keyword overlap
+    answer = "Quy định nghỉ phép hàng năm của nhân viên là 12 ngày [S1]."
+    cleaned, selected, status, warnings = validate_answer(answer, sources, True, "Thời gian giao hàng là bao lâu?")
+    # The unsupported citation should be removed from valid selections
+    assert len(selected) == 0
+    assert status == "no_evidence"
+    assert any("không có đủ từ khóa hỗ trợ" in w for w in warnings)
+
+
+def test_create_model_thinking_configuration():
+    from app.agents.orchestrator import create_model
+    from app.core.config import Settings
+    
+    # 1. When thinking is True and custom proxy base_url
+    s1 = Settings(llm_api_key="sk-test", llm_thinking=True, llm_base_url="https://api.deepseek.com/v1")
+    model1 = create_model(s1, "supervisor")
+    assert model1.extra_body is not None
+    assert model1.extra_body.get("thinking") is True
+    
+    # 2. When thinking is True but googleapis.com endpoint
+    s2 = Settings(llm_api_key="sk-test", llm_thinking=True, llm_base_url="https://generativelanguage.googleapis.com/v1")
+    model2 = create_model(s2, "supervisor")
+    assert model2.extra_body is None
+
+
+async def test_chat_nearest_post_office_with_geolocation(settings):
+    from app.api.schemas import LocationInfo
+    svc = ChatService(settings)
+    try:
+        req = ChatRequest(
+            message="Tìm bưu điện gần tôi nhất",
+            location=LocationInfo(latitude=21.0285, longitude=105.8542),
+            mode="deep",
+        )
+        res = await svc.chat("a", req)
+        assert res.grounding_status in ("computed", "verified")
+        assert "Hoàn Kiếm" in res.answer or "Đinh Tiên Hoàng" in res.answer or "Google Maps" in res.answer
+    finally:
+        await svc.close()
+
+
+def test_safe_stream_buffer_prevents_no_evidence_leak():
+    from app.service import SafeStreamBuffer
+    from app.core.prompts import NO_EVIDENCE_TEMPLATE
+
+    emitted = []
+    buf = SafeStreamBuffer(lambda t: emitted.append(t))
+
+    # Case 1: Streamed in fragments of [[NO_EVIDENCE]]
+    buf.push("[")
+    assert len(emitted) == 0  # Held in buffer
+    buf.push("[")
+    assert len(emitted) == 0  # Held in buffer
+    buf.push("NO_")
+    assert len(emitted) == 0  # Held in buffer
+    buf.push("EVIDENCE]]")
+    buf.flush()
+
+    assert len(emitted) == 1
+    assert emitted[0] == NO_EVIDENCE_TEMPLATE
+    assert "[[NO_EVIDENCE]]" not in "".join(emitted)
+
+    # Case 2: Normal response with citation bracket [S1]
+    emitted_normal = []
+    buf_normal = SafeStreamBuffer(lambda t: emitted_normal.append(t))
+    buf_normal.push("Theo quy định ")
+    buf_normal.push("[S1]")
+    buf_normal.push(" thời hạn là 7 ngày.")
+    buf_normal.flush()
+    assert "".join(emitted_normal) == "Theo quy định [S1] thời hạn là 7 ngày."
+
+
+async def test_supervisor_has_parallel_tasks_registered(settings):
+    svc = ChatService(settings)
+    try:
+        assert hasattr(svc.harness, "parallel_tasks")
+        assert svc.harness.parallel_tasks is not None
+        assert svc.harness.parallel_tasks.name == "parallel_tasks"
+    finally:
+        await svc.close()
+
+
+async def test_pure_tracking_skips_rag_prefetch(settings):
+    svc = ChatService(settings)
+    try:
+        req = ChatRequest(message="Kiểm tra trạng thái bưu gửi EB123456789VN", mode="deep")
+        res = await svc.chat("a", req)
+        # Should not have executed rag_prefetch_start because it's a pure tracking query
+        assert not any(e["type"] == "rag_prefetch_start" for e in res.events)
+        assert res.answer
+    finally:
+        await svc.close()
+
+

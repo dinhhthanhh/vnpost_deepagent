@@ -5,19 +5,23 @@ from dataclasses import dataclass
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from app.agents import create_model
-from app.config import Settings
-from app.context import current_run
-from app.demo import message_text
-from app.prompts import FAST_RAG_SYSTEM_PROMPT, fast_user_message
-from app.providers import ProviderClients
+from app.agents.orchestrator import create_model
+from app.core.config import Settings
+from app.core.context import current_run
+from app.core.demo import message_text
+from app.core.prompts import FAST_RAG_SYSTEM_PROMPT, fast_user_message
+from app.core.providers import ProviderClients
+from app.domain.terminology import (
+    build_terminology_hint,
+    find_matched_terminology,
+    load_terminology,
+)
 from app.rag import KnowledgeBases, filter_relevant_hits, resolve_search_query
-from app.terminology import build_terminology_hint, find_matched_terminology, load_terminology
 
 
 def try_evaluate_math(text: str) -> str | None:
     """Đánh giá trực tiếp các phép tính số học đơn giản siêu tốc (< 1ms)."""
-    from app.fastpath import try_arithmetic
+    from app.router.fastpath import try_arithmetic
     res = try_arithmetic(text)
     return res.text if res is not None else None
 
@@ -43,7 +47,7 @@ class PreparedRAG:
 
 def is_greeting(text: str) -> bool:
     """Chỉ coi là xã giao khi toàn bộ câu là lời chào ngắn (fullmatch), không nuốt câu nghiệp vụ."""
-    from app.signals import analyze
+    from app.agents.signals import analyze
     return analyze(text).chitchat
 
 

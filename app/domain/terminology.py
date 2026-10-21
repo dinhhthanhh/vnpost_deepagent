@@ -102,6 +102,7 @@ def postprocess_func(s: str) -> str:
     """Hậu xử lý chuỗi văn bản trả về từ LLM (chuẩn từ agent.template của VNPost).
 
     1. Thay thế ký tự khoảng trắng hẹp `\\u202f` và khoảng trắng phân cách hàng nghìn bằng dấu chấm.
+       (Bảo vệ số điện thoại / hotline không bị đổi khoảng trắng thành dấu chấm).
     2. Chuyển đổi công thức toán dạng LaTeX:
        - Khối công thức `\\[...\\]` -> `$$...$$` (block math).
        - Công thức nội dòng `\\(...\\)` -> `$...$` (inline math).
@@ -109,6 +110,21 @@ def postprocess_func(s: str) -> str:
     if not s:
         return s
 
+    # 1. Bảo vệ số điện thoại / hotline bằng token tạm thời
+    phone_tokens: list[str] = []
+
+    def _save_phone(m: re.Match) -> str:
+        phone_tokens.append(m.group(0))
+        return f"__PHONE_TOKEN_{len(phone_tokens) - 1}__"
+
+    phone_pattern = re.compile(
+        r"(?i)\b(?:hotline|tổng đài|sđt|số điện thoại|điện thoại|tel|phone|liên hệ)\s*[:]?\s*(?:1900|1800|0\d{1,3})[\s.]\d{2,4}[\s.]\d{2,4}"
+        r"|\b(?:1900|1800)[\s.]\d{2,4}[\s.]\d{2,4}\b"
+        r"|\b0\d{1,3}[\s.]\d{3}[\s.]\d{3,4}\b"
+    )
+    s_protected = phone_pattern.sub(_save_phone, s)
+
+    # 2. Chuẩn hóa khoảng trắng phân cách hàng nghìn sang dấu chấm
     pattern = re.compile(r"\d{1,3}(?:[\u202f ]\d{3})+(?:[.,]\d+)?")
 
     def repl(match: re.Match) -> str:
@@ -117,12 +133,16 @@ def postprocess_func(s: str) -> str:
         num = re.sub(r"[\u202f ]", ".", num)
         return num
 
-    s = pattern.sub(repl, s)
+    s_processed = pattern.sub(repl, s_protected)
 
-    # Block math: \[ ... \] -> $$ ... $$
-    s = re.sub(r"\\\[(.*?)\\\]", r"$$\1$$", s, flags=re.DOTALL)
+    # 3. Phục hồi số điện thoại / hotline nguyên bản
+    for idx, token in enumerate(phone_tokens):
+        s_processed = s_processed.replace(f"__PHONE_TOKEN_{idx}__", token)
 
-    # Inline math: \( ... \) -> $ ... $
-    s = re.sub(r"\\\((.*?)\\\)", r"$\1$", s, flags=re.DOTALL)
+    # 4. Block math: \[ ... \] -> $$ ... $$
+    s_processed = re.sub(r"\\\[(.*?)\\\]", r"$$\1$$", s_processed, flags=re.DOTALL)
 
-    return s
+    # 5. Inline math: \( ... \) -> $ ... $
+    s_processed = re.sub(r"\\\((.*?)\\\)", r"$\1$", s_processed, flags=re.DOTALL)
+
+    return s_processed

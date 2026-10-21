@@ -2,7 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from app.main import create_app
+from app.api.main import create_app
 
 KEY_A, KEY_B = "test-key-a-1234567890", "test-key-b-1234567890"
 

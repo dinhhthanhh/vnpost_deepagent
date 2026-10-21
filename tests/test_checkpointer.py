@@ -2,8 +2,8 @@ import os
 import tempfile
 import uuid
 
-from app.checkpointer import PersistentSqliteCheckpointer
-from app.schemas import ChatRequest
+from app.api.schemas import ChatRequest
+from app.core.checkpointer import PersistentSqliteCheckpointer
 from app.service import ChatService
 
 
@@ -62,3 +62,16 @@ async def test_harness_with_checkpointer_multi_turn_state(settings):
         assert state is not None and len(state.values.get("messages", [])) >= 2
     finally:
         await svc.close()
+
+
+async def test_memory_checkpointer_storage_behavior():
+    from langgraph.checkpoint.memory import MemorySaver
+    saver = MemorySaver()
+    config1 = {"configurable": {"thread_id": "req-1", "checkpoint_ns": ""}}
+    config2 = {"configurable": {"thread_id": "req-2", "checkpoint_ns": ""}}
+    cp1 = {"v": 1, "id": "1", "ts": "2026-10-15", "channel_values": {}, "channel_versions": {}, "versions_seen": {}}
+    cp2 = {"v": 1, "id": "2", "ts": "2026-10-15", "channel_values": {}, "channel_versions": {}, "versions_seen": {}}
+    await saver.aput(config1, cp1, {}, {})
+    await saver.aput(config2, cp2, {}, {})
+    assert await saver.aget_tuple(config1) is not None
+    assert await saver.aget_tuple(config2) is not None

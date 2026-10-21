@@ -60,7 +60,7 @@ class DemoChatModel(BaseChatModel):
             match = re.search(r"(?:\d+(?:\.\d+)?\s*[+*/-]\s*)+\d+(?:\.\d+)?", user)
             if match:
                 return AIMessage(content="", tool_calls=[{"name": "calculate", "args": {"expression": match.group()}, "id": "demo-calc"}])
-            from app.signals import analyze
+            from app.agents.signals import analyze
             if analyze(user).temporal_calc:
                 return AIMessage(content="", tool_calls=[{"name": "calculate_date", "args": {"query": user}, "id": "demo-date-calc"}])
             return AIMessage(content="MISSING_INPUT: Demo chỉ tính biểu thức số hoặc ngày tháng được nhập rõ ràng.")
@@ -119,7 +119,7 @@ class DemoChatModel(BaseChatModel):
             tool_calls = [
                 {"name": "task", "args": {"subagent_type": "rag-agent", "description": user}, "id": "t1"},
             ]
-            from app.signals import analyze
+            from app.agents.signals import analyze
             if re.search(r"\d+\s*[+*/-]\s*\d+", user) or analyze(user).temporal_calc:
                 tool_calls.append({"name": "task", "args": {"subagent_type": "analyst-agent", "description": user}, "id": "t2"})
             else:

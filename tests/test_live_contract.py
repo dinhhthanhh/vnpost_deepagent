@@ -7,8 +7,8 @@ import json
 import httpx
 import respx
 
-from app.config import Settings
-from app.schemas import ChatRequest
+from app.api.schemas import ChatRequest
+from app.core.config import Settings
 from app.service import ChatService
 
 

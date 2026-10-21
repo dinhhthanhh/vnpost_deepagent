@@ -11,9 +11,11 @@ import {
   Info,
   LayoutGrid,
   Mail,
+  MapPin,
   MessageCircle,
   MessageSquare,
   Mic,
+  Navigation,
   Paperclip,
   Plus,
   Send,
@@ -30,7 +32,7 @@ import {
   Volume2,
   X,
 } from "lucide-react";
-import { audioBlob, request, streamChat } from "./api";
+import { audioBlob, request, streamChat, transcribeAudio } from "./api";
 import { playWavStream } from "./wav-stream";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -177,6 +179,10 @@ function FormattedAnswer({ text }) {
       /\[(S\d+)\]/g,
       '<span class="citation-badge">[$1]</span>'
     );
+    rawHtml = rawHtml.replace(
+      /<a\s+(?:[^>]*?\s+)?href="([^"]*(?:google\.com\/maps|maps\.google\.com)[^"]*)"([^>]*)>(.*?)<\/a>/gi,
+      '<a href="$1" target="_blank" rel="noopener noreferrer" class="maps-direction-link"$2>📍 $3</a>'
+    );
     // Sanitize HTML strictly before injecting into DOM to prevent XSS
     const cleanHtml = DOMPurify.sanitize(rawHtml, {
       ALLOWED_TAGS: [
@@ -228,6 +234,60 @@ export default function App() {
   const [likedMap, setLikedMap] = useState({});
   const [dislikedMap, setDislikedMap] = useState({});
   const [copiedId, setCopiedId] = useState(null);
+  const [locating, setLocating] = useState(false);
+  const [userLocation, setUserLocation] = useState(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const speechRecRef = useRef(null);
+  const mediaRecRef = useRef(null);
+  const audioChunksRef = useRef([]);
+
+  function requestUserLocation(callback) {
+    if (!navigator.geolocation) {
+      setNotice("Trình duyệt không hỗ trợ định vị GPS.");
+      if (callback) callback(null);
+      return;
+    }
+    setLocating(true);
+    setNotice("Đang xin quyền truy cập vị trí GPS của thiết bị...");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocating(false);
+        const loc = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+        };
+        setUserLocation(loc);
+        setNotice(`Đã lấy vị trí GPS (${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}). Đang tìm bưu cục gần nhất...`);
+        setTimeout(() => setNotice(""), 3500);
+        if (callback) callback(loc);
+      },
+      (err) => {
+        setLocating(false);
+        let errMsg = "Không thể lấy vị trí GPS. Bạn có thể nhập quận/huyện để tìm kiếm.";
+        if (err.code === 1) {
+          errMsg = "Bạn đã từ chối quyền truy cập vị trí. Hãy bật định vị hoặc nhập quận/huyện/địa chỉ để tìm bưu cục nhé!";
+        } else if (err.code === 2) {
+          errMsg = "Không xác định được vị trí GPS hiện tại. Vui lòng nhập địa chỉ/quận huyện.";
+        } else if (err.code === 3) {
+          errMsg = "Quá thời gian lấy vị trí GPS. Vui lòng thử lại.";
+        }
+        setNotice(errMsg);
+        if (callback) callback(null);
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+    );
+  }
+
+  function handleFindNearestPostOffice() {
+    requestUserLocation((loc) => {
+      if (loc) {
+        send(null, "Tìm bưu điện VNPost gần vị trí của tôi nhất", loc);
+      } else {
+        setInput("Tìm bưu điện gần ");
+      }
+    });
+  }
 
   const endRef = useRef();
   const uploadInput = useRef();
@@ -265,8 +325,115 @@ export default function App() {
           audio.current = new Audio();
         }
         audio.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-        audio.current.play().catch(() => {});
-      } catch {}
+        audio.current.play().catch(() => { });
+      } catch { }
+    }
+  };
+
+  const handleMicClick = async () => {
+    if (isRecording) {
+      if (speechRecRef.current) {
+        try { speechRecRef.current.stop(); } catch {}
+        speechRecRef.current = null;
+      }
+      if (mediaRecRef.current && mediaRecRef.current.state === "recording") {
+        mediaRecRef.current.stop();
+      }
+      setIsRecording(false);
+      setNotice("Đã dừng lắng nghe giọng nói.");
+      return;
+    }
+
+    // 1. Ưu tiên Web Speech API (nhận diện giọng nói tiếng Việt trực tiếp với độ trễ cực thấp)
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRec) {
+      try {
+        const recognition = new SpeechRec();
+        recognition.lang = "vi-VN";
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+          setIsRecording(true);
+          setNotice("🎙️ Đang lắng nghe giọng nói tiếng Việt... Hãy nói câu hỏi của bạn.");
+        };
+
+        recognition.onresult = (event) => {
+          let transcript = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            transcript += event.results[i][0].transcript;
+          }
+          if (transcript) {
+            setInput(transcript);
+          }
+        };
+
+        recognition.onerror = (event) => {
+          console.warn("Speech recognition error:", event.error);
+          setIsRecording(false);
+          if (event.error === "not-allowed") {
+            setNotice("Trình duyệt chưa được cấp quyền Microphone.");
+          } else if (event.error === "no-speech") {
+            setNotice("Chưa nhận diện được giọng nói, vui lòng thử lại.");
+          }
+        };
+
+        recognition.onend = () => {
+          setIsRecording(false);
+        };
+
+        speechRecRef.current = recognition;
+        recognition.start();
+        return;
+      } catch (err) {
+        console.warn("Lỗi SpeechRecognition, chuyển sang MediaRecorder fallback:", err);
+      }
+    }
+
+    // 2. Fallback: Dùng MediaRecorder ghi âm gửi lên backend /api/voice/transcribe
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setNotice("Trình duyệt không hỗ trợ truy cập Microphone.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        setIsRecording(false);
+        stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        if (blob.size > 100) {
+          setNotice("🔄 Đang chuyển đổi âm thanh sang văn bản tiếng Việt qua STT...");
+          try {
+            const result = await transcribeAudio(blob, key);
+            if (result && result.text) {
+              setInput(result.text);
+              setNotice("✅ Đã nhận diện giọng nói thành công!");
+            }
+          } catch (err) {
+            setNotice(`Lỗi STT: ${err.message}`);
+          }
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setNotice("🎙️ Đang ghi âm Microphone (bấm lại nút Mic để hoàn tất)...");
+    } catch (err) {
+      console.error("Lỗi Microphone:", err);
+      setIsRecording(false);
+      setNotice("Không thể truy cập Microphone thiết bị.");
     }
   };
 
@@ -289,6 +456,12 @@ export default function App() {
       abort.current?.abort();
       stopAudio();
       releaseBlobs();
+      if (speechRecRef.current) {
+        try { speechRecRef.current.stop(); } catch {}
+      }
+      if (mediaRecRef.current && mediaRecRef.current.state === "recording") {
+        try { mediaRecRef.current.stop(); } catch {}
+      }
     };
   }, []);
 
@@ -494,7 +667,7 @@ export default function App() {
       const blob = await audioBlob(url, key);
       blobs.current.push(blob);
       setMessages((previous) => previous.map((m) => (m.id === id ? { ...m, blob } : m)));
-      
+
       let audioEl = audio.current;
       if (!audioEl) {
         audioEl = new Audio();
@@ -522,7 +695,7 @@ export default function App() {
     const current = { controller, context };
     stream.current = current;
     // Called in the Send handler, so browsers can authorize Web Audio playback.
-    context.resume().catch(() => {});
+    context.resume().catch(() => { });
 
     let pending = "";
     let queue = Promise.resolve();
@@ -595,7 +768,7 @@ export default function App() {
     return now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
-  async function send(event, text = input) {
+  async function send(event, text = input, locOverride = null) {
     event?.preventDefault();
     text = text.trim();
     if ((!text && !attachedImage) || busy) return;
@@ -608,8 +781,8 @@ export default function App() {
           audio.current = new Audio();
         }
         audio.current.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-        audio.current.play().catch(() => {});
-      } catch {}
+        audio.current.play().catch(() => { });
+      } catch { }
     }
 
     const nowStr = getCurrentTimeString();
@@ -642,6 +815,7 @@ export default function App() {
           voice,
           stream_voice: Boolean(speech),
           voice_name: voiceName,
+          location: locOverride || userLocation || null,
         },
         key,
         (item) => {
@@ -656,11 +830,11 @@ export default function App() {
               previous.map((m) =>
                 m.id === assistantMsgId
                   ? {
-                      ...m,
-                      answer: (m.answer || "") + item.delta,
-                      pending: false,
-                      time: m.time || nowStr,
-                    }
+                    ...m,
+                    answer: (m.answer || "") + item.delta,
+                    pending: false,
+                    time: m.time || nowStr,
+                  }
                   : m
               )
             );
@@ -715,6 +889,23 @@ export default function App() {
     }
   }
 
+  function handleFormSubmit(e) {
+    e?.preventDefault();
+    const text = input.trim();
+    if ((!text && !attachedImage) || busy) return;
+    const lower = text.toLowerCase();
+    const isNearestQuery =
+      (lower.includes("bưu điện") || lower.includes("bưu cục")) &&
+      (lower.includes("gần") || lower.includes("ở đâu") || lower.includes("quanh đây") || lower.includes("gần tôi") || lower.includes("gần nhất"));
+    if (isNearestQuery && !userLocation && navigator.geolocation) {
+      requestUserLocation((loc) => {
+        send(null, text, loc);
+      });
+      return;
+    }
+    send(e, text);
+  }
+
   // Khi click vào thẻ gợi ý (Suggestion Card)
   function handleSuggestionClick(text) {
     setInput(text);
@@ -733,7 +924,7 @@ export default function App() {
     const controller = new AbortController();
     const context = new AudioContextClass();
     stream.current = { controller, context };
-    context.resume().catch(() => {});
+    context.resume().catch(() => { });
     setStreamingAudio(true);
 
     try {
@@ -846,13 +1037,13 @@ export default function App() {
                     setVoice(!voice);
                     setNotice(
                       !voice
-                        ? "Đã kích hoạt chế độ Voice-AI (Tự động đọc giọng sau khi trả lời)."
+                        ? "Đã kích hoạt chế độ Voice-AI (Tự động đọc to sau khi trả lời)."
                         : "Đã tắt chế độ Voice-AI."
                     );
                   }}
                 >
-                  <Mic size={18} color={voice ? "#2563eb" : "#475569"} />
-                  <span>Voice-AI{voice ? " (Bật)" : ""}</span>
+                  <Volume2 size={18} color={voice ? "#2563eb" : "#475569"} />
+                  <span>Đọc to giọng nói (TTS){voice ? " (Bật)" : ""}</span>
                 </button>
               </div>
             )}
@@ -1219,11 +1410,11 @@ export default function App() {
                   <button
                     type="button"
                     className="suggestion-box"
-                    onClick={() => handleSuggestionClick("Tìm bưu cục gần nhất có địa chỉ ở Hà Nội?")}
-                    disabled={busy}
+                    onClick={handleFindNearestPostOffice}
+                    disabled={busy || locating}
                   >
-                    <Sparkles size={16} className="sparkle-blue" />
-                    <span>Tìm bưu cục gần nhất có địa chỉ ở Hà Nội?</span>
+                    <MapPin size={16} color="#2563eb" />
+                    <span>Định vị GPS: Tìm bưu điện VNPost gần tôi nhất</span>
                   </button>
                   <button
                     type="button"
@@ -1249,6 +1440,17 @@ export default function App() {
               </div>
             )}
 
+            {/* Hiển thị chip vị trí GPS nếu người dùng cho phép định vị */}
+            {userLocation && (
+              <div className="attached-preview-chip location-chip">
+                <MapPin size={13} color="#2563eb" />
+                <span>GPS: {userLocation.latitude.toFixed(4)}, {userLocation.longitude.toFixed(4)}</span>
+                <button type="button" onClick={() => setUserLocation(null)} title="Bỏ định vị">
+                  <X size={12} />
+                </button>
+              </div>
+            )}
+
             {/* Thông báo lỗi hoặc cảnh báo */}
             {notice && (
               <div className="mipo-notice-bar">
@@ -1259,8 +1461,16 @@ export default function App() {
               </div>
             )}
 
+            {/* Hiển thị chỉ báo khi đang lắng nghe giọng nói */}
+            {isRecording && (
+              <div className="voice-recording-badge">
+                <span className="voice-recording-dot"></span>
+                <span>Đang lắng nghe giọng nói tiếng Việt... Bấm lại nút Mic để kết thúc</span>
+              </div>
+            )}
+
             {/* Khung nhập hình viên thuốc tròn đúng ảnh mẫu */}
-            <form className="mipo-input-box" onSubmit={send}>
+            <form className="mipo-input-box" onSubmit={handleFormSubmit}>
               {/* Nút đính kèm ẩn */}
               <input
                 ref={imageInput}
@@ -1298,10 +1508,20 @@ export default function App() {
                 <Paperclip size={18} color="#94a3b8" />
               </button>
 
+              <button
+                type="button"
+                className={`input-attach-btn ${userLocation ? "loc-active" : ""}`}
+                title={userLocation ? `Đã có vị trí GPS (${userLocation.latitude.toFixed(3)}, ${userLocation.longitude.toFixed(3)}). Bấm để tìm bưu điện gần nhất!` : "Cho phép vị trí GPS để tìm bưu điện VNPost gần nhất"}
+                onClick={handleFindNearestPostOffice}
+                disabled={busy || locating}
+              >
+                <MapPin size={18} color={userLocation ? "#2563eb" : locating ? "#f59e0b" : "#94a3b8"} />
+              </button>
+
               <input
                 type="text"
                 className="mipo-text-input"
-                placeholder="Vui lòng đặt câu hỏi!"
+                placeholder={isRecording ? "🎙️ Đang lắng nghe giọng nói của bạn..." : "Vui lòng đặt câu hỏi!"}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onPaste={handlePaste}
@@ -1309,14 +1529,18 @@ export default function App() {
               />
 
               <div className="input-right-actions">
-                {/* Nút Microphone */}
+                {/* Nút Microphone: Nhận diện giọng nói STT */}
                 <button
                   type="button"
-                  className={`input-action-btn ${voice ? "voice-active" : ""}`}
-                  title={voice ? "Tắt đọc giọng tự động" : "Bật đọc giọng tự động (ZeroTTS)"}
-                  onClick={handleToggleVoice}
+                  className={`input-action-btn ${isRecording ? "recording-active animate-pulse" : ""} ${voice ? "voice-active" : ""}`}
+                  title={
+                    isRecording
+                      ? "Dừng ghi âm (Đang lắng nghe...)"
+                      : "Nói câu hỏi (Voice STT tiếng Việt)"
+                  }
+                  onClick={handleMicClick}
                 >
-                  <Mic size={18} color={voice ? "#2563eb" : "#64748b"} />
+                  <Mic size={18} color={isRecording ? "#dc2626" : (voice ? "#2563eb" : "#64748b")} />
                 </button>
 
                 {/* Nút Gửi câu hỏi */}

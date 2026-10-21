@@ -3,9 +3,9 @@
 import json
 import time
 
-from app.config import Settings
+from app.core.config import Settings
 from app.rag import KnowledgeBases, make_embedding
-from app.reranker import CrossEncoderReranker
+from app.rag.reranker import CrossEncoderReranker
 
 
 def main():

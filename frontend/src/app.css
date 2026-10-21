@@ -1463,3 +1463,101 @@ button:disabled {
     padding: 8px;
   }
 }
+
+/* TIỆN ÍCH ĐỊNH VỊ VỊ TRÍ & GOOGLE MAPS */
+.maps-direction-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #eff6ff;
+  color: #1d4ed8 !important;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 4px 10px;
+  margin: 4px 0;
+  border-radius: 8px;
+  text-decoration: none;
+  border: 1px solid #bfdbfe;
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.1);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.maps-direction-link:hover {
+  background: #2563eb;
+  color: #ffffff !important;
+  border-color: #1d4ed8;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
+}
+
+.location-chip {
+  background: #f0fdf4 !important;
+  border: 1px solid #bbf7d0 !important;
+  color: #15803d !important;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.input-attach-btn.loc-active {
+  background: #dbeafe !important;
+  color: #1d4ed8 !important;
+}
+
+@keyframes pulseGps {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.15); }
+}
+
+.animate-pulse {
+  animation: pulseGps 1.5s infinite ease-in-out;
+}
+
+/* STT TWO-WAY VOICE AI STYLES */
+.input-action-btn.recording-active {
+  background: #fee2e2 !important;
+  color: #dc2626 !important;
+  border-color: #fca5a5 !important;
+  animation: pulseRecording 1.2s infinite ease-in-out;
+}
+
+@keyframes pulseRecording {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.45);
+  }
+  50% {
+    transform: scale(1.1);
+    box-shadow: 0 0 0 6px rgba(220, 38, 38, 0);
+  }
+}
+
+.voice-recording-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 12px;
+  border-radius: 16px;
+  margin-bottom: 6px;
+  box-shadow: 0 1px 3px rgba(220, 38, 38, 0.08);
+}
+
+.voice-recording-dot {
+  width: 8px;
+  height: 8px;
+  background: #dc2626;
+  border-radius: 50%;
+  animation: pulseGps 0.9s infinite ease-in-out;
+}
+
+

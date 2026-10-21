@@ -14,6 +14,40 @@ from typing import Any
 # Cơ sở dữ liệu bộ nhớ lưu trữ các bản ghi đơn hàng và khiếu nại (có thể đồng bộ DB)
 _DRAFT_BOOKINGS: dict[str, dict[str, Any]] = {}
 _DRAFT_COMPLAINTS: dict[str, dict[str, Any]] = {}
+DEFAULT_DRAFT_TTL_SECONDS = 1800  # 30 phút hiệu lực cho bản nháp
+
+
+def _get_current_session_context() -> tuple[str, str | None, str | None]:
+    """Lấy an toàn tenant, session_id và request_id từ context hiện tại (nếu có)."""
+    try:
+        from app.core.context import current_run
+        run = current_run.get()
+        return (
+            getattr(run, "tenant", "default") or "default",
+            getattr(run, "session_id", None),
+            getattr(run, "request_id", None),
+        )
+    except Exception:
+        return ("default", None, None)
+
+
+def _is_draft_expired(record: dict[str, Any], now: datetime | None = None) -> bool:
+    """Kiểm tra bản nháp đã quá thời gian hiệu lực (TTL) hay chưa."""
+    if record.get("status") == "EXPIRED":
+        return True
+    exp_str = record.get("expires_at")
+    if not exp_str:
+        return False
+    try:
+        exp_dt = datetime.fromisoformat(exp_str)
+        curr = now or _get_vn_now()
+        if curr.tzinfo is None and exp_dt.tzinfo is not None:
+            curr = curr.replace(tzinfo=exp_dt.tzinfo)
+        elif curr.tzinfo is not None and exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=curr.tzinfo)
+        return curr > exp_dt
+    except Exception:
+        return False
 
 # Danh mục tỉnh/thành phố theo 3 miền địa lý (căn cứ theo /skills/bang_ma_buu_chinh_vung_cuoc/SKILL.md)
 _PROVINCES_NORTH = [
@@ -168,6 +202,8 @@ def create_draft_booking(
         est_shipping_fee += int(declared_value * 0.005)
 
     now = _get_vn_now()
+    expires_at = now + timedelta(seconds=DEFAULT_DRAFT_TTL_SECONDS)
+    tenant, session_id, request_id = _get_current_session_context()
     entropy = secrets.token_hex(4).upper()
     draft_id = f"BK-DRAFT-{now.strftime('%Y%m%d')}-{entropy}"
 
@@ -175,6 +211,10 @@ def create_draft_booking(
         "draft_id": draft_id,
         "status": "WAITING_CONFIRMATION",
         "created_at": now.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "tenant": tenant,
+        "session_id": session_id,
+        "request_id": request_id,
         "sender": {
             "name": clean_sender_name,
             "phone": clean_sender_phone,
@@ -211,11 +251,12 @@ def create_draft_booking(
     return json.dumps({
         "status": "waiting_confirmation",
         "draft_id": draft_id,
+        "expires_at": expires_at.isoformat(),
         "detail": draft_record,
         "instruction": (
             f"Đã tạo bản nháp đơn hàng [{draft_id}]. Cước ước tính mô phỏng: {draft_record['pricing']['estimated_fee_text']} "
             f"(Khối lượng tính cước: {chargeable_kg} kg theo {zone}). "
-            "YÊU CẦU XÁC NHẬN (HITL): Bản nháp đã lưu ở trạng thái WAITING_CONFIRMATION. Agent KHÔNG ĐƯỢC tự ý gọi confirm_booking trong cùng lượt này. "
+            "YÊU CẦU XÁC NHẬN (HITL): Bản nháp đã lưu ở trạng thái WAITING_CONFIRMATION (hiệu lực trong 30 phút). Agent KHÔNG ĐƯỢC tự ý gọi confirm_booking trong cùng lượt này. "
             "Phải xuất trình tóm tắt thông tin cho người dùng và DỪNG LƯỢT để chờ người dùng phản hồi. "
             "Chỉ khi người dùng xác nhận/đồng ý ở lượt tiếp theo, mới gọi confirm_booking để phát hành mã vận đơn chính thức."
         ),
@@ -235,11 +276,27 @@ def confirm_booking(draft_id: str, confirmed_by_user: bool = True) -> str:
             "message": f"Không tìm thấy bản nháp đơn hàng với mã '{clean_id}'. Vui lòng tạo đơn mới.",
         }, ensure_ascii=False)
 
+    now = _get_vn_now()
+
+    # Kiểm tra hết hạn hiệu lực (TTL)
+    if _is_draft_expired(record, now):
+        record["status"] = "EXPIRED"
+        return json.dumps({
+            "status": "expired",
+            "message": f"Bản nháp đơn hàng {clean_id} đã hết hạn hiệu lực (quá thời hạn 30 phút). Vui lòng tạo đơn mới.",
+        }, ensure_ascii=False)
+
     if record["status"] == "CONFIRMED":
         return json.dumps({
             "status": "already_confirmed",
             "item_code": record.get("item_code"),
             "message": f"Đơn hàng {clean_id} đã được xác nhận trước đó với mã vận đơn {record.get('item_code')}.",
+        }, ensure_ascii=False)
+
+    if record["status"] == "CANCELLED":
+        return json.dumps({
+            "status": "cancelled",
+            "message": f"Đơn hàng {clean_id} đã bị hủy trước đó, không thể xác nhận.",
         }, ensure_ascii=False)
 
     if record["status"] != "WAITING_CONFIRMATION":
@@ -254,7 +311,6 @@ def confirm_booking(draft_id: str, confirmed_by_user: bool = True) -> str:
             "message": "Chưa có sự xác nhận rõ ràng từ phía người dùng (HITL required).",
         }, ensure_ascii=False)
 
-    now = _get_vn_now()
     # Sinh mã vận đơn chuẩn UPU VNPost (EB...VN cho EMS, CP...VN cho Bưu kiện)
     prefix = "EB" if record["pricing"]["service_type"] == "EMS" else "CP"
     random_digits = "".join([str(random.randint(0, 9)) for _ in range(9)])
@@ -398,11 +454,17 @@ def create_draft_complaint(
 
     entropy = secrets.token_hex(4).upper()
     draft_ticket_id = f"KN-DRAFT-{now.strftime('%Y%m%d')}-{entropy}"
+    expires_at = now + timedelta(seconds=DEFAULT_DRAFT_TTL_SECONDS)
+    tenant, session_id, request_id = _get_current_session_context()
 
     claim_record = {
         "draft_ticket_id": draft_ticket_id,
         "status": "WAITING_CONFIRMATION",
         "created_at": now.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "tenant": tenant,
+        "session_id": session_id,
+        "request_id": request_id,
         "item_code": clean_code,
         "is_international": is_intl,
         "customer": {
@@ -427,11 +489,12 @@ def create_draft_complaint(
     return json.dumps({
         "status": "waiting_confirmation",
         "draft_ticket_id": draft_ticket_id,
+        "expires_at": expires_at.isoformat(),
         "detail": claim_record,
         "instruction": (
             f"Đã lập phiếu khiếu nại nháp [{draft_ticket_id}] cho bưu gửi {clean_code} ({claim_record['complaint_details']['scope']}). "
             f"Loại khiếu nại: {nature}. Mức bồi thường đề xuất: {claim_record['complaint_details']['proposed_compensation_text']}. "
-            "YÊU CẦU XÁC NHẬN (HITL): Bản nháp đã lưu ở trạng thái WAITING_CONFIRMATION. Agent KHÔNG ĐƯỢC tự ý gọi confirm_complaint trong cùng lượt này. "
+            "YÊU CẦU XÁC NHẬN (HITL): Bản nháp đã lưu ở trạng thái WAITING_CONFIRMATION (hiệu lực trong 30 phút). Agent KHÔNG ĐƯỢC tự ý gọi confirm_complaint trong cùng lượt này. "
             "Hãy tóm tắt hồ sơ trên và hỏi người dùng có đồng ý gửi khiếu nại chính thức không, sau đó DỪNG LƯỢT. "
             "Khi người dùng xác nhận ở lượt tiếp theo, mới gọi confirm_complaint để cấp mã Ticket chính thức."
         ),
@@ -448,11 +511,27 @@ def confirm_complaint(draft_ticket_id: str, confirmed_by_user: bool = True) -> s
             "message": f"Không tìm thấy phiếu khiếu nại nháp '{clean_id}'.",
         }, ensure_ascii=False)
 
+    now = _get_vn_now()
+
+    # Kiểm tra hết hạn hiệu lực (TTL)
+    if _is_draft_expired(record, now):
+        record["status"] = "EXPIRED"
+        return json.dumps({
+            "status": "expired",
+            "message": f"Phiếu khiếu nại nháp {clean_id} đã hết hạn hiệu lực (quá thời hạn 30 phút). Vui lòng lập phiếu mới.",
+        }, ensure_ascii=False)
+
     if record["status"] == "SUBMITTED":
         return json.dumps({
             "status": "already_submitted",
             "ticket_number": record.get("ticket_number"),
             "message": f"Phiếu khiếu nại {clean_id} đã được gửi trước đó với mã số {record.get('ticket_number')}.",
+        }, ensure_ascii=False)
+
+    if record["status"] == "CANCELLED":
+        return json.dumps({
+            "status": "cancelled",
+            "message": f"Phiếu khiếu nại {clean_id} đã bị hủy trước đó, không thể nộp chính thức.",
         }, ensure_ascii=False)
 
     if record["status"] != "WAITING_CONFIRMATION":
@@ -467,7 +546,6 @@ def confirm_complaint(draft_ticket_id: str, confirmed_by_user: bool = True) -> s
             "message": "Chưa có sự xác nhận rõ ràng từ phía khách hàng (HITL required).",
         }, ensure_ascii=False)
 
-    now = _get_vn_now()
     ticket_number = f"KN-VNPOST-{now.strftime('%Y')}-{random.randint(10000, 99999)}"
     
     # SLA theo SKILL.md: 20 ngày làm việc nội địa, 30 ngày làm việc quốc tế (EMS)
@@ -501,6 +579,199 @@ def confirm_complaint(draft_ticket_id: str, confirmed_by_user: bool = True) -> s
     }, ensure_ascii=False)
 
 
+def update_draft_booking(
+    draft_id: str,
+    sender_name: str | None = None,
+    sender_phone: str | None = None,
+    sender_address: str | None = None,
+    receiver_name: str | None = None,
+    receiver_phone: str | None = None,
+    receiver_address: str | None = None,
+    weight_grams: int | None = None,
+    length_cm: float | None = None,
+    width_cm: float | None = None,
+    height_cm: float | None = None,
+    service_type: str | None = None,
+    declared_value: float | None = None,
+) -> str:
+    """Cập nhật thông tin bản nháp đơn hàng trước khi người dùng xác nhận duyệt (HITL)."""
+    clean_id = (draft_id or "").strip()
+    record = _DRAFT_BOOKINGS.get(clean_id)
+    if not record:
+        return json.dumps({"status": "error", "message": f"Không tìm thấy bản nháp '{clean_id}'."}, ensure_ascii=False)
+
+    now = _get_vn_now()
+    if _is_draft_expired(record, now):
+        record["status"] = "EXPIRED"
+        return json.dumps({"status": "expired", "message": f"Bản nháp {clean_id} đã hết hạn hiệu lực."}, ensure_ascii=False)
+
+    if record["status"] != "WAITING_CONFIRMATION":
+        return json.dumps({"status": "error", "message": f"Bản nháp {clean_id} ở trạng thái '{record['status']}', không thể sửa."}, ensure_ascii=False)
+
+    # Cập nhật thông tin người gửi nếu có
+    if sender_name is not None and sender_name.strip():
+        record["sender"]["name"] = sender_name.strip()
+    if sender_phone is not None and sender_phone.strip():
+        record["sender"]["phone"] = sender_phone.strip()
+    if sender_address is not None and sender_address.strip():
+        record["sender"]["address"] = sender_address.strip()
+        s_prov, s_reg = _detect_province_and_region(sender_address.strip())
+        record["sender"]["detected_province"] = s_prov or "Không xác định"
+        record["sender"]["detected_region"] = s_reg or "Không xác định"
+
+    # Cập nhật thông tin người nhận nếu có
+    if receiver_name is not None and receiver_name.strip():
+        record["receiver"]["name"] = receiver_name.strip()
+    if receiver_phone is not None and receiver_phone.strip():
+        record["receiver"]["phone"] = receiver_phone.strip()
+    if receiver_address is not None and receiver_address.strip():
+        record["receiver"]["address"] = receiver_address.strip()
+        r_prov, r_reg = _detect_province_and_region(receiver_address.strip())
+        record["receiver"]["detected_province"] = r_prov or "Không xác định"
+        record["receiver"]["detected_region"] = r_reg or "Không xác định"
+
+    # Cập nhật thông tin bưu kiện nếu có
+    parcel = record["parcel"]
+    recalc_needed = False
+    if weight_grams is not None and weight_grams > 0:
+        parcel["weight_actual_kg"] = round(max(10, weight_grams) / 1000.0, 2)
+        recalc_needed = True
+
+    dims_parts = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", parcel.get("dimensions_cm", "")) or [0, 0, 0]]
+    cur_l = dims_parts[0] if len(dims_parts) > 0 else 0.0
+    cur_w = dims_parts[1] if len(dims_parts) > 1 else 0.0
+    cur_h = dims_parts[2] if len(dims_parts) > 2 else 0.0
+
+    if length_cm is not None:
+        cur_l = float(length_cm)
+        recalc_needed = True
+    if width_cm is not None:
+        cur_w = float(width_cm)
+        recalc_needed = True
+    if height_cm is not None:
+        cur_h = float(height_cm)
+        recalc_needed = True
+
+    if recalc_needed:
+        vol_kg = 0.0
+        if cur_l > 0 and cur_w > 0 and cur_h > 0:
+            vol_kg = round((cur_l * cur_w * cur_h) / 6000.0, 2)
+            parcel["dimensions_cm"] = f"{cur_l}x{cur_w}x{cur_h}"
+        parcel["weight_volumetric_kg"] = vol_kg
+        parcel["weight_chargeable_kg"] = max(parcel["weight_actual_kg"], vol_kg)
+        parcel["is_bulky"] = vol_kg > parcel["weight_actual_kg"]
+
+    if declared_value is not None and declared_value >= 0:
+        parcel["declared_value"] = float(declared_value)
+
+    if service_type is not None and service_type.strip():
+        record["pricing"]["service_type"] = service_type.strip().upper()
+
+    # Tính lại cước phí nếu có thay đổi vùng hoặc khối lượng
+    s_prov = record["sender"].get("detected_province")
+    s_reg = record["sender"].get("detected_region")
+    r_prov = record["receiver"].get("detected_province")
+    r_reg = record["receiver"].get("detected_region")
+
+    if s_prov and r_prov and s_prov == r_prov and s_prov != "Không xác định":
+        zone = "Vùng 1 (Nội tỉnh)"
+        base_fee = 22000
+        step_fee = 3500
+    elif s_reg and r_reg and s_reg == r_reg and s_reg != "Không xác định":
+        zone = "Vùng 2 (Nội miền)"
+        base_fee = 32000
+        step_fee = 5500
+    else:
+        zone = "Vùng 3 (Liên miền)"
+        base_fee = 45000
+        step_fee = 8500
+
+    chargeable_kg = parcel["weight_chargeable_kg"]
+    extra_kg = max(0.0, chargeable_kg - 0.5)
+    est_fee = base_fee + int(extra_kg * 2 * step_fee)
+    if parcel.get("declared_value", 0) > 0:
+        est_fee += int(parcel["declared_value"] * 0.005)
+
+    record["pricing"]["zone"] = zone
+    record["pricing"]["estimated_fee"] = est_fee
+    record["pricing"]["estimated_fee_text"] = f"{est_fee:,} đ".replace(",", ".")
+
+    # Gia hạn thêm TTL kể từ thời điểm sửa đổi
+    record["updated_at"] = now.isoformat()
+    record["expires_at"] = (now + timedelta(seconds=DEFAULT_DRAFT_TTL_SECONDS)).isoformat()
+
+    return json.dumps({
+        "status": "updated",
+        "draft_id": clean_id,
+        "detail": record,
+        "message": f"Đã cập nhật bản nháp [{clean_id}]. Cước ước tính mới: {record['pricing']['estimated_fee_text']}.",
+    }, ensure_ascii=False)
+
+
+def update_draft_complaint(
+    draft_ticket_id: str,
+    complaint_type: str | None = None,
+    description: str | None = None,
+    claimed_amount: float | None = None,
+    sent_date: str | None = None,
+) -> str:
+    """Cập nhật thông tin phiếu khiếu nại nháp trước khi duyệt chính thức (HITL)."""
+    clean_id = (draft_ticket_id or "").strip()
+    record = _DRAFT_COMPLAINTS.get(clean_id)
+    if not record:
+        return json.dumps({"status": "error", "message": f"Không tìm thấy phiếu khiếu nại nháp '{clean_id}'."}, ensure_ascii=False)
+
+    now = _get_vn_now()
+    if _is_draft_expired(record, now):
+        record["status"] = "EXPIRED"
+        return json.dumps({"status": "expired", "message": f"Phiếu khiếu nại nháp {clean_id} đã hết hạn hiệu lực."}, ensure_ascii=False)
+
+    if record["status"] != "WAITING_CONFIRMATION":
+        return json.dumps({"status": "error", "message": f"Phiếu khiếu nại nháp {clean_id} ở trạng thái '{record['status']}', không thể sửa."}, ensure_ascii=False)
+
+    details = record["complaint_details"]
+    if complaint_type is not None and complaint_type.strip():
+        details["type"] = complaint_type.strip()
+    if description is not None and description.strip():
+        details["description"] = description.strip()
+    if claimed_amount is not None and claimed_amount >= 0:
+        details["claimed_amount"] = float(claimed_amount)
+        details["proposed_compensation"] = float(claimed_amount)
+        details["proposed_compensation_text"] = f"{int(claimed_amount):,} đ".replace(",", ".")
+    if sent_date is not None and sent_date.strip():
+        details["sent_date"] = sent_date.strip()
+        # Đối chiếu lại thời hiệu
+        is_intl = record.get("is_international", False)
+        limit_months = 12 if is_intl else 6
+        sent_dt = None
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                sent_dt = datetime.strptime(sent_date.strip(), fmt).replace(tzinfo=now.tzinfo)
+                break
+            except ValueError:
+                pass
+        if sent_dt:
+            delta_days = (now - sent_dt).days
+            max_days = limit_months * 30.5
+            if delta_days > max_days:
+                return json.dumps({
+                    "status": "rejected_expired",
+                    "draft_ticket_id": clean_id,
+                    "message": f"Ngày gửi mới ({sent_date.strip()}) đã vượt quá thời hiệu khiếu nại quy định ({limit_months} tháng).",
+                }, ensure_ascii=False)
+            details["statute_of_limitations"] = f"Đã xác minh: Còn trong thời hiệu ({limit_months:02d} tháng kể từ ngày gửi {sent_date.strip()})"
+
+    record["updated_at"] = now.isoformat()
+    record["expires_at"] = (now + timedelta(seconds=DEFAULT_DRAFT_TTL_SECONDS)).isoformat()
+
+    return json.dumps({
+        "status": "updated",
+        "draft_ticket_id": clean_id,
+        "detail": record,
+        "message": f"Đã cập nhật phiếu khiếu nại nháp [{clean_id}].",
+    }, ensure_ascii=False)
+
+
 def cancel_draft_booking(draft_id: str) -> str:
     """Hủy đơn hàng nháp theo yêu cầu của người dùng."""
     clean_id = (draft_id or "").strip()
@@ -509,6 +780,8 @@ def cancel_draft_booking(draft_id: str) -> str:
         return json.dumps({"status": "error", "message": f"Không tìm thấy đơn nháp '{clean_id}'."}, ensure_ascii=False)
     if record["status"] == "CONFIRMED":
         return json.dumps({"status": "error", "message": f"Đơn hàng '{clean_id}' đã phát hành vận đơn, không thể hủy nháp."}, ensure_ascii=False)
+    if record["status"] == "CANCELLED":
+        return json.dumps({"status": "already_cancelled", "draft_id": clean_id, "message": f"Đơn nháp {clean_id} đã ở trạng thái đã hủy."}, ensure_ascii=False)
     record["status"] = "CANCELLED"
     return json.dumps({"status": "cancelled", "draft_id": clean_id, "message": f"Đã hủy đơn nháp {clean_id} thành công."}, ensure_ascii=False)
 
@@ -521,8 +794,66 @@ def cancel_draft_complaint(draft_ticket_id: str) -> str:
         return json.dumps({"status": "error", "message": f"Không tìm thấy phiếu khiếu nại nháp '{clean_id}'."}, ensure_ascii=False)
     if record["status"] == "SUBMITTED":
         return json.dumps({"status": "error", "message": f"Phiếu khiếu nại '{clean_id}' đã nộp chính thức, không thể hủy nháp."}, ensure_ascii=False)
+    if record["status"] == "CANCELLED":
+        return json.dumps({"status": "already_cancelled", "draft_ticket_id": clean_id, "message": f"Phiếu khiếu nại nháp {clean_id} đã ở trạng thái đã hủy."}, ensure_ascii=False)
     record["status"] = "CANCELLED"
     return json.dumps({"status": "cancelled", "draft_ticket_id": clean_id, "message": f"Đã hủy phiếu khiếu nại nháp {clean_id}."}, ensure_ascii=False)
+
+
+def prune_expired_drafts(ttl_seconds: int = DEFAULT_DRAFT_TTL_SECONDS, max_age_hours: int = 24) -> dict[str, int]:
+    """Dọn dẹp các bản ghi nháp đã hết hạn hiệu lực hoặc vượt quá thời gian lưu trữ."""
+    now = _get_vn_now()
+    pruned_bookings = 0
+    pruned_complaints = 0
+
+    to_delete_b = []
+    for bid, rec in list(_DRAFT_BOOKINGS.items()):
+        if _is_draft_expired(rec, now):
+            rec["status"] = "EXPIRED"
+        try:
+            created_dt = datetime.fromisoformat(rec["created_at"])
+            if (now - created_dt).total_seconds() > max_age_hours * 3600:
+                to_delete_b.append(bid)
+        except Exception:
+            pass
+    for bid in to_delete_b:
+        _DRAFT_BOOKINGS.pop(bid, None)
+        pruned_bookings += 1
+
+    to_delete_c = []
+    for cid, rec in list(_DRAFT_COMPLAINTS.items()):
+        if _is_draft_expired(rec, now):
+            rec["status"] = "EXPIRED"
+        try:
+            created_dt = datetime.fromisoformat(rec["created_at"])
+            if (now - created_dt).total_seconds() > max_age_hours * 3600:
+                to_delete_c.append(cid)
+        except Exception:
+            pass
+    for cid in to_delete_c:
+        _DRAFT_COMPLAINTS.pop(cid, None)
+        pruned_complaints += 1
+
+    return {"pruned_bookings": pruned_bookings, "pruned_complaints": pruned_complaints}
+
+
+def get_session_drafts(session_id: str | None = None, tenant: str = "default", status: str | None = None) -> dict[str, list[dict[str, Any]]]:
+    """Truy vấn các bản nháp theo phạm vi session và tenant của người dùng."""
+    bookings = []
+    for rec in _DRAFT_BOOKINGS.values():
+        if rec.get("tenant", "default") == tenant:
+            if session_id is None or rec.get("session_id") == session_id:
+                if status is None or rec.get("status") == status:
+                    bookings.append(rec)
+
+    complaints = []
+    for rec in _DRAFT_COMPLAINTS.values():
+        if rec.get("tenant", "default") == tenant:
+            if session_id is None or rec.get("session_id") == session_id:
+                if status is None or rec.get("status") == status:
+                    complaints.append(rec)
+
+    return {"bookings": bookings, "complaints": complaints}
 
 
 def get_draft_booking(draft_id: str) -> dict[str, Any] | None:
@@ -547,7 +878,12 @@ def execute_action_with_interrupt(action_type: str, draft_id: str) -> dict[str, 
         draft = get_draft_booking(draft_id)
         if not draft:
             return {"status": "error", "message": f"Không tìm thấy đơn nháp {draft_id}"}
-        # Tạm dừng execution, gửi thông tin nháp đến UI để người dùng duyệt
+        if _is_draft_expired(draft):
+            draft["status"] = "EXPIRED"
+            return {"status": "expired", "message": f"Đơn nháp {draft_id} đã hết hạn hiệu lực."}
+        if draft["status"] != "WAITING_CONFIRMATION":
+            return {"status": "error", "message": f"Đơn nháp {draft_id} không ở trạng thái chờ duyệt (trạng thái: {draft['status']})"}
+
         human_decision = interrupt({
             "action_type": "confirm_booking",
             "draft_id": draft_id,
@@ -566,6 +902,12 @@ def execute_action_with_interrupt(action_type: str, draft_id: str) -> dict[str, 
         draft = get_draft_complaint(draft_id)
         if not draft:
             return {"status": "error", "message": f"Không tìm thấy phiếu khiếu nại nháp {draft_id}"}
+        if _is_draft_expired(draft):
+            draft["status"] = "EXPIRED"
+            return {"status": "expired", "message": f"Phiếu khiếu nại {draft_id} đã hết hạn hiệu lực."}
+        if draft["status"] != "WAITING_CONFIRMATION":
+            return {"status": "error", "message": f"Phiếu khiếu nại {draft_id} không ở trạng thái chờ duyệt (trạng thái: {draft['status']})"}
+
         human_decision = interrupt({
             "action_type": "confirm_complaint",
             "draft_ticket_id": draft_id,

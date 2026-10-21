@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     max_tts_characters: int = Field(5000, ge=100, le=20000, validation_alias=AliasChoices("MAX_TTS_CHARS", "MAX_TTS_CHARACTERS"))
     max_audio_bytes: int = Field(25_000_000, ge=1024)
     audio_ttl_seconds: int = Field(3600, ge=60, validation_alias=AliasChoices("AUDIO_TTL", "AUDIO_TTL_SECONDS"))
+
+    # STT (Speech-to-Text) Settings
+    stt_enabled: bool = Field(True, validation_alias=AliasChoices("STT_ENABLED", "stt_enabled"))
+    stt_base_url: str = Field("", validation_alias=AliasChoices("STT_BASE_URL", "stt_base_url"))
+    stt_api_key: SecretStr = Field(SecretStr(""), validation_alias=AliasChoices("STT_API_KEY", "stt_api_key"))
+    stt_model: str = Field("whisper-1", validation_alias=AliasChoices("STT_MODEL", "stt_model"))
+    stt_language: str = Field("vi", validation_alias=AliasChoices("STT_LANGUAGE", "stt_language"))
     api_keys_json: str = "{}"
     # Only administrators holding this separate secret may label a document as evidence.
     trusted_ingest_key: SecretStr = SecretStr("")

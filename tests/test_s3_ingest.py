@@ -2,7 +2,7 @@ import httpx
 import respx
 from fastapi.testclient import TestClient
 
-from app.main import create_app
+from app.api.main import create_app
 
 
 def test_s3_ingest_missing_params(settings):

@@ -17,8 +17,8 @@ from typing import Any
 
 from pydantic import SecretStr
 
-from app.config import Settings
-from app.schemas import ChatRequest
+from app.api.schemas import ChatRequest
+from app.core.config import Settings
 from app.service import ChatService
 
 ROOT = Path(__file__).resolve().parents[1]

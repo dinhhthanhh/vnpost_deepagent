@@ -1,5 +1,5 @@
 from app.agents import validate_answer
-from app.fast_rag import is_greeting
+from app.rag.fast_rag import is_greeting
 
 
 def test_greeting_not_swallowing_business_questions():

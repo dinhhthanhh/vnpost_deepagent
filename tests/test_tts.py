@@ -75,3 +75,62 @@ async def test_tts_stream_is_forwarded_without_assuming_chunk_boundaries(setting
 
 def test_speech_cleanup_does_not_read_citation_ids_or_urls():
     assert spoken_text("# Xin **chào** [S1]\n[trang](https://example.com)") == "Xin chào trang"
+
+
+def test_speech_cleanup_postal_phonetics_and_decimals():
+    # 1. Thuật ngữ bưu chính và thương hiệu VNPost
+    text_phonetics = "VNPost cung cấp dịch vụ EMS và dịch vụ COD tra cứu qua Vpostcode hoặc BCCP."
+    spoken = spoken_text(text_phonetics)
+    assert "Việt Nam Pốt" in spoken
+    assert "Í Em Ét" in spoken
+    assert "Cê Ô Đê" in spoken
+    assert "Vê Pốt Cốt" in spoken
+    assert "Bê Cê Cê Pê" in spoken
+
+    # 2. Số thập phân vs số tiền hàng nghìn
+    text_decimal = "Kiện hàng nặng 1.125 kg, kích thước 2.5 cm, thể tích 0.125 lít, cước 125.000đ."
+    spoken_dec = spoken_text(text_decimal)
+    assert "1 phẩy 125 ki lô gam" in spoken_dec
+    assert "2 phẩy 5 xăng ti mét" in spoken_dec
+    assert "0 phẩy 125 lít" in spoken_dec
+    assert "125000 đồng" in spoken_dec
+
+    # 3. Phân tách cụm số mã vận đơn UPU
+    text_tracking = "Hành trình bưu gửi EB123456789VN đã phát thành công."
+    spoken_track = spoken_text(text_tracking)
+    assert "EB 123 456 789 VN" in spoken_track
+
+
+async def test_tts_audio_caching(settings):
+    call_count = 0
+
+    def transport(request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, content=wav_bytes(), headers={"Content-Type": "audio/wav"})
+
+    client = httpx.AsyncClient(base_url="https://ai.vnpost.vn/zero-tts/", transport=httpx.MockTransport(transport))
+    adapter = ZeroTTS(settings.model_copy(update={"tts_enabled": True}), client=client)
+
+    # Lần gọi 1: Network miss
+    wav1 = await adapter.synthesize("Xin chào quý khách.")
+    assert wav1 == wav_bytes()
+    assert call_count == 1
+    stats = adapter.cache_stats()
+    assert stats["misses"] == 1
+    assert stats["hits"] == 0
+    assert stats["entries"] == 1
+
+    # Lần gọi 2 với cùng nội dung: Cache hit (0 network call)
+    wav2 = await adapter.synthesize("Xin chào quý khách.")
+    assert wav2 == wav_bytes()
+    assert call_count == 1  # Không tăng lên 2 nhờ cache
+    stats2 = adapter.cache_stats()
+    assert stats2["hits"] == 1
+    assert stats2["misses"] == 1
+
+    # Xóa cache
+    adapter.clear_cache()
+    assert adapter.cache_stats()["entries"] == 0
+    await client.aclose()
+

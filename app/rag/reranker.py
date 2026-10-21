@@ -10,8 +10,8 @@ import logging
 
 import httpx
 
-from app.config import Settings
-from app.providers import ProviderClients
+from app.core.config import Settings
+from app.core.providers import ProviderClients
 
 logger = logging.getLogger(__name__)
 

@@ -6,9 +6,9 @@ import time
 from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-from app.config import Settings
+from app.core.config import Settings
 from app.rag import make_embedding
-from app.reranker import CrossEncoderReranker
+from app.rag.reranker import CrossEncoderReranker
 
 
 def query_qdrant(

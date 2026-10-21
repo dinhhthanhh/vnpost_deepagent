@@ -19,17 +19,21 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, MessagesState, StateGraph
 from pydantic import Field
 
-from app import prompts
-from app.calculator import safe_calculate, safe_date_calculate
-from app.checkpointer import PersistentSqliteCheckpointer
-from app.config import Settings
-from app.context import current_run
-from app.demo import DemoChatModel, message_text
-from app.metrics import RunMetricsCallback
-from app.providers import ProviderClients
+from app.agents.calculator import safe_calculate, safe_date_calculate
+from app.api.schemas import TaskSpec
+from app.core import prompts
+from app.core.checkpointer import PersistentSqliteCheckpointer
+from app.core.config import Settings
+from app.core.context import current_run
+from app.core.demo import DemoChatModel, message_text
+from app.core.metrics import RunMetricsCallback
+from app.core.providers import ProviderClients
+from app.domain.terminology import (
+    build_terminology_hint,
+    find_matched_terminology,
+    load_terminology,
+)
 from app.rag import STOPWORDS, KnowledgeBases, filter_relevant_hits, resolve_search_query, tokens
-from app.schemas import TaskSpec
-from app.terminology import build_terminology_hint, find_matched_terminology, load_terminology
 
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 
@@ -137,15 +141,24 @@ class AgentHarness:
         @tool
         def track_item(item_code: str) -> str:
             """Tra cứu hành trình và trạng thái bưu gửi VNPost theo mã vận đơn (ví dụ: EB123456789VN, CP123456789VN)."""
-            from app.postal_services import track_postal_item
+            from app.domain.postal_services import track_postal_item
             res = track_postal_item(item_code)
             return json.dumps(res, ensure_ascii=False)
 
         @tool
         def lookup_post_office(query: str) -> str:
             """Tra cứu danh bạ bưu cục, mạng lưới bưu điện, mã bưu chính Vpostcode, địa chỉ và giờ mở cửa."""
-            from app.postal_services import lookup_postal_office
+            from app.domain.postal_services import lookup_postal_office
             res = lookup_postal_office(query)
+            return json.dumps(res, ensure_ascii=False)
+
+        @tool
+        def find_nearest_post_office(latitude: float, longitude: float) -> str:
+            """Tìm kiếm các bưu điện VNPost gần nhất theo tọa độ GPS vĩ độ (latitude) và kinh độ (longitude).
+            Trả về khoảng cách chính xác (km/mét), địa chỉ, giờ mở cửa và liên kết chỉ đường Google Maps.
+            """
+            from app.domain.postal_services import find_nearest_post_offices
+            res = find_nearest_post_offices(latitude, longitude)
             return json.dumps(res, ensure_ascii=False)
 
         @tool
@@ -180,8 +193,42 @@ class AgentHarness:
             declared_value: float = 0.0,
         ) -> str:
             """Tạo bản nháp đơn gửi hàng VNPost và tính toán khối lượng quy đổi cồng kềnh (hệ số 6000), ước tính cước phí. Đơn nháp cần người dùng xác nhận (HITL) trước khi phát hành mã vận đơn."""
-            from app.postal_actions import create_draft_booking as _create_draft_booking
+            from app.agents.postal_actions import create_draft_booking as _create_draft_booking
             return _create_draft_booking(
+                sender_name=sender_name,
+                sender_phone=sender_phone,
+                sender_address=sender_address,
+                receiver_name=receiver_name,
+                receiver_phone=receiver_phone,
+                receiver_address=receiver_address,
+                weight_grams=weight_grams,
+                length_cm=length_cm,
+                width_cm=width_cm,
+                height_cm=height_cm,
+                service_type=service_type,
+                declared_value=declared_value,
+            )
+
+        @tool
+        def update_draft_booking(
+            draft_id: str,
+            sender_name: str | None = None,
+            sender_phone: str | None = None,
+            sender_address: str | None = None,
+            receiver_name: str | None = None,
+            receiver_phone: str | None = None,
+            receiver_address: str | None = None,
+            weight_grams: int | None = None,
+            length_cm: float | None = None,
+            width_cm: float | None = None,
+            height_cm: float | None = None,
+            service_type: str | None = None,
+            declared_value: float | None = None,
+        ) -> str:
+            """Cập nhật thông tin bản nháp đơn hàng trước khi người dùng xác nhận duyệt (HITL). Tự động tính lại khối lượng quy đổi và cước phí theo vùng."""
+            from app.agents.postal_actions import update_draft_booking as _update_draft_booking
+            return _update_draft_booking(
+                draft_id=draft_id,
                 sender_name=sender_name,
                 sender_phone=sender_phone,
                 sender_address=sender_address,
@@ -199,7 +246,7 @@ class AgentHarness:
         @tool
         def confirm_booking(draft_id: str) -> str:
             """Xác nhận đơn hàng sau khi có sự đồng ý của người dùng (HITL). Phát hành mã vận đơn chính thức chuẩn UPU của VNPost (EB...VN/CP...VN) và lên lịch điều phối thu gom."""
-            from app.postal_actions import confirm_booking as _confirm_booking
+            from app.agents.postal_actions import confirm_booking as _confirm_booking
             return _confirm_booking(draft_id)
 
         @tool
@@ -213,7 +260,7 @@ class AgentHarness:
             sent_date: str | None = None,
         ) -> str:
             """Tiếp nhận yêu cầu khiếu nại bưu gửi VNPost. Kiểm tra thời hiệu (06 tháng nội địa, 12 tháng quốc tế), tính định mức bồi thường trần và lập hồ sơ nháp chờ duyệt (HITL)."""
-            from app.postal_actions import create_draft_complaint as _create_draft_complaint
+            from app.agents.postal_actions import create_draft_complaint as _create_draft_complaint
             return _create_draft_complaint(
                 item_code=item_code,
                 customer_name=customer_name,
@@ -225,9 +272,27 @@ class AgentHarness:
             )
 
         @tool
+        def update_draft_complaint(
+            draft_ticket_id: str,
+            complaint_type: str | None = None,
+            description: str | None = None,
+            claimed_amount: float | None = None,
+            sent_date: str | None = None,
+        ) -> str:
+            """Cập nhật thông tin phiếu khiếu nại nháp trước khi duyệt chính thức (HITL). Kiểm tra lại thời hiệu nếu ngày gửi thay đổi."""
+            from app.agents.postal_actions import update_draft_complaint as _update_draft_complaint
+            return _update_draft_complaint(
+                draft_ticket_id=draft_ticket_id,
+                complaint_type=complaint_type,
+                description=description,
+                claimed_amount=claimed_amount,
+                sent_date=sent_date,
+            )
+
+        @tool
         def confirm_complaint(draft_ticket_id: str) -> str:
             """Xác nhận nộp khiếu nại chính thức vào hệ thống CRM CSKH VNPost sau khi có sự đồng ý của khách hàng (HITL), cấp mã Ticket và cam kết SLA tối đa 20 ngày."""
-            from app.postal_actions import confirm_complaint as _confirm_complaint
+            from app.agents.postal_actions import confirm_complaint as _confirm_complaint
             return _confirm_complaint(draft_ticket_id)
 
         self.search_documents = search_documents
@@ -235,9 +300,12 @@ class AgentHarness:
         self.calculate_date = calculate_date
         self.track_item = track_item
         self.lookup_post_office = lookup_post_office
+        self.find_nearest_post_office = find_nearest_post_office
         self.create_draft_booking = create_draft_booking
+        self.update_draft_booking = update_draft_booking
         self.confirm_booking = confirm_booking
         self.create_draft_complaint = create_draft_complaint
+        self.update_draft_complaint = update_draft_complaint
         self.confirm_complaint = confirm_complaint
         self.read_file = read_file
         self.enterprise_skills = _load_enterprise_skills()
@@ -245,18 +313,18 @@ class AgentHarness:
             "rag-agent": "Tra cứu bằng chứng tài liệu DOCX/TXT/PDF bằng LlamaIndex, trả nguồn [S...].",
             "analyst-agent": "So sánh, phân tích bằng chứng được giao, tính toán số học và tính toán ngày tháng/lịch trình.",
             "tracking-agent": "Tra cứu định vị hành trình, trạng thái bưu gửi VNPost theo mã vận đơn (ItemCode).",
-            "post-office-agent": "Tra cứu mạng lưới bưu cục, địa chỉ, giờ mở cửa, số điện thoại và mã bưu chính quốc gia Vpostcode.",
-            "booking-agent": "Tạo đơn gửi hàng bưu phẩm/bưu kiện, tính cước thể tích (chuẩn chia 6000), tạo nháp và chốt đơn sau khi khách xác nhận (HITL).",
-            "complaint-agent": "Tiếp nhận khiếu nại, đối chiếu thời hiệu 06/12 tháng, ước tính bồi thường và lập Ticket khiếu nại sau khi khách duyệt (HITL).",
+            "post-office-agent": "Tra cứu mạng lưới bưu cục, tìm bưu điện gần nhất qua GPS find_nearest_post_office hoặc địa chỉ lookup_post_office và chỉ đường Google Maps.",
+            "booking-agent": "Tạo đơn gửi hàng bưu phẩm/bưu kiện, tính cước thể tích (chuẩn chia 6000), tạo nháp, sửa đổi và chốt đơn sau khi khách xác nhận (HITL).",
+            "complaint-agent": "Tiếp nhận khiếu nại, đối chiếu thời hiệu 06/12 tháng, ước tính bồi thường, sửa đổi và lập Ticket khiếu nại sau khi khách duyệt (HITL).",
             "writer-agent": "Soạn/tóm tắt nội dung từ bằng chứng có sẵn, giữ nguồn và số liệu.",
         }
         roles = {
             "rag-agent": ("rag", prompts.RAG, [search_documents, read_file]),
             "analyst-agent": ("analyst", prompts.ANALYST, [calculate, calculate_date, read_file]),
             "tracking-agent": ("tracking", prompts.TRACKING, [track_item]),
-            "post-office-agent": ("post_office", prompts.POST_OFFICE, [lookup_post_office]),
-            "booking-agent": ("booking", prompts.BOOKING, [create_draft_booking, confirm_booking]),
-            "complaint-agent": ("complaint", prompts.COMPLAINT, [create_draft_complaint, confirm_complaint]),
+            "post-office-agent": ("post_office", prompts.POST_OFFICE, [lookup_post_office, find_nearest_post_office]),
+            "booking-agent": ("booking", prompts.BOOKING, [create_draft_booking, update_draft_booking, confirm_booking]),
+            "complaint-agent": ("complaint", prompts.COMPLAINT, [create_draft_complaint, update_draft_complaint, confirm_complaint]),
             "writer-agent": ("writer", prompts.WRITER, [read_file]),
         }
         self.subagents = {}
@@ -335,7 +403,7 @@ class AgentHarness:
         state_backend = StateBackend()
         self.graph = create_deep_agent(
             model=create_model(settings, "supervisor", clients), system_prompt=prompts.SUPERVISOR,
-            tools=[calculate_date, create_draft_booking, confirm_booking, create_draft_complaint, confirm_complaint], subagents=specs, backend=state_backend,
+            tools=[calculate_date, find_nearest_post_office, lookup_post_office, create_draft_booking, update_draft_booking, confirm_booking, create_draft_complaint, update_draft_complaint, confirm_complaint, parallel_tasks], subagents=specs, backend=state_backend,
             skills=["/skills/"],
             checkpointer=self.checkpointer,
             middleware=[FilesystemMiddleware(backend=state_backend, tools=["read_file"])],
@@ -375,7 +443,17 @@ class AgentHarness:
         graph.add_edge("execute", END)
         return graph.compile(name=name)
 
-    async def invoke(self, message: str, history: list[dict], grounded: bool, image: str | None = None, *, prefetched_evidence: str | None = None, thread_id: str | None = None) -> str:
+    async def invoke(
+        self,
+        message: str,
+        history: list[dict],
+        grounded: bool,
+        image: str | None = None,
+        *,
+        prefetched_evidence: str | None = None,
+        thread_id: str | None = None,
+        location: Any = None,
+    ) -> str:
         """Run the supervisor after a mandatory retrieval step for grounded deep queries.
 
         A supervisor is free to choose analyst/writer tasks, but it must not be free to skip
@@ -383,10 +461,18 @@ class AgentHarness:
         when a model returns a text response instead of voluntarily calling its first tool.
         """
         mandatory_evidence = ""
-        from app.signals import analyze
+        from app.agents.signals import analyze
         sig = analyze(message)
         is_pure_calc = (sig.calc or sig.temporal_calc) and not any(kw in message.lower() for kw in ("bưu", "cước", "gửi", "kiện", "chuyển phát", "vận đơn", "hoàn cước", "phát hành", "phí"))
-        if grounded and not (image and len(message.strip().split()) <= 5) and not is_pure_calc:
+        has_policy_kw = any(kw in message.lower() for kw in (
+            "quy định", "thể lệ", "bảng giá", "bảng cước", "cước phí", "bồi thường",
+            "khiếu nại", "thời hiệu", "thời hạn", "chính sách", "điều kiện", "hướng dẫn",
+            "tài liệu", "văn bản", "thủ tục", "bao nhiêu tiền", "hoàn cước", "tối đa",
+        ))
+        is_pure_tracking = bool(re.search(r"\b[A-Za-z]{2}\d{9}[A-Za-z]{2}\b", message)) and not has_policy_kw
+        is_pure_location = bool(location) and any(kw in message.lower() for kw in ("gần nhất", "gần đây", "gần tôi", "bưu điện gần", "bưu cục gần")) and not has_policy_kw
+        skip_prefetch = is_pure_calc or is_pure_tracking or is_pure_location
+        if grounded and not (image and len(message.strip().split()) <= 5) and not skip_prefetch:
             run = current_run.get()
             if prefetched_evidence is not None:
                 # Service already retrieved this exact question while evaluating Tier 1.
@@ -416,6 +502,10 @@ class AgentHarness:
             mode = "Người dùng đã đính kèm hình ảnh. Hãy quan sát và phân tích kỹ hình ảnh, đọc rõ văn bản/chữ và chi tiết trong ảnh để giải đáp chính xác câu hỏi của người dùng. Không bịa đặt nguồn nếu trả lời từ ảnh."
         elif is_pure_calc:
             mode = "Câu hỏi về tính toán số học hoặc ngày tháng/lịch trình. Sử dụng mốc thời gian thực hiện tại và công cụ calculate / calculate_date (hoặc giao analyst-agent) để suy luận logic rõ ràng và đưa ra đáp án chính xác. Không trích dẫn nguồn bưu chính nếu không liên quan."
+        elif is_pure_tracking:
+            mode = "Câu hỏi tra cứu định vị, hành trình bưu gửi VNPost theo mã vận đơn. Gọi công cụ `track_item` (hoặc giao tracking-agent) để tra cứu trạng thái và thông tin hành trình. Không trích dẫn nguồn tài liệu quy định."
+        elif is_pure_location:
+            mode = "Câu hỏi tìm kiếm mạng lưới bưu cục VNPost gần nhất. Gọi `find_nearest_post_office` với tọa độ GPS hoặc `lookup_post_office` (hoặc giao post-office-agent). Không trích dẫn nguồn tài liệu quy định."
         elif grounded:
             mode = "Câu trả lời về nghiệp vụ VNPost phải dựa trên tài liệu có nguồn. Đối với phép tính số học, logic hoặc kiến thức thường thức, trả lời trực tiếp. Dữ liệu RAG đã được nạp sẵn; không giao rag-agent tìm lại đúng câu hỏi, chỉ tìm thêm cho một tiểu câu hỏi mới thật sự cần thiết."
         else:
@@ -429,8 +519,25 @@ class AgentHarness:
         prompt_text += f"\n\n[{prompts.get_current_date_hint()}]"
         if hint:
             prompt_text += f"\n\n[{hint}]"
+        if location:
+            lat = getattr(location, "latitude", None)
+            lon = getattr(location, "longitude", None)
+            addr = getattr(location, "address", None)
+            if isinstance(location, dict):
+                lat = location.get("latitude", lat)
+                lon = location.get("longitude", lon)
+                addr = location.get("address", addr)
+            if lat is not None and lon is not None:
+                loc_desc = f"Vĩ độ {lat:.6f}, Kinh độ {lon:.6f}"
+                if addr:
+                    loc_desc += f" (Địa chỉ: {addr})"
+                prompt_text += (
+                    f"\n\n[Vị trí GPS của người dùng: {loc_desc}. "
+                    f"Có thể gọi công cụ `find_nearest_post_office(latitude={lat}, longitude={lon})` "
+                    "để tính khoảng cách và cung cấp link chỉ đường Google Maps.]"
+                )
         if mandatory_evidence:
-            from app.text import sanitize_llm_delimiters
+            from app.core.text import sanitize_llm_delimiters
             summary_items = []
             try:
                 ev_data = json.loads(mandatory_evidence)
@@ -474,7 +581,15 @@ class AgentHarness:
             tid = thread_id or (
                 f"{run.tenant}:{run.session_id}:{run.request_id}"
                 if run and getattr(run, "session_id", None) and getattr(run, "request_id", None)
-                else None
+                else (
+                    f"{run.tenant}:{run.session_id}"
+                    if run and getattr(run, "session_id", None)
+                    else (
+                        f"{run.tenant}:{run.request_id}"
+                        if run and getattr(run, "request_id", None)
+                        else None
+                    )
+                )
             ) or str(uuid.uuid4())
             # Checkpoints are request-scoped for audit/resume. Store owns history
             # across both fast and deep routes, so always pass it to the graph.
@@ -514,13 +629,13 @@ def validate_answer(answer: str, sources: dict, grounded: bool, message: str):
     ids = set(re.findall(r"\[(S\d+)\]", answer))
     if ids - sources.keys():
         return "Câu trả lời chưa vượt qua kiểm tra nguồn. Vui lòng thử lại hoặc cung cấp tài liệu liên quan.", [], "invalid_citation", ["Đã chặn mã trích nguồn không tồn tại."]
-    from app.signals import analyze
+    from app.agents.signals import analyze
     sig = analyze(message)
     greeting = sig.chitchat
     is_calc_or_temporal = sig.calc or sig.temporal_calc
     is_realtime_postal = sig.postal_ops or ("bưu điện" in message.lower())
 
-    from app.prompts import finalize_answer
+    from app.core.prompts import finalize_answer
     final_text, has_evidence = finalize_answer(answer)
     if not has_evidence:
         return final_text, [], "no_evidence", []

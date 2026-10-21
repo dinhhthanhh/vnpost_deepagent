@@ -37,11 +37,11 @@ Hệ thống được thiết kế hướng tới các mục tiêu:
 
 | # | Yêu cầu kỹ thuật | Đầu vào (Input) | Xử lý (Module & Thuật toán) | Đầu ra (Output) | Tiêu chí nghiệm thu | Bằng chứng thực tế |
 | :-: | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | **Xây dựng Deep Agent (Agent Harness)** dùng LangChain Deep Agents | `ChatRequest` (câu hỏi, lịch sử, cờ grounded, ảnh) | `AgentHarness` (`app/agents.py`) dùng `create_deep_agent` (`deepagents==0.7.24`), đồ thị `vnpost-supervisor`, tích hợp SQLite checkpointer, file ảo `StateBackend` nạp `/skills/` | Chuỗi văn bản phản hồi đã tổng hợp kèm danh sách nguồn `[S#]` | Supervisor khởi tạo thành công đồ thị, nạp kỹ năng và quản lý phiên | 153/153 tests pass; file `reports/architecture_metrics.json` ghi nhận hoàn thành 8/8 lượt chạy |
+| **1** | **Xây dựng Deep Agent (Agent Harness)** dùng LangChain Deep Agents | `ChatRequest` (câu hỏi, lịch sử, cờ grounded, ảnh) | `AgentHarness` (`app/agents/orchestrator.py`) dùng `create_deep_agent` (`deepagents==0.7.24`), đồ thị `vnpost-supervisor`, tích hợp SQLite checkpointer, file ảo `StateBackend` nạp `/skills/` | Chuỗi văn bản phản hồi đã tổng hợp kèm danh sách nguồn `[S#]` | Supervisor khởi tạo thành công đồ thị, nạp kỹ năng và quản lý phiên | 153/153 tests pass; file `reports/architecture_metrics.json` ghi nhận hoàn thành 8/8 lượt chạy |
 | **2** | **Quản lý Sub-agent, chia task và tổng hợp kết quả** | Ý định câu hỏi phức hợp từ người dùng | `vnpost-supervisor` giao việc qua công cụ `task(subagent_type, description)`; quản lý **7 Sub-agent**; kiểm duyệt nguồn qua `validate_answer()` | Câu trả lời tổng hợp tích hợp kết quả từ các Sub-agent, gắn đúng mã `[S#]` | Task được phân bổ đúng chuyên môn; cô lập lỗi từng nhánh; chặn mã nguồn ảo | File `reports/parallel_subagents_live_forced.json`: trung bình 2,0 task/câu; `tests/test_agents.py` |
-| **3** | **Sub-agent RAG tìm kiếm tài liệu** (`.docx`, `.txt`, `.pdf`) bằng LlamaIndex | Chuỗi truy vấn `query: str`, `top_k: int`, `filename_filter` | `rag-agent` gọi `search_documents` truy vấn `KnowledgeBase` (`app/rag.py`) dùng `llama-index-core==0.14.25`; bóc tách bảng DOCX thành cặp "Cột: Giá trị"; nhúng vector `vietnamese-bi-encoder` có `pyvi`; tìm kiếm từ khóa `BM25Plus` kết hợp `RRF` | Danh sách trích đoạn tài liệu kèm vị trí, filename và mã trích dẫn `[S#]` | Đọc đúng bảng cước phí; tìm đúng đoạn liên quan; không ghi đè node ID | `tests/test_rag.py` (20 tests pass); `tests/test_context_offloading_and_streaming_tts.py` |
+| **3** | **Sub-agent RAG tìm kiếm tài liệu** (`.docx`, `.txt`, `.pdf`) bằng LlamaIndex | Chuỗi truy vấn `query: str`, `top_k: int`, `filename_filter` | `rag-agent` gọi `search_documents` truy vấn `KnowledgeBase` (`app/rag/engine.py`) dùng `llama-index-core==0.14.25`; bóc tách bảng DOCX thành cặp "Cột: Giá trị"; nhúng vector `vietnamese-bi-encoder` có `pyvi`; tìm kiếm từ khóa `BM25Plus` kết hợp `RRF` | Danh sách trích đoạn tài liệu kèm vị trí, filename và mã trích dẫn `[S#]` | Đọc đúng bảng cước phí; tìm đúng đoạn liên quan; không ghi đè node ID | `tests/test_rag.py` (20 tests pass); `tests/test_context_offloading_and_streaming_tts.py` |
 | **4** | **Thực thi nhiều Sub-agent song song cùng lúc** | Câu hỏi đa nhiệm độc lập nhiều mảng nghiệp vụ | Supervisor phát nhiều lệnh `task()` trong cùng 1 lượt; runtime LangGraph điều phối chạy song song với `asyncio.Semaphore` (`max_parallel_subagents = 3`, `max_tasks = 8`) | Kết quả các task được trả về đồng thời cho Supervisor tổng hợp | Tối đa 3 Sub-agent thực thi chồng lấn trong cùng một cửa sổ thời gian | Log `reports/parallel_subagents_live_forced.json`: ghi nhận `max_parallel_llm_calls = 3` trên Gemini 2.5 Flash |
-| **5** | **Tích hợp API TTS trả lời bằng giọng nói** | Văn bản trả lời `answer: str`, tên giọng đọc | Module `ZeroTTS` (`app/tts.py`): làm sạch văn bản qua `spoken_text()`; kết nối API ZeroTTS qua 4 endpoint HTTP REST; hỗ trợ xuất file WAV hoặc phát đoạn `tts_segment` | File âm thanh WAV (`audio_url`) hoặc chuỗi sự kiện `tts_segment` ($\ge 35$ ký tự) | Âm thanh đúng chuẩn WAV PCM 16-bit; lỗi TTS không làm mất câu trả lời chữ | `tests/test_tts.py` (8 tests pass); script `scripts/check_services.py --live --tts` |
+| **5** | **Tích hợp API TTS trả lời bằng giọng nói** | Văn bản trả lời `answer: str`, tên giọng đọc | Module `ZeroTTS` (`app/tts/service.py`): làm sạch văn bản qua `spoken_text()`; kết nối API ZeroTTS qua 4 endpoint HTTP REST; hỗ trợ xuất file WAV hoặc phát đoạn `tts_segment` | File âm thanh WAV (`audio_url`) hoặc chuỗi sự kiện `tts_segment` ($\ge 35$ ký tự) | Âm thanh đúng chuẩn WAV PCM 16-bit; lỗi TTS không làm mất câu trả lời chữ | `tests/test_tts.py` (8 tests pass); script `scripts/check_services.py --live --tts` |
 
 ---
 
@@ -83,7 +83,7 @@ graph TD
 
 ## 2.2 Bảng tổng hợp Tham số Kỹ thuật Lõi Hybrid RAG
 
-Để tối ưu độ chính xác truy xuất và tính toàn vẹn của bảng cước bưu chính, hệ thống kết hợp nhiều kỹ thuật trong `app/rag.py`:
+Để tối ưu độ chính xác truy xuất và tính toàn vẹn của bảng cước bưu chính, hệ thống kết hợp nhiều kỹ thuật trong `app/rag/engine.py`:
 
 | Kỹ thuật triển khai | Tham số cấu hình trong mã nguồn | Lý do lựa chọn và Mục đích kỹ thuật |
 | :--- | :--- | :--- |
@@ -104,7 +104,10 @@ graph TD
 Đối với các hành động ghi có ảnh hưởng nghiệp vụ (tạo đơn hàng bưu chính, nộp đơn khiếu nại), hệ thống áp dụng cơ chế **Two-Phase Commit thông qua hội thoại**:
 - **Pha 1 (Lập phiếu nháp - Draft Phase):** Thu thập dữ liệu bắt buộc (Slot-filling), kiểm tra tính hợp lệ, tính toán cước/thời hiệu mô phỏng, sinh mã nháp an toàn có entropy cao (`secrets.token_hex(4)`), lưu trạng thái `WAITING_CONFIRMATION` vào bộ nhớ và xuất trình bảng tóm tắt cho người dùng, sau đó **dừng lượt** để hỏi xác nhận.
 - **Pha 2 (Xác nhận - Confirm Phase):** Chỉ khi người dùng phản hồi đồng ý ở lượt tiếp theo, tác tử mới gọi công cụ `confirm_*` để phát hành mã đơn / Ticket chính thức.
-- **Lưu ý thiết kế trung thực:** Trong phiên bản mã nguồn hiện tại, cờ `confirmed_by_user=True` được truyền bởi chính LLM khi gọi công cụ; mã nguồn backend **chưa có bộ phân tích đối soát trực tiếp nội dung tin nhắn người dùng** mà dựa vào ràng buộc hướng dẫn của Prompt (**chốt ở mức prompt / prompt-level constraint**). Phiếu nháp hiện lưu trong từ điển RAM của tiến trình Python, **chưa gắn định danh `tenant`/`session_id` và chưa có cơ chế hết hạn (TTL)**.
+- **Lưu ý thiết kế trung thực:**
+  - **Cơ chế chốt chặn `confirm_*`:** Trong phiên bản mã nguồn hiện tại, tool `@tool def confirm_booking(draft_id: str)` đăng ký cho Agent chỉ tiếp nhận tham số `draft_id`, trong khi tham số bảo vệ `confirmed_by_user` trong hàm gốc mặc định nhận `True`. Do đó, điều kiện chặn khi `confirmed_by_user=False` chỉ có hiệu lực khi gọi trực tiếp hàm Python trong unit test, còn trên luồng chạy thực tế của Agent thì việc dừng chờ người dùng duyệt dựa hoàn toàn vào kỷ luật hội thoại 2 pha của Prompt (**chốt ở mức prompt / prompt-level constraint**), backend chưa có bộ parser đối soát ngữ nghĩa độc lập trực tiếp từ tin nhắn người dùng.
+  - **Module LangGraph Interrupt:** Hàm `execute_action_with_interrupt` sử dụng `langgraph.types.interrupt` là một **nguyên mẫu kỹ thuật (prototype / reference implementation)** chứng minh khả năng tạm dừng đồ thị, hiện chưa được đấu nối trực tiếp vào pipeline API của Web Chat (Web Chat hiện chạy theo chu kỳ request/response đa lượt qua `ChatService`).
+  - **Lưu trữ nháp:** Phiếu nháp hiện lưu trong từ điển RAM của tiến trình Python, **chưa gắn định danh `tenant`/`session_id` và chưa có cơ chế hết hạn (TTL)**.
 
 ---
 
@@ -112,7 +115,7 @@ graph TD
 
 ## 3.1 Hợp đồng Giao diện Hệ thống (System I/O Contract)
 
-Hợp đồng dữ liệu đầu vào và đầu ra của toàn bộ hệ sinh thái được định nghĩa chặt chẽ trong `app/schemas.py`:
+Hợp đồng dữ liệu đầu vào và đầu ra của toàn bộ hệ sinh thái được định nghĩa chặt chẽ trong `app/api/schemas.py`:
 
 ### Bảng hợp đồng API: `ChatRequest` và `ChatResponse`
 
@@ -144,15 +147,15 @@ Hợp đồng dữ liệu đầu vào và đầu ra của toàn bộ hệ sinh t
 
 ## 3.2 Kiến trúc Thực thi: 4 Nhãn Phân loại, 3 Đường Thực thi Mã nguồn
 
-Trong tài liệu thiết kế, hệ thống sử dụng **4 nhãn phân tầng (Tier 0, 1, 2, 3)** để mô tả mức độ phức tạp của câu hỏi. Tuy nhiên, khi đối chiếu trực tiếp với mã nguồn (`app/service.py` và `app/router.py`), hệ thống thực chất được vận hành trên **3 đường thực thi vật lý (3 Execution Paths)**:
+Trong tài liệu thiết kế, hệ thống sử dụng **4 nhãn phân tầng (Tier 0, 1, 2, 3)** để mô tả mức độ phức tạp của câu hỏi. Tuy nhiên, khi đối chiếu trực tiếp với mã nguồn (`app/service.py` và `app/router/classifier.py`), hệ thống thực chất được vận hành trên **3 đường thực thi vật lý (3 Execution Paths)**:
 
 ```mermaid
 flowchart TD
-    In["Câu hỏi ChatRequest"] --> FP{"Đường tắt Tầng 0<br/>fastpath.py (< 1ms)"}
+    In["Câu hỏi ChatRequest"] --> FP{"Đường tắt Tầng 0<br/>app/router/fastpath.py (< 1ms)"}
     
     FP -->|"ĐƯỜNG THỰC THI 1: Tầng 0<br/>Chào hỏi / Phép tính thuần AST / Ngày giờ UTC+7"| Out0["local_answer()<br/>0 LLM Call, 0 RAG Call"]
     
-    FP -->|"Câu hỏi nghiệp vụ"| Router{"Bộ định tuyến Tín hiệu<br/>router.py (Zero-LLM < 5ms)"}
+    FP -->|"Câu hỏi nghiệp vụ"| Router{"Bộ định tuyến Tín hiệu<br/>app/router/classifier.py (Zero-LLM < 5ms)"}
     
     Router -->|"ĐƯỜNG THỰC THI 2: Tầng 1<br/>Tra cứu nghiệp vụ 1 ý"| FastRAG["FastRAGExecutor.prepare()<br/>Truy xuất Hybrid RAG 1 lần"]
     FastRAG --> SGate{"Cổng nguồn Source Gate"}
@@ -169,15 +172,15 @@ flowchart TD
 ```
 
 ### Chi tiết 3 đường thực thi mã nguồn:
-1. **Đường 1 (Tầng 0 – Local Fastpath):** Xử lý tại `fastpath.py` đối với phép tính số học thuần (`calculator.py`), ngày giờ UTC+7 và chào hỏi xã giao. Hoàn thành trong **< 1 ms**, không gọi LLM và không truy vấn cơ sở dữ liệu vector.
-2. **Đường 2 (Tầng 1 – Fast RAG Pipeline):** Xử lý tại `fast_rag.py`. Truy xuất Hybrid RAG 1 lần, kiểm tra Cổng kiểm tra nguồn (Source Gate). Nếu đủ nguồn, thực thi đúng **1 lượt gọi LLM** và stream kết quả.
-3. **Đường 3 (Tầng 2 & Tầng 3 – Deep Agent Pipeline):** Trong mã nguồn `service.py`, cả câu hỏi gắn nhãn Tầng 2 và Tầng 3 **đều đi qua cùng một hàm `_deep_or_fallback()` và cùng khởi tạo đồ thị `AgentHarness.invoke()`**. Khác biệt giữa Tầng 2 và Tầng 3 chỉ là nhãn phân loại ý định (Tầng 2: chuyên biệt 1 tác vụ sâu; Tầng 3: đa nhiệm phức hợp nhiều tác vụ), không có cấu trúc code rẽ nhánh riêng biệt.
+1. **Đường 1 (Tầng 0 – Local Fastpath):** Xử lý tại `app/router/fastpath.py` đối với phép tính số học thuần (`app/agents/calculator.py`), ngày giờ UTC+7 và chào hỏi xã giao. Hoàn thành trong **< 1 ms**, không gọi LLM và không truy vấn cơ sở dữ liệu vector.
+2. **Đường 2 (Tầng 1 – Fast RAG Pipeline):** Xử lý tại `app/rag/fast_rag.py`. Truy xuất Hybrid RAG 1 lần, kiểm tra Cổng kiểm tra nguồn (Source Gate). Nếu đủ nguồn, thực thi đúng **1 lượt gọi LLM** và stream kết quả.
+3. **Đường 3 (Tầng 2 & Tầng 3 – Deep Agent Pipeline):** Trong mã nguồn `app/service.py`, cả câu hỏi gắn nhãn Tầng 2 và Tầng 3 **đều đi qua cùng một hàm `_deep_or_fallback()` và cùng khởi tạo đồ thị `AgentHarness.invoke()`** (`app/agents/orchestrator.py`). Khác biệt giữa Tầng 2 và Tầng 3 chỉ là nhãn phân loại ý định (Tầng 2: chuyên biệt 1 tác vụ sâu; Tầng 3: đa nhiệm phức hợp nhiều tác vụ), không có cấu trúc code rẽ nhánh riêng biệt.
 
 ---
 
 ## 3.3 Bảng 9 Luật Ưu tiên của Bộ Định tuyến và Tín hiệu Nhận diện
 
-Hàm `rule_based_decision` (`app/router.py`) phân tích chuỗi câu hỏi bằng biểu thức chính quy (`app/signals.py`) không dùng LLM (< 5 ms):
+Hàm `rule_based_decision` (`app/router/classifier.py`) phân tích chuỗi câu hỏi bằng biểu thức chính quy (`app/agents/signals.py`) không dùng LLM (< 5 ms):
 
 | Thứ tự ưu tiên | Điều kiện kiểm tra trong mã nguồn | Nhãn Tầng | Tuyến (Route) | Ý nghĩa nghiệp vụ |
 | :---: | :--- | :---: | :---: | :--- |
@@ -192,7 +195,7 @@ Hàm `rule_based_decision` (`app/router.py`) phân tích chuỗi câu hỏi bằ
 | **9** | Khoảng cách Centroid giữa 2 kho (**chưa chạy** do `query_vec` chưa truyền) | **Tầng 1/2** | `fast`/`deep` | Dự phòng phân luồng ngữ nghĩa dựa trên vector kho tài liệu |
 | **Mặc định** | Câu hỏi tra cứu nghiệp vụ thông thường | **Tầng 1** | `fast` | Fast RAG: 1 lần Hybrid RAG + Cổng nguồn + 1 lượt gọi LLM |
 
-### Bảng nhận diện biểu thức chính quy (`app/signals.py`):
+### Bảng nhận diện biểu thức chính quy (`app/agents/signals.py`):
 - `chitchat`: Khớp toàn bộ `_CHITCHAT`: chào hỏi, cảm ơn, hỏi tên ("xin chào", "hello", "bạn là ai", "cảm ơn").
 - `compare`: Khớp `_COMPARE`: "so sánh", "đối chiếu", "khác nhau", "khác biệt", "phân biệt", "hơn kém".
 - `calc`: Khớp `_CALC`: "tính tổng", "tổng cộng", phép tính số học `\d\s*[x*+]\s*\d` (loại trừ định dạng ngày `8/3`).
@@ -221,15 +224,15 @@ Mỗi Sub-agent được cấu hình với nhiệm vụ, định dạng I/O, b�
 
 ## 3.5 Thiết kế Chi tiết Phân hệ Giọng nói ZeroTTS
 
-Phân hệ giọng nói kết nối với máy chủ ZeroTTS của VNPost (`app/tts.py`, `app/service.py`, và `app/main.py`):
+Phân hệ giọng nói kết nối với máy chủ ZeroTTS của VNPost (`app/tts/service.py`, `app/service.py`, và `app/api/main.py`):
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Client as Web Client / Người dùng
-    participant Svc as ChatService (service.py)
-    participant TTS as ZeroTTS (tts.py)
-    participant API as FastApi App (main.py)
+    participant Svc as ChatService (app/service.py)
+    participant TTS as ZeroTTS (app/tts/service.py)
+    participant API as FastAPI App (app/api/main.py)
     participant Server as Máy chủ ZeroTTS VNPost
     
     Note over Client,Server: KỊCH BẢN A: CHẾ ĐỘ FILE WAV HOÀN CHỈNH (stream_voice = False)
@@ -336,16 +339,41 @@ sequenceDiagram
 
 # PHẦN V: THIẾT KẾ BỘ KIỂM CHỨNG TOÀN DIỆN VÀ PHÂN TÍCH TEST CASES
 
-Bộ kiểm thử của dự án gồm **153 trường hợp thử nghiệm (Test Cases)** tự động đã vượt qua 100% (`153 passed in 80.10s` trên Python 3.11.9 / pytest-9.1.1). Dưới đây là mô tả kỹ thuật súc tích của từng test case theo định dạng chuẩn: **Mục tiêu $\rightarrow$ Dữ liệu vào $\rightarrow$ Kết quả xác thực mong đợi**:
+Bộ kiểm thử của dự án gồm **163 trường hợp thử nghiệm (Test Cases)** tự động phân bố trên **17 file kiểm thử** trong thư mục `tests/`, đã vượt qua 100% (`163 passed in 81.79s` trên Python 3.11.9 / pytest-9.1.1):
+
+### Bảng phân bổ 163 Test Cases theo từng module kiểm thử thực tế
+
+| STT | File kiểm thử (`tests/`) | Số lượng test | Trọng tâm kiểm chứng nghiệp vụ & kỹ thuật |
+| :---: | :--- | :---: | :--- |
+| 1 | `test_action_agents.py` | **10** | Lập đơn nháp (chuẩn thể tích 6000), đối chiếu thời hiệu khiếu nại, SLA, HITL |
+| 2 | `test_agents.py` | **28** | Điều phối Multi-Agent Harness, song song hóa tác tử, an toàn toán học `calculator`, cấu hình thinking và kiểm duyệt trích dẫn claim-level |
+| 3 | `test_fastpath.py` | **34** | Nhận diện phép tính siêu tốc, bóc tách số tiếng Việt, chào hỏi tức thì (< 2ms), phân định số văn bản pháp luật / tháng năm với phép chia |
+| 4 | `test_rag.py` | **23** | Vòng đời RAG: nạp docx/txt, bảng cước, chống zip bomb, Qdrant/Memory index, phân giải thiết bị nhúng GPU, bảo toàn $tf$ trong BM25, cô lập hash session |
+| 5 | `test_schemas_ssrf.py` | **15** | Phòng chống SSRF, chặn IP nội bộ/metadata cloud trong URL và ảnh base64 |
+| 6 | `test_router.py` | **11** | Bộ định tuyến thích ứng 4 tầng (Zero-LLM), phân loại heuristic, fallback |
+| 7 | `test_tts.py` | **8** | Hợp đồng ZeroTTS, kiểm tra PCM WAV 16-bit, lọc thẻ trích dẫn khi đọc |
+| 8 | `test_terminology.py` | **5** | Chuẩn hóa từ điển bưu chính, phát hiện từ khóa, gợi ý thuật ngữ |
+| 9 | `test_prompts.py` | **5** | Ranh giới tài liệu `[TÀI LIỆU]`, thoát thẻ đóng chống Indirect Prompt Injection |
+| 10 | `test_s3_ingest.py` | **5** | Kiểm tra nạp tài liệu qua S3 presigned URL an toàn |
+| 11 | `test_api.py` | **4** | Endpoint FastAPI: upload tài liệu, chat SSE streaming, phân quyền tenant |
+| 12 | `test_context_offloading_and_streaming_tts.py` | **4** | Offloading ngữ cảnh tài liệu lớn, streaming TTS phân đoạn theo câu |
+| 13 | `test_is_greeting.py` | **3** | Phân định chào hỏi thuần túy vs câu hỏi nghiệp vụ bưu chính |
+| 14 | `test_fast_rag_edge_cases.py` | **3** | Xử lý biên Fast RAG: tính nhẩm trực tiếp, lọc overlap từ khóa |
+| 15 | `test_checkpointer.py` | **3** | Lưu trữ phiên hội thoại đa lượt bền vững bằng SQLite checkpointer và kiểm thử hành vi lưu trữ MemorySaver |
+| 16 | `test_embedding_cache.py` | **1** | Cô lập cache: vector query chỉ lưu RAM, vector tài liệu lưu đĩa |
+| 17 | `test_live_contract.py` | **1** | Hợp đồng kết nối thực tế với client LLM/Embedding |
+| **Tổng** | **17 files** | **163 tests** | **163 passed (100%)** |
+
+Dưới đây là mô tả kỹ thuật súc tích của từng test case theo định dạng chuẩn: **Mục tiêu $\rightarrow$ Dữ liệu vào $\rightarrow$ Kết quả xác thực mong đợi**:
 
 ## 5.1 Kiểm chứng Nghiệp vụ Bưu chính (`tests/test_action_agents.py` - 10 Test Cases)
 
 1. `test_booking_bulky_calculation_and_draft`: Kiện $30 \times 20 \times 10\text{ cm}$ (thể tích quy đổi $1,0\text{ kg}$), nặng thực $0,5\text{ kg} \rightarrow$ Tính cước theo $1,0\text{ kg}$, sinh mã nháp `BK-DRAFT-...`, trạng thái `WAITING_CONFIRMATION`.
-2. `test_booking_confirm_and_cancel_flow`: Gọi `confirm_booking` khi `confirmed_by_user=False` $\rightarrow$ bị chặn; khi `confirmed_by_user=True` $\rightarrow$ trạng thái `CONFIRMED`, sinh mã vận đơn `EB...VN`. Gọi hủy $\rightarrow$ trạng thái `CANCELLED`.
+2. `test_booking_confirm_and_cancel_flow`: Kiểm thử luồng xác nhận và hủy đơn ở cấp hàm nội bộ. Khi gọi hàm với `confirmed_by_user=False` $\rightarrow$ bị chặn (`status: unconfirmed`); khi `confirmed_by_user=True` $\rightarrow$ trạng thái `CONFIRMED`, sinh mã vận đơn `EB...VN`. Gọi hủy $\rightarrow$ trạng thái `CANCELLED`. *(Lưu ý: trên luồng Agent thực tế, tool `confirm_booking` chỉ nhận `draft_id`, việc kiểm soát xác nhận dựa trên kỷ luật hội thoại 2 pha của Prompt theo Mục 2.3)*.
 3. `test_complaint_statute_of_limitations_and_draft`: Khiếu nại bưu phẩm nội địa gửi quá 6 tháng $\rightarrow$ trả về `rejected_expired`; gửi trong vòng 6 tháng $\rightarrow$ tạo nháp `KN-DRAFT-...` hợp lệ.
 4. `test_slot_filling_detects_missing_fields`: Tạo đơn khi thiếu tên/SĐT/địa chỉ người gửi hoặc người nhận $\rightarrow$ phát hiện chính xác danh sách trường thiếu và trả về trạng thái `missing_info`.
 5. `test_complaint_confirm_and_sla_flow`: Khiếu nại dịch vụ nội địa $\rightarrow$ cam kết SLA tối đa 20 ngày làm việc; dịch vụ quốc tế EMS $\rightarrow$ cam kết SLA tối đa 30 ngày làm việc; phát hành mã Ticket CRM mô phỏng.
-6. `test_hitl_interrupt_execution`: Gọi hàm `execute_action_with_interrupt` $\rightarrow$ kích hoạt đúng cơ chế tạm dừng của đồ thị LangGraph phục vụ giao diện Web.
+6. `test_hitl_interrupt_execution`: Kiểm thử hàm nguyên mẫu (prototype) `execute_action_with_interrupt` với cơ chế tạm dừng của LangGraph (`langgraph.types.interrupt`) độc lập khi nhận quyết định phê duyệt (`approved=True`) hoặc từ chối (`approved=False`). *(Lưu ý: đây là module thử nghiệm độc lập, hiện chưa được đấu nối vào luồng xử lý chính của Web API)*.
 7. `test_router_signals_action_intent`: Câu hỏi chứa từ khóa "tạo đơn gửi hàng" hoặc "khiếu nại mất hàng" $\rightarrow$ nhận diện đúng tín hiệu `postal_ops`.
 8. `test_harness_action_subagents_registered`: Khởi tạo `AgentHarness` $\rightarrow$ xác nhận `booking-agent` và `complaint-agent` được đăng ký đầy đủ vào danh sách tác tử của Supervisor.
 9. `test_region_pricing_zones_skill_compliance`: Hà Nội $\rightarrow$ Đà Nẵng và Đà Nẵng $\rightarrow$ Cần Thơ ra đúng **Vùng 3 (Liên miền)**; Hà Nội $\rightarrow$ Hải Phòng và Đà Nẵng $\rightarrow$ Huế ra **Vùng 2 (Nội miền)** theo chuẩn văn bản `SKILL.md`.

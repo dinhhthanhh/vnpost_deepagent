@@ -8,7 +8,7 @@ from llama_index.core.schema import MetadataMode
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
-from app.config import Settings
+from app.core.config import Settings
 from app.rag import KnowledgeBases, make_embedding
 
 

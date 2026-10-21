@@ -1,15 +1,38 @@
 import asyncio
+import collections
+import hashlib
 import io
 import re
 import wave
 
 import httpx
 
-from app.config import Settings
+from app.core.config import Settings
 
 
 class TTSError(Exception):
     pass
+
+
+# Từ điển chuyển đổi ngữ âm chuyên ngành bưu chính VNPost sang văn phong nói tự nhiên
+POSTAL_PHONETICS: list[tuple[re.Pattern, str]] = [
+    # Tên thương hiệu và định danh VNPost
+    (re.compile(r"\b(?:VNPost|Vietnam\s*Post|Vnpost)\b", re.IGNORECASE), "Việt Nam Pốt"),
+    # Dịch vụ cốt lõi & viết tắt nghiệp vụ
+    (re.compile(r"\bEMS\b"), "Í Em Ét"),
+    (re.compile(r"\bCOD\b"), "Cê Ô Đê"),
+    (re.compile(r"\bVpostcode\b", re.IGNORECASE), "Vê Pốt Cốt"),
+    (re.compile(r"\bBCCP\b"), "Bê Cê Cê Pê"),
+    (re.compile(r"\bUPU\b"), "U Pê U"),
+    (re.compile(r"\bCSKH\b"), "Chăm sóc khách hàng"),
+    (re.compile(r"\bTCT\b"), "Tổng công ty"),
+    (re.compile(r"\bSĐT\b", re.IGNORECASE), "Số điện thoại"),
+    (re.compile(r"\bĐKCL\b"), "Đo kiểm chất lượng"),
+    (re.compile(r"\bKT1\b", re.IGNORECASE), "Kê Tê một"),
+    (re.compile(r"\bHITL\b"), "Xác nhận của con người"),
+    (re.compile(r"\bTP\.?\s*HCM\b", re.IGNORECASE), "Thành phố Hồ Chí Minh"),
+    (re.compile(r"\bTP\.?\s*HN\b", re.IGNORECASE), "Thành phố Hà Nội"),
+]
 
 
 def spoken_text(text: str) -> str:
@@ -25,14 +48,40 @@ def spoken_text(text: str) -> str:
     # 4. Chuẩn hóa ngày tháng dd/mm/yyyy và khoảng số (ví dụ: 24-36 giờ -> 24 đến 36 giờ)
     text = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", r"ngày \1 tháng \2 năm \3", text)
     text = re.sub(r"\b(\d+)\s*-\s*(\d+)\s*(giờ|ngày|tuần|tháng|năm|kg|g|gam|đồng)\b", r"\1 đến \2 \3", text, flags=re.IGNORECASE)
-    # 5. Chuẩn hóa số tiền Việt Nam (125.000đ -> 125000 đồng) và đơn vị khối lượng
+
+    # 5. Phân biệt số thập phân (đơn vị đo lường) vs số tiền hàng nghìn (1.125 kg -> 1 phẩy 125 ki lô gam)
+    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*(?:đ/kg|đồng/kg)\b", r"\1 phẩy \2 đồng một ki lô gam", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*kg\b", r"\1 phẩy \2 ki lô gam", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*g(?:am)?\b", r"\1 phẩy \2 gam", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*cm\b", r"\1 phẩy \2 xăng ti mét", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*m\b", r"\1 phẩy \2 mét", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*km\b", r"\1 phẩy \2 ki lô mét", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*tấn\b", r"\1 phẩy \2 tấn", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*lít\b", r"\1 phẩy \2 lít", text, flags=re.IGNORECASE)
+    # Số thập phân bắt đầu bằng 0 (ví dụ: 0.125 hoặc 0.5)
+    text = re.sub(r"\b0[.,](\d+)\b", r"0 phẩy \1", text)
+
+    # 6. Chuẩn hóa số tiền Việt Nam (125.000đ -> 125000 đồng) và đơn vị số nguyên
     text = re.sub(r"(?<=\d)\.(?=\d{3}(?!\d))", "", text)
-    text = re.sub(r"\b(\d+(?:,\d+)?)\s*(?:đ/kg|đồng/kg)\b", r"\1 đồng một ki lô gam", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b(\d+(?:,\d+)?)\s*(?:đ|vnđ|vnd)\b", r"\1 đồng", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b(\d+(?:,\d+)?)\s*kg\b", r"\1 ki lô gam", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b(\d+(?:,\d+)?)\s*g\b", r"\1 gam", text, flags=re.IGNORECASE)
-    # 6. Chuẩn hóa số điện thoại / hotline có dấu chấm phân cách
-    text = re.sub(r"(\d{4})\.(\d{2})\.(\d{2})\.(\d{2})", r"\1 \2 \3 \4", text)
+    text = re.sub(r"\b(\d+)\s*(?:đ/kg|đồng/kg)\b", r"\1 đồng một ki lô gam", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)\s*(?:đ|vnđ|vnd)\b", r"\1 đồng", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)\s*kg\b", r"\1 ki lô gam", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)\s*g\b", r"\1 gam", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)\s*cm\b", r"\1 xăng ti mét", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)\s*m\b", r"\1 mét", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(\d+)\s*km\b", r"\1 ki lô mét", text, flags=re.IGNORECASE)
+
+    # 7. Tách mã vận đơn UPU (ví dụ EB123456789VN -> EB 123 456 789 VN) để TTS đọc rõ từng cụm số
+    text = re.sub(r"\b([A-Za-z]{2})(\d{3})(\d{3})(\d{3})([A-Za-z]{2})\b", r"\1 \2 \3 \4 \5", text)
+
+    # 8. Áp dụng từ điển phiên âm ngữ âm bưu chính
+    for pattern, phonetic in POSTAL_PHONETICS:
+        text = pattern.sub(phonetic, text)
+
+    # 9. Chuẩn hóa số điện thoại / hotline có dấu chấm hoặc khoảng cách
+    text = re.sub(r"(\d{4})\.(\d{2,3})\.(\d{2,3})", r"\1 \2 \3", text)
+    text = re.sub(r"\b(1900|1800)\s+(\d{2,4})\s+(\d{2,4})\b", r"\1 \2 \3", text)
+
     text = text.replace("|", ", ").replace("`", "").replace("**", "").replace("*", "")
     return re.sub(r"\s+", " ", text).strip()
 
@@ -59,6 +108,30 @@ class ZeroTTS:
                                                                      max_keepalive_connections=settings.max_parallel_tts))
         self.owns_client = client is None
         self.last_health = "disabled" if not settings.tts_enabled else "unknown"
+
+        # Audio memory cache (LRU) để tránh gọi lại ZeroTTS server với các câu nói lặp lại
+        self._cache: collections.OrderedDict[str, bytes] = collections.OrderedDict()
+        self.max_cache_entries = 128
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    def cache_key(self, text: str, voice: str | None, mode: str, kwargs: dict) -> str:
+        spoken = spoken_text(text)
+        raw = f"{voice or self.settings.tts_voice}|{mode}|{spoken}|{sorted(kwargs.items())}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def cache_stats(self) -> dict:
+        return {
+            "entries": len(self._cache),
+            "max_entries": self.max_cache_entries,
+            "hits": self.cache_hits,
+            "misses": self.cache_misses,
+        }
+
+    def clear_cache(self):
+        self._cache.clear()
+        self.cache_hits = 0
+        self.cache_misses = 0
 
     def payload(self, text: str, voice: str | None, mode: str, **kwargs):
         if not self.settings.tts_enabled:
@@ -90,7 +163,15 @@ class ZeroTTS:
         }
 
     async def synthesize(self, text: str, voice: str | None = None, mode: str | None = None, **kwargs) -> bytes:
-        endpoint, payload = self.payload(text, voice, mode or self.settings.tts_mode, **kwargs)
+        effective_mode = mode or self.settings.tts_mode
+        key = self.cache_key(text, voice, effective_mode, kwargs)
+        if key in self._cache:
+            self.cache_hits += 1
+            self._cache.move_to_end(key)
+            return self._cache[key]
+
+        self.cache_misses += 1
+        endpoint, payload = self.payload(text, voice, effective_mode, **kwargs)
         chunks, size = [], 0
         try:
             async with asyncio.timeout(self.settings.tts_timeout_seconds):
@@ -107,6 +188,12 @@ class ZeroTTS:
         data = b"".join(chunks)
         validate_wav(data)
         self.last_health = "available"
+
+        # Cất vào cache
+        if len(self._cache) >= self.max_cache_entries:
+            self._cache.popitem(last=False)
+        self._cache[key] = data
+
         return data
 
     async def voices(self) -> dict:

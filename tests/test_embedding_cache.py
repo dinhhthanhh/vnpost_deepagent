@@ -1,7 +1,7 @@
 import sqlite3
 
-from app.embedding_cache import CachedEmbedding
 from app.rag import DemoHashEmbedding
+from app.rag.embedding_cache import CachedEmbedding
 
 
 def test_query_embedding_is_ram_only_and_not_in_sqlite(tmp_path):

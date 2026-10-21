@@ -54,3 +54,13 @@ export async function audioBlob(url, key) {
   const response = await request(url, key);
   return URL.createObjectURL(await response.blob());
 }
+
+export async function transcribeAudio(blob, key = null, filename = "audio.webm") {
+  const formData = new FormData();
+  formData.append("file", blob, filename);
+  const response = await request("/api/voice/transcribe", key, {
+    method: "POST",
+    body: formData,
+  });
+  return await response.json();
+}

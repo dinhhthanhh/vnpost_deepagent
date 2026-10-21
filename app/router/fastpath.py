@@ -19,7 +19,7 @@ try:
 except Exception:
     _VN_TZ = timezone(timedelta(hours=7))
 
-from app.calculator import _vn_numbers, safe_calculate
+from app.agents.calculator import _vn_numbers, safe_calculate, safe_date_calculate
 
 
 @dataclass(frozen=True)
@@ -38,11 +38,15 @@ _FILLER = {
     "tinh", "giup", "ho", "gium", "dum", "toi", "minh", "cho", "bang", "may", "bao", "nhieu",
     "la", "ket", "qua", "cua", "phep", "dong", "vnd", "vn", "d", "va", "neu", "cach",
     "hay", "vui", "long", "oi", "nhe", "a", "xin", "ban", "mipo", "giai", "thich",
-    "calculate", "what", "is", "please", "bằng",
+    "calculate", "what", "is", "please", "bằng", "mod",
 }
-_SPAN = re.compile(r"[\d(][\d\s+\-*/().,]*")
-_DATE = re.compile(r"\b\d{1,2}\s*/\s*\d{1,2}\s*/\s*\d{2,4}\b")
-_OPERATOR = re.compile(r"(?<=[\d)])\s*(?:\*\*|[+\-*/])\s*(?=[\d(])")
+_SPAN = re.compile(r"[\d(][\d\s+\-*/%().,]*")
+_DATE = re.compile(
+    r"\b\d{1,2}\s*/\s*\d{1,2}\s*/\s*\d{2,4}\b"
+    r"|\b\d{1,4}\s*/\s*(?:19\d{2}|20\d{2})\b"
+    r"|\b\d+/\d+/[A-Za-zĐđ\-_]+"
+)
+_OPERATOR = re.compile(r"(?<=[\d)])\s*(?:\*\*|[+\-*/%])\s*(?=[\d(])")
 
 
 def _prepare(message: str) -> str:
@@ -50,6 +54,7 @@ def _prepare(message: str) -> str:
     t = t.replace("×", "*").replace("÷", "/").replace("**", "^")
     t = re.sub(r"(?<=[\d)])\s*x\s*(?=[\d(])", "*", t)          # 3002x2, 3 x 4
     t = re.sub(r"(?<=\d)\s*:\s*(?=\d)", "/", t)                  # 10:2
+    t = re.sub(r"(?<=\d)\s*mod\s*(?=\d)", "%", t)               # 10 mod 3
     t = t.replace("^", "**")
     return t
 
@@ -175,6 +180,87 @@ def today_answer(message: str) -> LocalAnswer | None:
     return None
 
 
+def try_modulo(message: str) -> LocalAnswer | None:
+    """Xử lý phép chia có dư và câu hỏi số dư bằng ngôn ngữ tự nhiên."""
+    if len(message) > 120:
+        return None
+    f = _fold(message)
+
+    # 1. Mẫu: "tìm số dư khi chia A cho B"
+    m1 = re.search(r"(?:tim\s+)?so\s+du\s+(?:khi\s+)?chia\s+(\d+(?:[.,]\d+)?)\s+cho\s+(\d+(?:[.,]\d+)?)", f)
+    # 2. Mẫu: "số dư của / khi A chia (cho) B"
+    m2 = re.search(r"(?:tim\s+)?so\s+du\s+(?:khi|cua)?\s*(\d+(?:[.,]\d+)?)\s*chia\s*(?:cho)?\s*(\d+(?:[.,]\d+)?)", f)
+    # 3. Mẫu: "A chia (cho) B (thì) dư mấy / dư bao nhiêu"
+    m3 = re.search(r"\b(\d+(?:[.,]\d+)?)\s*chia\s*(?:cho)?\s*(\d+(?:[.,]\d+)?)\s*(?:thi\s+)?du\s*(?:may|bao\s+nhieu|\?)?", f)
+    # 4. Mẫu: "A mod B" hoặc "A % B"
+    m4 = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(?:mod|%)\s*(\d+(?:[.,]\d+)?)\b", f)
+
+    m = m1 or m2 or m3 or m4
+    if not m:
+        return None
+
+    words = re.findall(r"[a-z]+", f)
+    allowed_mod_words = _FILLER | {"so", "du", "chia", "khi", "mod", "tim", "thi"}
+    if any(w not in allowed_mod_words for w in words):
+        return None
+
+    try:
+        a_str = _vn_numbers(m.group(1))
+        b_str = _vn_numbers(m.group(2))
+        a = safe_calculate(a_str)
+        b = safe_calculate(b_str)
+        if b == 0:
+            return None
+        if isinstance(a, int) and isinstance(b, int):
+            quotient = a // b
+            remainder = a % b
+            if remainder == 0:
+                text = f"{a} ÷ {b} = **{quotient}** (chia hết, số dư là **0**)."
+            else:
+                text = f"{a} ÷ {b} = **{quotient}**, dư **{remainder}** ({a} = {b} × {quotient} + {remainder})."
+            return LocalAnswer("calc", text)
+        else:
+            remainder = a % b
+            return LocalAnswer("calc", f"Số dư của {a_str} chia {b_str} là **{_fmt(remainder)}**.")
+    except Exception:
+        return None
+
+
+def try_date_query(message: str) -> LocalAnswer | None:
+    """Trả lời các câu hỏi tính toán ngày tháng độc lập bằng safe_date_calculate mà không cần gọi LLM."""
+    if len(message) > 150:
+        return None
+
+    # Không nhận nếu chứa các từ khóa nghiệp vụ bưu chính
+    business_keywords = (
+        "bưu phẩm", "bưu gửi", "bưu kiện", "vận đơn", "kiện hàng", "gửi hàng",
+        "khiếu nại", "bồi thường", "hoàn cước", "cước", "giá", "phí", "bưu cục",
+        "bưu điện", "vpostcode", "quy định", "thời hiệu", "thời hạn", "sla",
+        "eb", "cp", "ee", "rk",
+    )
+    clean = message.lower()
+    if any(k in clean for k in business_keywords):
+        return None
+
+    # Phải có tín hiệu câu hỏi hoặc ý định tính toán thời gian rõ ràng (tránh nhầm văn bản hành chính)
+    temporal_question_markers = (
+        "thứ mấy", "ngày mấy", "ngày bao nhiêu", "ngày gì", "ngày nào",
+        "tuần sau", "tuần tới", "tuần trước", "tuần này", "tuần nữa",
+        "năm sau", "năm tới", "năm ngoái", "năm trước",
+        "ngày nữa", "ngày trước", "bao nhiêu ngày", "mấy ngày", "mấy ngày nữa",
+    )
+    if not any(k in clean for k in temporal_question_markers):
+        return None
+
+    try:
+        res = safe_date_calculate(message)
+        if isinstance(res, dict) and "explanation" in res:
+            return LocalAnswer("date", res["explanation"])
+    except Exception:
+        pass
+    return None
+
+
 def try_arithmetic(message: str) -> LocalAnswer | None:
     if len(message) > 200 or _DATE.search(message):
         return None
@@ -192,8 +278,8 @@ def try_arithmetic(message: str) -> LocalAnswer | None:
         value = safe_calculate(expr)
     except (SyntaxError, ValueError):
         return None                      # vd "1+!" -> để LLM xử lý
-    shown = re.sub(r"\s*(\*\*|[+\-*/])\s*", r" \1 ", span.strip()).replace("**", "^")
-    shown = shown.replace("*", "×").replace("/", "÷")
+    shown = re.sub(r"\s*(\*\*|[+\-*/%])\s*", r" \1 ", span.strip()).replace("**", "^")
+    shown = shown.replace("*", "×").replace("/", "÷").replace("%", " mod ")
     text = f"{shown} = **{_fmt(value)}**"
     if "cach" in words:
         text += "\n\nCách tính: nhân/chia trước, cộng/trừ sau; các phép cùng cấp tính từ trái sang phải."
@@ -217,4 +303,4 @@ def local_answer(message: str, *, chitchat: bool = False) -> LocalAnswer | None:
     """chitchat: cờ từ app.signals.analyze(message).chitchat (một định nghĩa duy nhất)."""
     if chitchat:
         return chitchat_reply(message)
-    return today_answer(message) or try_arithmetic(message)
+    return today_answer(message) or try_date_query(message) or try_modulo(message) or try_arithmetic(message)

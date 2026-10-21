@@ -3,7 +3,7 @@ import logging
 
 import httpx
 
-from app.config import Settings
+from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
 

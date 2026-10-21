@@ -1,9 +1,9 @@
 import pytest
 from langchain_core.messages import SystemMessage
 
-from app.context import RunContext, current_run
-from app.fast_rag import FastRAGExecutor
-from app.prompts import FAST_RAG_SYSTEM_PROMPT
+from app.core.context import RunContext, current_run
+from app.core.prompts import FAST_RAG_SYSTEM_PROMPT
+from app.rag.fast_rag import FastRAGExecutor
 
 
 @pytest.mark.asyncio

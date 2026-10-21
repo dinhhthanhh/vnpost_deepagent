@@ -510,7 +510,7 @@ def make_draft_questions(records: list[CrawlRecord], output: Path, count: int = 
 
 
 def ingest_demo(records: list[CrawlRecord], output: Path, questions: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, Any]]:
-    from app.config import Settings
+    from app.core.config import Settings
     from app.rag import KnowledgeBases, read_document
 
     settings = Settings(_env_file=None, data_dir=output / "test_index", demo_mode=True, embedding_provider="hash", chunk_size=256)

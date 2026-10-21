@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from app.context import RunContext, current_run
-from app.schemas import ChatRequest
+from app.api.schemas import ChatRequest
+from app.core.context import RunContext, current_run
 from app.service import ChatService
 
 

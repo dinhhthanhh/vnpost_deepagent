@@ -86,6 +86,13 @@ def validate_safe_url(
     return url
 
 
+class LocationInfo(BaseModel):
+    latitude: float = Field(..., ge=-90.0, le=90.0, description="Vĩ độ GPS của người dùng")
+    longitude: float = Field(..., ge=-180.0, le=180.0, description="Kinh độ GPS của người dùng")
+    accuracy: float | None = Field(None, ge=0.0, description="Độ chính xác bán kính (mét)")
+    address: str | None = Field(None, max_length=500, description="Địa chỉ người dùng (nếu có)")
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
     image: str | None = Field(None, max_length=15_000_000)
@@ -98,6 +105,7 @@ class ChatRequest(BaseModel):
     # existing single-WAV behaviour.
     stream_voice: bool = False
     voice_name: str | None = Field(None, pattern=r"^[a-zA-Z0-9_-]{1,64}$")
+    location: LocationInfo | None = None
 
     @field_validator("message")
     @classmethod

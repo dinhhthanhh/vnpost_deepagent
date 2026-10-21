@@ -5,7 +5,7 @@ Chỉ dùng để LEO THANG hoặc bỏ qua truy xuất; không dùng để ch�
 import re
 from dataclasses import asdict, dataclass
 
-from app.text import norm
+from app.core.text import norm
 
 _CW = (r"(?:xin chào|chào|hello|hi|hey|alo|cảm ơn|cám ơn|thanks|thank you|tạm biệt|bye|ok|oke|okay|vâng|dạ|được rồi"
        r"|bạn là ai|ban la ai|bạn tên gì|ban ten gi|mipo là ai|mipo la ai"
@@ -35,6 +35,7 @@ _POSTAL_OPS = re.compile(
     r"\b[a-z]{2}\d{9}[a-z]{2}\b"
     r"|mã vận đơn|tra cứu đơn|định vị bưu gửi|hành trình bưu gửi|kiểm tra vận đơn"
     r"|bưu cục|vpostcode|mã bưu chính|giờ mở cửa|điểm phục vụ"
+    r"|bưu điện.*gần|gần.*bưu điện|bưu cục.*gần|gần.*bưu cục|vị trí.*bưu điện|tìm bưu điện|tìm bưu cục|bưu điện nào gần"
     r"|tạo đơn|đặt gửi|tạo vận đơn|muốn gửi|cần gửi|gửi hàng đi|lấy hàng|gom hàng"
     r"|mở khiếu nại|tạo khiếu nại|nộp khiếu nại|muốn khiếu nại|cần khiếu nại|yêu cầu bồi thường|đòi bồi thường|báo hỏng|báo mất"
 )

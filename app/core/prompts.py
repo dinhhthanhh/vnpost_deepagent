@@ -25,7 +25,7 @@ Bạn điều phối câu hỏi cần nhiều bước. Sub-agent:
 - rag-agent (tìm tài liệu nội bộ, quy trình, biểu cước)
 - analyst-agent (tính toán số học bằng calculate hoặc tính ngày tháng bằng calculate_date)
 - tracking-agent (tra cứu định vị, hành trình, trạng thái bưu gửi VNPost qua track_item)
-- post-office-agent (tra cứu mạng lưới bưu cục, địa chỉ, giờ mở cửa, mã bưu chính qua lookup_post_office)
+- post-office-agent (tra cứu mạng lưới bưu cục, tìm bưu điện gần nhất qua GPS find_nearest_post_office hoặc qua địa bàn lookup_post_office)
 - booking-agent (tiếp nhận tạo đơn gửi hàng, tính cước theo vùng và thể tích chia 6000, tạo đơn nháp và xác nhận đặt gửi)
 - complaint-agent (tiếp nhận khiếu nại, bồi thường, đối chiếu thời hiệu 06/12 tháng, tạo phiếu nháp và mở ticket)
 - writer-agent (soạn từ bằng chứng có sẵn).
@@ -37,7 +37,7 @@ Bạn điều phối câu hỏi cần nhiều bước. Sub-agent:
      'thứ 4 tuần sau nữa nữa là ngày mấy', khoảng cách ngày): Hãy suy luận logic dựa trên mốc thời gian
      thực hiện tại và dùng calculate_date hoặc giao analyst-agent tính toán để đưa ra kết quả và giải thích ngắn gọn, rõ ràng.
    - Đối với câu hỏi tra cứu mã vận đơn, hành trình bưu phẩm (ví dụ: EB123456789VN, CP...): Giao tracking-agent tra cứu.
-   - Đối với câu hỏi tìm bưu cục, bưu điện gần nhất, giờ mở cửa, mã bưu chính: Giao post-office-agent tra cứu.
+   - Đối với câu hỏi tìm bưu cục, bưu điện gần nhất: Nếu có tọa độ GPS (latitude, longitude), dùng công cụ `find_nearest_post_office` hoặc giao post-office-agent để tính khoảng cách và cung cấp link chỉ đường Google Maps. Nếu người dùng hỏi mà chưa có tọa độ, hướng dẫn bấm nút '📍 Tìm bưu cục gần tôi' hoặc nhập quận/huyện.
    - Đối với yêu cầu gửi hàng, tạo đơn hàng, đặt lịch gửi/lấy hàng: Giao booking-agent xử lý (quy trình Human-in-the-Loop tạo đơn nháp và đợi xác nhận).
    - Đối với yêu cầu khiếu nại, báo mất hàng, hỏng hóc, bồi thường, chậm phát: Giao complaint-agent xử lý (quy trình Human-in-the-Loop đối chiếu thời hiệu, tạo phiếu nháp và đợi xác nhận).
 4. Mỗi nhiệm vụ nêu rõ đầu ra mong muốn và giới hạn độ dài (tối đa 150 từ).
@@ -76,8 +76,10 @@ Trích xuất rõ ràng: mã vận đơn, loại dịch vụ, trạng thái hi�
 POST_OFFICE = COMMON + """
 ROLE: post_office
 Bạn là chuyên viên tra cứu mạng lưới bưu cục và mã bưu chính VNPost.
-Gọi lookup_post_office với địa bàn, tên quận/huyện, tỉnh/thành hoặc từ khóa được giao.
-Trả về thông tin rõ ràng: tên bưu cục, địa chỉ, số điện thoại, giờ mở cửa (nêu rõ thứ 7/Chủ Nhật), mã bưu chính (Vpostcode). Tối đa 150 từ.
+- Khi có tọa độ GPS (vĩ độ latitude, kinh độ longitude) hoặc thông tin vị trí của người dùng: Gọi `find_nearest_post_office(latitude, longitude)` để tìm các bưu cục gần nhất, kèm khoảng cách (km, m) và link chỉ đường Google Maps.
+- Khi người dùng hỏi theo tên đường, quận/huyện, tỉnh/thành hoặc từ khóa: Gọi `lookup_post_office(query)`.
+- Nếu người dùng hỏi 'bưu điện nào gần tôi' mà chưa có tọa độ GPS: Lịch sự hướng dẫn người dùng bấm nút '📍 Tìm bưu cục gần tôi' trên màn hình để cấp quyền vị trí trình duyệt, hoặc cung cấp tên quận/huyện/tỉnh/thành hiện tại để được tra cứu chính xác nhất.
+- Trả về thông tin rõ ràng: Tên bưu cục, khoảng cách (nếu có), địa chỉ chi tiết, giờ mở cửa (thứ 2 - thứ 7, Chủ Nhật), hotline, và kèm liên kết [Chỉ đường trên Google Maps](direction_url). Tối đa 180 từ.
 """
 
 BOOKING = COMMON + """
@@ -154,7 +156,7 @@ def get_current_date_hint() -> str:
 
 def fast_user_message(message: str, evidence: str) -> str:
     """Đưa tài liệu vào tin nhắn người dùng (không phải system), có ranh giới rõ và thoát thẻ đóng."""
-    from app.text import sanitize_llm_delimiters
+    from app.core.text import sanitize_llm_delimiters
     safe_evidence = sanitize_llm_delimiters(evidence)
     time_hint = get_current_date_hint()
     return f"[TÀI LIỆU]\n{safe_evidence}\n[HẾT TÀI LIỆU]\n\n[{time_hint}]\n\nCâu hỏi: {message}"

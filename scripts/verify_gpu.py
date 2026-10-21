@@ -4,9 +4,9 @@ import json
 
 import torch
 
-from app.config import Settings
+from app.core.config import Settings
 from app.rag import make_embedding, resolve_embedding_device
-from app.reranker import CrossEncoderReranker
+from app.rag.reranker import CrossEncoderReranker
 
 
 def main():

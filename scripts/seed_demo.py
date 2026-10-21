@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from app.config import Settings
+from app.core.config import Settings
 from app.rag import KnowledgeBases
 
 parser = argparse.ArgumentParser(description="Ingest example documents into KnowledgeBase")

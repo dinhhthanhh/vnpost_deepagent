@@ -11,8 +11,8 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.config import Settings
-from app.schemas import ChatRequest, S3IngestRequest, SpeechRequest
+from app.api.schemas import ChatRequest, S3IngestRequest, SpeechRequest
+from app.core.config import Settings
 from app.service import ChatService
 from app.tts import TTSError
 
@@ -202,7 +202,7 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
                 filename = Path(parsed.path).name or "s3_document.pdf"
             if settings.s3_allowed_domains:
                 try:
-                    from app.schemas import validate_safe_url
+                    from app.api.schemas import validate_safe_url
                     validate_safe_url(body.url, allowed_domains=settings.s3_allowed_domains)
                 except ValueError as exc:
                     raise HTTPException(422, str(exc)) from exc
@@ -384,7 +384,40 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
             raise HTTPException(404, "Âm thanh không tồn tại hoặc đã hết hạn")
         return FileResponse(path, media_type="audio/wav", filename="answer.wav", headers={"Cache-Control": "no-store"})
 
-    dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+    @app.post("/api/voice/transcribe")
+    async def transcribe_voice(
+        file: UploadFile,
+        language: str = "vi",
+        scope=Depends(tenant),
+        svc=Depends(get_service),
+    ):
+        """Tiếp nhận tệp ghi âm giọng nói (WAV/WebM/OGG/MP3) và chuyển đổi thành văn bản tiếng Việt (STT)."""
+        from app.tts import STTError
+        try:
+            raw_audio = await file.read(settings.max_audio_bytes + 1)
+            if len(raw_audio) > settings.max_audio_bytes:
+                raise HTTPException(413, "Tệp âm thanh vượt quá giới hạn dung lượng cho phép")
+            if not raw_audio:
+                raise HTTPException(422, "Tệp âm thanh trống")
+
+            result = await svc.transcribe_speech(
+                raw_audio,
+                filename=file.filename or "audio.webm",
+                content_type=file.content_type or "audio/webm",
+                language=language,
+            )
+            return result
+        except STTError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("stt_transcribe_failed error_type=%s", type(exc).__name__)
+            raise HTTPException(502, f"Lỗi chuyển đổi giọng nói: {exc}") from exc
+        finally:
+            await file.close()
+
+    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.is_dir():
         app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")
     return app

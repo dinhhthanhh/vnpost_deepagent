@@ -13,10 +13,10 @@ if ($uv) {
         Write-Host "Khởi tạo môi trường bằng uv..."
         & $uv sync
     }
-    & $uv run python -c "from app.config import Settings; s = Settings(); print('LLM Model:', s.llm_model)"
+    & $uv run python -c "from app.core.config import Settings; s = Settings(); print('LLM Model:', s.llm_model)"
     if ($LASTEXITCODE -ne 0) { throw "Cấu hình không hợp lệ" }
     Write-Host "Mở http://127.0.0.1:$Port sau khi máy chủ khởi động. Dừng bằng Ctrl+C."
-    & $uv run uvicorn app.main:app --host 127.0.0.1 --port $Port --workers 1 --no-proxy-headers
+    & $uv run uvicorn app.api.main:app --host 127.0.0.1 --port $Port --workers 1 --no-proxy-headers
     exit $LASTEXITCODE
 }
 
@@ -31,10 +31,10 @@ if ($conda) {
     if ($LASTEXITCODE -ne 0) {
         & "$PSScriptRoot\scripts\setup-conda.ps1" -EnvironmentName $EnvironmentName
     }
-    & $conda run --no-capture-output --name $EnvironmentName python -c "from app.config import Settings; s = Settings(); print('LLM Model:', s.llm_model)"
+    & $conda run --no-capture-output --name $EnvironmentName python -c "from app.core.config import Settings; s = Settings(); print('LLM Model:', s.llm_model)"
     if ($LASTEXITCODE -ne 0) { throw "Cấu hình không hợp lệ" }
     Write-Host "Mở http://127.0.0.1:$Port sau khi máy chủ khởi động. Dừng bằng Ctrl+C."
-    & $conda run --no-capture-output --name $EnvironmentName python -m uvicorn app.main:app --host 127.0.0.1 --port $Port --workers 1 --no-proxy-headers
+    & $conda run --no-capture-output --name $EnvironmentName python -m uvicorn app.api.main:app --host 127.0.0.1 --port $Port --workers 1 --no-proxy-headers
     exit $LASTEXITCODE
 }
 
@@ -45,8 +45,8 @@ if (!(Test-Path ".venv\Scripts\python.exe")) {
 }
 & ".venv\Scripts\python.exe" -m pip install -e ".[dev]"
 if ($LASTEXITCODE -ne 0) { throw "Không cài được dependency" }
-& ".venv\Scripts\python.exe" -c "from app.config import Settings; s = Settings(); print('LLM Model:', s.llm_model)"
+& ".venv\Scripts\python.exe" -c "from app.core.config import Settings; s = Settings(); print('LLM Model:', s.llm_model)"
 if ($LASTEXITCODE -ne 0) { throw "Cấu hình không hợp lệ" }
 Write-Host "Mở http://127.0.0.1:$Port sau khi máy chủ khởi động. Dừng bằng Ctrl+C."
-& ".venv\Scripts\python.exe" -m uvicorn app.main:app --host 127.0.0.1 --port $Port --workers 1 --no-proxy-headers
+& ".venv\Scripts\python.exe" -m uvicorn app.api.main:app --host 127.0.0.1 --port $Port --workers 1 --no-proxy-headers
 

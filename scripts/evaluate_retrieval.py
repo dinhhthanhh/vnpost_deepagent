@@ -7,7 +7,7 @@ import statistics
 import time
 from pathlib import Path
 
-from app.config import Settings
+from app.core.config import Settings
 from app.rag import KnowledgeBases
 
 parser = argparse.ArgumentParser()

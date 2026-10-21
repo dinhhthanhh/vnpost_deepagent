@@ -4,22 +4,56 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
+from typing import Any
 
 from app.agents import AgentHarness, validate_answer
-from app.config import Settings
-from app.context import RunContext, current_run
-from app.fast_rag import FastRAGExecutor, PreparedRAG
-from app.fastpath import local_answer
-from app.providers import ProviderClients
+from app.agents.signals import analyze
+from app.api.schemas import ChatRequest, ChatResponse
+from app.core.config import Settings
+from app.core.context import RunContext, current_run
+from app.core.prompts import NO_EVIDENCE_MARKER, NO_EVIDENCE_TEMPLATE
+from app.core.providers import ProviderClients
+from app.domain.terminology import postprocess_func
 from app.rag import KnowledgeBases
+from app.rag.fast_rag import FastRAGExecutor, PreparedRAG
+from app.rag.store import Store
 from app.router import RouterDecision, classify_query_adaptive, rule_based_decision
-from app.schemas import ChatRequest, ChatResponse
-from app.signals import analyze
-from app.store import Store
-from app.terminology import postprocess_func
-from app.tts import TTSError, ZeroTTS
+from app.router.fastpath import local_answer
+from app.tts import STTError, SpeechTranscriber, TTSError, ZeroTTS
 
 logger = logging.getLogger(__name__)
+
+
+class SafeStreamBuffer:
+    """Bộ đệm token streaming giữ lại và chuyển đổi cờ [[NO_EVIDENCE]] tránh rò rỉ ra giao diện."""
+
+    def __init__(self, emit_fn, target_marker: str = NO_EVIDENCE_MARKER, replacement: str = NO_EVIDENCE_TEMPLATE):
+        self.emit_fn = emit_fn
+        self.target = target_marker
+        self.replacement = replacement
+        self.buffer = ""
+        self.matched = False
+
+    def push(self, delta: str):
+        if self.matched:
+            return
+        self.buffer += delta
+        # Nếu buffer đang là tiền tố của [[NO_EVIDENCE]] (như "[", "[[", "[[NO", ...)
+        if self.target.startswith(self.buffer):
+            if self.buffer == self.target:
+                self.matched = True
+                self.emit_fn(self.replacement)
+                self.buffer = ""
+            return
+        # Nếu buffer không khớp tiền tố, xả toàn bộ buffer ra giao diện
+        self.emit_fn(self.buffer)
+        self.buffer = ""
+
+    def flush(self):
+        if self.buffer and not self.matched:
+            self.emit_fn(self.buffer)
+            self.buffer = ""
+
 
 
 class ChatService:
@@ -31,6 +65,7 @@ class ChatService:
         self.harness = AgentHarness(settings, self.knowledge, self.providers)
         self.fast_rag = FastRAGExecutor(settings, self.knowledge, self.providers)
         self.tts = ZeroTTS(settings)
+        self.stt = SpeechTranscriber(settings)
         self.active = asyncio.Semaphore(settings.max_active_requests)
         self.ingest_slots = asyncio.Semaphore(2)
         self.session_locks: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
@@ -61,6 +96,21 @@ class ChatService:
         await asyncio.to_thread(self.store.prune_audio, self.settings.audio_ttl_seconds)
         return "/api/audio/" + audio_id
 
+    async def transcribe_speech(
+        self,
+        audio_bytes: bytes,
+        filename: str = "audio.webm",
+        content_type: str = "audio/webm",
+        language: str = "vi",
+    ) -> dict[str, Any]:
+        """Chuyển đổi âm thanh ghi âm thành văn bản tiếng Việt qua STT."""
+        return await self.stt.transcribe(
+            audio_bytes,
+            filename=filename,
+            content_type=content_type,
+            language=language,
+        )
+
     async def _deep_or_fallback(
         self,
         request: ChatRequest,
@@ -80,6 +130,7 @@ class ChatService:
                     request.message.strip(), history, request.grounded, request.image,
                     prefetched_evidence=prepared.evidence_json if prepared and request.grounded else None,
                     thread_id=f"{run.tenant}:{run.session_id}:{run.request_id}",
+                    location=request.location,
                 )
             return raw, "deep", route_reason
         except TimeoutError:
@@ -111,7 +162,7 @@ class ChatService:
         try:
             shortcut = local_answer(request.message, chitchat=analyze(request.message).chitchat) if not request.image else None
             if request.image and not self.settings.supports_vision:
-                from app.fastpath import LocalAnswer
+                from app.router.fastpath import LocalAnswer
                 shortcut = LocalAnswer(
                     kind="chitchat",
                     text=(
@@ -176,11 +227,13 @@ class ChatService:
                     elif route == "fast":
                         if queue is not None:
                             parts = []
+                            safe_buf = SafeStreamBuffer(run.emit_token)
                             async for delta in self.fast_rag.stream(
                                 tenant, request.message.strip(), history, request.grounded, prepared=prepared,
                             ):
                                 parts.append(delta)
-                                run.emit_token(delta)
+                                safe_buf.push(delta)
+                            safe_buf.flush()
                             raw = "".join(parts)
                         else:
                             raw = await self.fast_rag.execute(
@@ -192,8 +245,10 @@ class ChatService:
                             request, history, prepared, route_reason,
                         )
                         if queue is not None:
+                            safe_buf = SafeStreamBuffer(run.emit_token)
                             for chunk in re.findall(r"\S+\s*|\s+", raw):
-                                run.emit_token(chunk)
+                                safe_buf.push(chunk)
+                            safe_buf.flush()
 
                     if route not in {"calculator", "local"}:
                         answer, sources, status, warnings = validate_answer(

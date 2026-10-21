@@ -4,9 +4,9 @@ import zipfile
 import pytest
 from docx import Document
 
-from app.config import Settings
-from app.embedding_cache import CachedEmbedding
+from app.core.config import Settings
 from app.rag import DemoHashEmbedding, KnowledgeBases, read_document
+from app.rag.embedding_cache import CachedEmbedding
 
 
 def test_txt_ingest_search_deduplicate_restart_delete(settings):
@@ -190,3 +190,64 @@ def test_filter_relevant_hits_min_overlap():
     res = filter_relevant_hits("quy trình hoàn hàng", hits)
     assert len(res) == 1
     assert res[0]["filename"] == "2.txt"
+
+
+def test_resolve_embedding_device(monkeypatch):
+    from app.rag.engine import resolve_embedding_device
+    assert resolve_embedding_device("cpu") == "cpu"
+    assert resolve_embedding_device("cuda") == "cuda"
+    
+    # When auto without cuda available
+    import sys
+    fake_torch = type(sys)("torch")
+    fake_torch.cuda = type(sys)("cuda")
+    fake_torch.cuda.is_available = lambda: False
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    assert resolve_embedding_device("auto") == "cpu"
+
+    # When auto with cuda available
+    fake_torch.cuda.is_available = lambda: True
+    assert resolve_embedding_device("auto") == "cuda"
+
+
+def test_bm25_term_frequency_preservation(settings):
+    bases = KnowledgeBases(settings)
+    kb = bases.for_tenant("tf_tenant")
+    # File 1 has single mention of 'khiếu nại'
+    kb.ingest("doc1.txt", "Quy định về thời hạn tiếp nhận và thụ lý hồ sơ khiếu nại của khách hàng.".encode())
+    # File 2 has dense repeated mentions of 'khiếu nại'
+    kb.ingest("doc2.txt", "Khiếu nại khiếu nại khiếu nại dịch vụ bưu chính được giải quyết qua cổng chăm sóc khách hàng.".encode())
+    
+    # Check BM25 score directly: doc2 with 3 mentions must score higher than doc1 with 1 mention
+    scores = kb.snapshot.bm25.get_scores(["khieu", "nai"])
+    assert scores[1] > scores[0]
+
+
+def test_session_scoped_ingest_deduplication_isolation(settings):
+    bases = KnowledgeBases(settings)
+    kb = bases.for_tenant("scoped_tenant")
+    raw = "Hợp đồng dịch vụ riêng tư số 999.".encode()
+    
+    # Session A uploads
+    rec_a = kb.ingest("contract.txt", raw, session_id="sess_a")
+    assert rec_a["duplicate"] is False
+    assert rec_a["session_id"] == "sess_a"
+    
+    # Session B uploads identical bytes
+    rec_b = kb.ingest("contract.txt", raw, session_id="sess_b")
+    # Should be isolated to Session B, not treated as duplicate of Session A
+    assert rec_b["duplicate"] is False
+    assert rec_b["session_id"] == "sess_b"
+    assert rec_a["id"] != rec_b["id"]
+    
+    # Session B can retrieve its own document
+    hits_b = kb.retrieve("Hợp đồng dịch vụ riêng tư", session_id="sess_b")
+    assert any(h["document_id"] == rec_b["id"] for h in hits_b)
+    
+    # Session A deletes its session
+    deleted = kb.remove_session("sess_a")
+    assert deleted == 1
+    
+    # Session B's document is still intact and retrievable
+    hits_b_after = kb.retrieve("Hợp đồng dịch vụ riêng tư", session_id="sess_b")
+    assert any(h["document_id"] == rec_b["id"] for h in hits_b_after)

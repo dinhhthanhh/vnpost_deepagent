@@ -10,7 +10,9 @@ OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
 
 
 def _vn_numbers(expr: str) -> str:
-    expr = re.sub(r"(?<=\d)\.(?=\d{3}(?!\d))", "", expr)   # 125.000 -> 125000
+    # 125.000 -> 125000, 1.500.000 -> 1500000 (bảo tồn số thập phân 0.xxx vì bắt đầu bằng [1-9])
+    while re.search(r"\b([1-9]\d*)\.(\d{3}(?!\d))", expr):
+        expr = re.sub(r"\b([1-9]\d*)\.(\d{3}(?!\d))", r"\1\2", expr)
     return re.sub(r"(?<=\d),(?=\d)", ".", expr)             # 2,5 -> 2.5
 
 

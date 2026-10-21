@@ -4,7 +4,7 @@ from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
 
-from app.context import current_run
+from app.core.context import current_run
 
 
 class RunMetricsCallback(BaseCallbackHandler):

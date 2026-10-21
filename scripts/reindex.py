@@ -3,9 +3,9 @@ import argparse
 import json
 import re
 
-from app.config import Settings
-from app.embedding_cache import CachedEmbedding
+from app.core.config import Settings
 from app.rag import KnowledgeBase, make_embedding
+from app.rag.embedding_cache import CachedEmbedding
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--tenant", required=True)
