@@ -19,6 +19,7 @@ datasets/
 evaluation/
 reports/*
 !reports/*.json
+!reports/README.md
 postman/
 scripts/compare_architectures.py
 scripts/finalize_understand_graph.py

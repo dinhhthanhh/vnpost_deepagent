@@ -184,6 +184,13 @@ def test_date_calculator_reasoning():
     assert res3["target_date"] == "14/11/2026"
     assert res3["weekday"] == "Thứ Bảy"
 
+    res4 = safe_date_calculate("21 tháng sau là ngày thứ mấy", now=datetime.datetime(2026, 10, 21, 10, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=7))))
+    assert res4["target_date"] == "21/11/2026"
+    assert res4["weekday"] == "Thứ Bảy"
+
+    from app.agents.signals import analyze
+    assert analyze("21 tháng sau là ngày thứ mấy").temporal_calc is True
+
 
 async def test_tracking_and_post_office_subagents(settings):
     svc = ChatService(settings)

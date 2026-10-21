@@ -32,6 +32,23 @@ import {
   Volume2,
   X,
 } from "lucide-react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faBan,
+  faBolt,
+  faBoxArchive,
+  faBrain,
+  faCircleCheck,
+  faCircleInfo,
+  faCircleXmark,
+  faClock,
+  faLocationDot,
+  faMagnifyingGlass,
+  faMicrophone,
+  faPenToSquare,
+  faTriangleExclamation,
+  faWandMagicSparkles,
+} from "@fortawesome/free-solid-svg-icons";
 import { audioBlob, request, streamChat, transcribeAudio } from "./api";
 import { playWavStream } from "./wav-stream";
 import { marked } from "marked";
@@ -181,7 +198,7 @@ function FormattedAnswer({ text }) {
     );
     rawHtml = rawHtml.replace(
       /<a\s+(?:[^>]*?\s+)?href="([^"]*(?:google\.com\/maps|maps\.google\.com)[^"]*)"([^>]*)>(.*?)<\/a>/gi,
-      '<a href="$1" target="_blank" rel="noopener noreferrer" class="maps-direction-link"$2>📍 $3</a>'
+      '<a href="$1" target="_blank" rel="noopener noreferrer" class="maps-direction-link"$2><span class="map-pin-svg-icon"></span>$3</a>'
     );
     // Sanitize HTML strictly before injecting into DOM to prevent XSS
     const cleanHtml = DOMPurify.sanitize(rawHtml, {
@@ -202,6 +219,166 @@ function FormattedAnswer({ text }) {
   } catch (err) {
     return <div className="answer-text">{text}</div>;
   }
+}
+
+// Thẻ Hành Động Tương Tác: Hỗ trợ Human-in-the-Loop xác nhận/hủy đơn nháp và quản lý bưu gửi trực quan
+function PostalActionCard({ text, onSend, onSetInput }) {
+  if (!text || typeof text !== "string") return null;
+
+  const textLower = text.toLowerCase();
+
+  // Danh sách mã vận đơn giả lập / minh họa mẫu (không bao giờ được sinh thẻ hành động)
+  const isDummyTrackingCode = (code) =>
+    /123456789|012345678|000000000|987654321|111111111/i.test(code);
+
+  // BẢO VỆ NGHIỆP VỤ: Loại bỏ ngay nếu đây là câu trả lời hướng dẫn, giải thích quy trình hoặc đưa ví dụ mã mẫu
+  const isExplanationOrTutorial =
+    textLower.includes("ví dụ") ||
+    textLower.includes("quy trình") ||
+    textLower.includes("hướng dẫn") ||
+    textLower.includes("chuẩn quốc tế") ||
+    textLower.includes("cần cung cấp mã") ||
+    textLower.includes("định dạng mã") ||
+    textLower.includes("kiểm tra định dạng") ||
+    textLower.includes("mã vận đơn là gì") ||
+    textLower.includes("tra cứu trạng thái");
+
+  if (isExplanationOrTutorial) return null;
+
+  // 1. Nhận diện Đơn hàng nháp chờ duyệt (WAITING_CONFIRMATION / draft_id)
+  const draftBookingMatch = text.match(/\b(BK-DRAFT-[A-Za-z0-9]+|DRAFT-[A-Za-z0-9]+)\b/i);
+  const isDraftBooking = draftBookingMatch && (
+    textLower.includes("bản nháp đơn hàng") ||
+    textLower.includes("chờ duyệt") ||
+    textLower.includes("chờ xác nhận") ||
+    textLower.includes("waiting_confirmation") ||
+    textLower.includes("xác nhận (hitl)")
+  );
+
+  // 2. Nhận diện Khiếu nại nháp chờ duyệt
+  const draftComplaintMatch = text.match(/\b(KN-DRAFT-[A-Za-z0-9]+)\b/i);
+  const isDraftComplaint = draftComplaintMatch && (
+    textLower.includes("nháp") ||
+    textLower.includes("chờ duyệt") ||
+    textLower.includes("chờ xác nhận")
+  );
+
+  // 3. Nhận diện Vận đơn bưu chính VNPost thực sự vừa tạo/xác nhận thành công
+  const trackingMatch = text.match(/\b(EB|CP|RA|LP)\d{9}VN\b/i);
+  const isConfirmedOrder = trackingMatch && !isDummyTrackingCode(trackingMatch[0]) && (
+    textLower.includes("tạo đơn gửi hàng thành công") ||
+    textLower.includes("đã xác nhận đơn hàng") ||
+    textLower.includes("phát hành mã vận đơn chính thức")
+  );
+
+  if (isDraftBooking) {
+    const draftId = draftBookingMatch[0];
+    return (
+      <div className="postal-action-card booking-card">
+        <div className="action-card-header">
+          <span className="action-card-badge status-waiting">
+            <FontAwesomeIcon icon={faClock} /> Chờ duyệt đơn (HITL)
+          </span>
+          <span className="action-card-id">{draftId}</span>
+        </div>
+        <div className="action-card-body">
+          <p className="action-card-desc">
+            Bản nháp đơn hàng đã sẵn sàng. Quý khách vui lòng bấm xác nhận để phát hành mã vận đơn VNPost và điều phối bưu tá thu gom.
+          </p>
+        </div>
+        <div className="action-card-buttons">
+          <button
+            type="button"
+            className="action-card-btn btn-confirm"
+            onClick={() => onSend(`Tôi xác nhận đồng ý tạo đơn hàng ${draftId}`)}
+          >
+            <FontAwesomeIcon icon={faCircleCheck} /> Xác nhận đặt đơn
+          </button>
+          <button
+            type="button"
+            className="action-card-btn btn-cancel"
+            onClick={() => onSend(`Tôi muốn hủy đơn nháp ${draftId}`)}
+          >
+            <FontAwesomeIcon icon={faCircleXmark} /> Hủy đơn nháp
+          </button>
+          <button
+            type="button"
+            className="action-card-btn btn-edit"
+            onClick={() => onSetInput(`Tôi muốn sửa đơn ${draftId}: `)}
+          >
+            <FontAwesomeIcon icon={faPenToSquare} /> Sửa thông tin
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isDraftComplaint) {
+    const draftTicketId = draftComplaintMatch[0];
+    return (
+      <div className="postal-action-card complaint-card">
+        <div className="action-card-header">
+          <span className="action-card-badge status-waiting">
+            <FontAwesomeIcon icon={faTriangleExclamation} /> Chờ nộp khiếu nại (HITL)
+          </span>
+          <span className="action-card-id">{draftTicketId}</span>
+        </div>
+        <div className="action-card-body">
+          <p className="action-card-desc">
+            Hồ sơ khiếu nại bưu gửi đã được lập nháp. Vui lòng xác nhận để chính thức nộp vào hệ thống CSKH VNPost (SLA 20 ngày).
+          </p>
+        </div>
+        <div className="action-card-buttons">
+          <button
+            type="button"
+            className="action-card-btn btn-confirm"
+            onClick={() => onSend(`Tôi xác nhận nộp phiếu khiếu nại ${draftTicketId}`)}
+          >
+            <FontAwesomeIcon icon={faCircleCheck} /> Xác nhận nộp khiếu nại
+          </button>
+          <button
+            type="button"
+            className="action-card-btn btn-cancel"
+            onClick={() => onSend(`Tôi muốn hủy phiếu khiếu nại ${draftTicketId}`)}
+          >
+            <FontAwesomeIcon icon={faCircleXmark} /> Hủy khiếu nại
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isConfirmedOrder) {
+    const itemCode = trackingMatch[0];
+    return (
+      <div className="postal-action-card confirmed-card">
+        <div className="action-card-header">
+          <span className="action-card-badge status-confirmed">
+            <FontAwesomeIcon icon={faBoxArchive} /> Đã phát hành vận đơn
+          </span>
+          <span className="action-card-id tracking-code">{itemCode}</span>
+        </div>
+        <div className="action-card-buttons">
+          <button
+            type="button"
+            className="action-card-btn btn-track"
+            onClick={() => onSend(`Tra cứu hành trình vận đơn ${itemCode}`)}
+          >
+            <FontAwesomeIcon icon={faMagnifyingGlass} /> Định vị bưu gửi
+          </button>
+          <button
+            type="button"
+            className="action-card-btn btn-cancel-confirmed"
+            onClick={() => onSend(`Tôi muốn hủy đơn hàng ${itemCode}`)}
+          >
+            <FontAwesomeIcon icon={faBan} /> Hủy đơn lấy hàng
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 export default function App() {
@@ -333,7 +510,7 @@ export default function App() {
   const handleMicClick = async () => {
     if (isRecording) {
       if (speechRecRef.current) {
-        try { speechRecRef.current.stop(); } catch {}
+        try { speechRecRef.current.stop(); } catch { }
         speechRecRef.current = null;
       }
       if (mediaRecRef.current && mediaRecRef.current.state === "recording") {
@@ -356,7 +533,7 @@ export default function App() {
 
         recognition.onstart = () => {
           setIsRecording(true);
-          setNotice("🎙️ Đang lắng nghe giọng nói tiếng Việt... Hãy nói câu hỏi của bạn.");
+          setNotice("Đang lắng nghe giọng nói tiếng Việt... Hãy nói câu hỏi của bạn.");
         };
 
         recognition.onresult = (event) => {
@@ -414,12 +591,12 @@ export default function App() {
         stream.getTracks().forEach((track) => track.stop());
         const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         if (blob.size > 100) {
-          setNotice("🔄 Đang chuyển đổi âm thanh sang văn bản tiếng Việt qua STT...");
+          setNotice("Đang chuyển đổi âm thanh sang văn bản tiếng Việt qua STT...");
           try {
             const result = await transcribeAudio(blob, key);
             if (result && result.text) {
               setInput(result.text);
-              setNotice("✅ Đã nhận diện giọng nói thành công!");
+              setNotice("Đã nhận diện giọng nói thành công!");
             }
           } catch (err) {
             setNotice(`Lỗi STT: ${err.message}`);
@@ -429,7 +606,7 @@ export default function App() {
 
       mediaRecorder.start();
       setIsRecording(true);
-      setNotice("🎙️ Đang ghi âm Microphone (bấm lại nút Mic để hoàn tất)...");
+      setNotice("Đang ghi âm Microphone (bấm lại nút Mic để hoàn tất)...");
     } catch (err) {
       console.error("Lỗi Microphone:", err);
       setIsRecording(false);
@@ -457,10 +634,10 @@ export default function App() {
       stopAudio();
       releaseBlobs();
       if (speechRecRef.current) {
-        try { speechRecRef.current.stop(); } catch {}
+        try { speechRecRef.current.stop(); } catch { }
       }
       if (mediaRecRef.current && mediaRecRef.current.state === "recording") {
-        try { mediaRecRef.current.stop(); } catch {}
+        try { mediaRecRef.current.stop(); } catch { }
       }
     };
   }, []);
@@ -1167,6 +1344,7 @@ export default function App() {
                 }}
                 title="Tự động (Auto): Hệ thống tự phân loại route phù hợp theo độ phức tạp của câu hỏi"
               >
+                <FontAwesomeIcon icon={faWandMagicSparkles} style={{ marginRight: 5, fontSize: 11 }} />
                 <span>Tự động</span>
               </button>
               <button
@@ -1178,6 +1356,7 @@ export default function App() {
                 }}
                 title="Nhanh (Fast RAG): Trực tiếp tra cứu tài liệu nhanh 1 bước"
               >
+                <FontAwesomeIcon icon={faBolt} style={{ marginRight: 5, fontSize: 11 }} />
                 <span>Nhanh</span>
               </button>
               <button
@@ -1189,6 +1368,7 @@ export default function App() {
                 }}
                 title="Chuyên sâu (Deep Agent): Đa tác tử phân tích, so sánh, tính toán chuyên sâu"
               >
+                <FontAwesomeIcon icon={faBrain} style={{ marginRight: 5, fontSize: 11 }} />
                 <span>Chuyên sâu</span>
               </button>
             </div>
@@ -1263,60 +1443,114 @@ export default function App() {
                         alt="MiPo Avatar"
                         className="mipo-avatar-img"
                       />
-                      <div className="bot-quick-actions">
-                        <button
-                          className="quick-action-btn"
-                          title="Hữu ích"
-                          onClick={() => toggleLike(message.id)}
-                        >
-                          <ThumbsUp
-                            size={14}
-                            color={likedMap[message.id] ? "#2563eb" : "#94a3b8"}
-                            fill={likedMap[message.id] ? "#2563eb" : "none"}
-                          />
-                        </button>
-                        <button
-                          className="quick-action-btn"
-                          title="Chưa đúng"
-                          onClick={() => toggleDislike(message.id)}
-                        >
-                          <ThumbsDown
-                            size={14}
-                            color={dislikedMap[message.id] ? "#ef4444" : "#94a3b8"}
-                            fill={dislikedMap[message.id] ? "#ef4444" : "none"}
-                          />
-                        </button>
-                        <button
-                          className="quick-action-btn"
-                          title="Sao chép"
-                          onClick={() => handleCopy(message.id, message.answer || message.error || "")}
-                        >
-                          {copiedId === message.id ? (
-                            <Check size={14} color="#16a34a" />
-                          ) : (
-                            <Copy size={14} />
-                          )}
-                        </button>
-                        <button
-                          className="quick-action-btn"
-                          title="Nghe giọng đọc"
-                          onClick={() => readAnswer(message)}
-                        >
-                          <Volume2 size={14} />
-                        </button>
-                      </div>
+                      {!message.pending && Boolean(message.answer || message.error) && (
+                        <div className="bot-quick-actions">
+                          <button
+                            className="quick-action-btn"
+                            title="Hữu ích"
+                            onClick={() => toggleLike(message.id)}
+                          >
+                            <ThumbsUp
+                              size={14}
+                              color={likedMap[message.id] ? "#2563eb" : "#94a3b8"}
+                              fill={likedMap[message.id] ? "#2563eb" : "none"}
+                            />
+                          </button>
+                          <button
+                            className="quick-action-btn"
+                            title="Chưa đúng"
+                            onClick={() => toggleDislike(message.id)}
+                          >
+                            <ThumbsDown
+                              size={14}
+                              color={dislikedMap[message.id] ? "#ef4444" : "#94a3b8"}
+                              fill={dislikedMap[message.id] ? "#ef4444" : "none"}
+                            />
+                          </button>
+                          <button
+                            className="quick-action-btn"
+                            title="Sao chép"
+                            onClick={() => handleCopy(message.id, message.answer || message.error || "")}
+                          >
+                            {copiedId === message.id ? (
+                              <Check size={14} color="#16a34a" />
+                            ) : (
+                              <Copy size={14} />
+                            )}
+                          </button>
+                          <button
+                            className="quick-action-btn"
+                            title="Nghe giọng đọc"
+                            onClick={() => readAnswer(message)}
+                          >
+                            <Volume2 size={14} />
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     <div className="bot-content-col">
                       <div className="bot-top-time">{message.time || getCurrentTimeString(message.created)}</div>
 
                       {message.pending ? (
-                        <div className="bot-pending-indicator">
-                          <span className="dot-pulse" /> MiPo đang suy nghĩ và tổng hợp dữ liệu...
+                        <div className="bot-thinking-card">
+                          <div className="thinking-header">
+                            <span className="thinking-pulse-dot" />
+                            <span className="thinking-title">MiPo đang suy nghĩ và tổng hợp dữ liệu</span>
+                            <span className="thinking-typing-dots">
+                              <span />
+                              <span />
+                              <span />
+                            </span>
+                          </div>
+
+                          {/* Chi tiết tiến trình định tuyến và Sub-agent đang xử lý trực tiếp */}
+                          {events.length > 0 && (
+                            <div className="thinking-steps-box">
+                              {events
+                                .filter((e) => e.type === "router_decision")
+                                .slice(-1)
+                                .map((e, idx) => (
+                                  <div key={`r-${idx}`} className="thinking-step-item">
+                                    <span className={`step-badge ${e.route === "fast" ? "fast-rag" : "deep-agent"}`}>
+                                      {e.route === "fast" ? "Tuyến nhanh" : "Deep Agent"}
+                                    </span>
+                                    <span className="step-text">{e.reason}</span>
+                                  </div>
+                                ))}
+                              {events
+                                .filter((e) => e.type === "task_start" || e.type === "task_end")
+                                .slice(-2)
+                                .map((e, idx) => (
+                                  <div key={`task-${idx}`} className="thinking-step-item">
+                                    <span className="step-pulse-dot" />
+                                    <span className="step-agent-name">{e.agent}</span>
+                                    <span className="step-status">
+                                      {e.type === "task_start" ? "đang phân tích dữ liệu..." : "hoàn tất"}
+                                    </span>
+                                  </div>
+                                ))}
+                            </div>
+                          )}
+
+                          {/* Thanh Shimmer Skeleton tạo cảm giác tải mượt mà */}
+                          <div className="thinking-skeleton">
+                            <div className="skeleton-line w-75" />
+                            <div className="skeleton-line w-50" />
+                          </div>
                         </div>
                       ) : (
                         <>
                           <FormattedAnswer text={message.answer || message.error} />
+
+                          {/* Thẻ hành động tương tác cho Đơn hàng nháp (HITL) hoặc Vận đơn đã tạo */}
+                          {message.answer && (
+                            <PostalActionCard
+                              text={message.answer}
+                              onSend={(actionText) => send(null, actionText)}
+                              onSetInput={(val) => setInput(val)}
+                            />
+                          )}
 
                           {/* Nguồn trích dẫn nếu có */}
                           {message.sources?.length > 0 && (
@@ -1366,8 +1600,8 @@ export default function App() {
               )
             )}
 
-            {/* Trạng thái tiến trình của Agent khi đang chạy */}
-            {busy && events.length > 0 && (
+            {/* Trạng thái tiến trình của Agent khi đang chạy (chỉ hiển thị nếu không có tin nhắn đang pending) */}
+            {busy && events.length > 0 && !messages.some((m) => m.pending) && (
               <div className="activity-floating-bar">
                 {events
                   .filter((e) => e.type === "router_decision")
@@ -1454,8 +1688,18 @@ export default function App() {
             {/* Thông báo lỗi hoặc cảnh báo */}
             {notice && (
               <div className="mipo-notice-bar">
+                <FontAwesomeIcon
+                  icon={
+                    notice.includes("Lỗi") || notice.includes("không")
+                      ? faTriangleExclamation
+                      : notice.includes("thành công")
+                      ? faCircleCheck
+                      : faCircleInfo
+                  }
+                  className="notice-fa-icon"
+                />
                 <span>{notice}</span>
-                <button onClick={() => setNotice("")}>
+                <button onClick={() => setNotice("")} title="Đóng thông báo">
                   <X size={13} />
                 </button>
               </div>
@@ -1464,7 +1708,7 @@ export default function App() {
             {/* Hiển thị chỉ báo khi đang lắng nghe giọng nói */}
             {isRecording && (
               <div className="voice-recording-badge">
-                <span className="voice-recording-dot"></span>
+                <FontAwesomeIcon icon={faMicrophone} className="voice-recording-icon animate-pulse" />
                 <span>Đang lắng nghe giọng nói tiếng Việt... Bấm lại nút Mic để kết thúc</span>
               </div>
             )}
@@ -1521,7 +1765,7 @@ export default function App() {
               <input
                 type="text"
                 className="mipo-text-input"
-                placeholder={isRecording ? "🎙️ Đang lắng nghe giọng nói của bạn..." : "Vui lòng đặt câu hỏi!"}
+                placeholder={isRecording ? "Đang lắng nghe giọng nói của bạn..." : "Vui lòng đặt câu hỏi!"}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onPaste={handlePaste}

@@ -1,4 +1,5 @@
 import ast
+import calendar
 import datetime
 import math
 import operator
@@ -195,6 +196,111 @@ def safe_date_calculate(query: str, now: datetime.datetime | None = None) -> dic
                 "target_date": target_date.strftime("%d/%m/%Y"),
                 "weekday": _WEEKDAYS_VN[wd],
                 "explanation": f"{weeks} tuần nữa kể từ {today.strftime('%d/%m/%Y')} là ngày **{target_date.strftime('%d/%m/%Y')}** ({_WEEKDAYS_VN[wd]}).",
+            }
+
+    # 5. Nhận diện 'ngày X tháng sau/tới/trước' hoặc 'X tháng sau/tới/trước' (X là ngày 1..31 trong tháng)
+    # Ví dụ: '21 tháng sau là ngày thứ mấy', 'ngày 15 tháng tới', '20 tháng trước'
+    day_rel_month = re.search(r"(?:ngày\s+)?\b([1-9]|[12]\d|3[01])\s+tháng\s+(sau|tới|tiếp\s+theo|trước|này)\b", q)
+    if day_rel_month:
+        day = int(day_rel_month.group(1))
+        rel = day_rel_month.group(2)
+        if rel in ("sau", "tới", "tiếp theo"):
+            target_year = today.year + (1 if today.month == 12 else 0)
+            target_month = 1 if today.month == 12 else today.month + 1
+        elif rel in ("trước",):
+            target_year = today.year - (1 if today.month == 1 else 0)
+            target_month = 12 if today.month == 1 else today.month - 1
+        else:
+            target_year = today.year
+            target_month = today.month
+        max_d = calendar.monthrange(target_year, target_month)[1]
+        target_date = datetime.date(target_year, target_month, min(day, max_d))
+        wd = _WEEKDAYS_VN[target_date.weekday()]
+
+        d_str = target_date.strftime("%d/%m/%Y")
+        rel_text = "tháng sau" if rel in ("sau", "tới", "tiếp theo") else ("tháng trước" if rel == "trước" else "tháng này")
+        return {
+            "type": "day_of_relative_month",
+            "target_date": d_str,
+            "weekday": wd,
+            "explanation": f"Ngày **{day} {rel_text}** (ngày {d_str}) là ngày **{wd}**.",
+        }
+
+    # Hoặc người dùng chỉnh sửa: 'tháng sau chứ không phải năm sau'
+    if "tháng sau" in q and ("không phải năm sau" in q or "chứ không phải" in q or "không phải năm" in q):
+        target_year = today.year + (1 if today.month == 12 else 0)
+        target_month = 1 if today.month == 12 else today.month + 1
+        target_date = datetime.date(target_year, target_month, min(today.day, calendar.monthrange(target_year, target_month)[1]))
+        wd = _WEEKDAYS_VN[target_date.weekday()]
+        return {
+            "type": "clarification_next_month",
+            "target_date": target_date.strftime("%d/%m/%Y"),
+            "weekday": wd,
+            "explanation": f"Dạ hiểu rồi ạ! Tính theo **tháng sau** (tháng {target_month:02d}/{target_year}), ngày {today.day} tháng sau là ngày **{target_date.strftime('%d/%m/%Y')}** (**{wd}**).",
+        }
+
+    # 6. 'N tháng nữa', 'sau N tháng', 'N tháng sau', 'N tháng trước' (khoảng thời gian)
+    add_months_match = re.search(r"(?:sau\s+)?(\d+)\s+tháng(?:\s+(nữa|trước|sau))?", q)
+    if add_months_match:
+        months = int(add_months_match.group(1))
+        direction = add_months_match.group(2) or ("sau" if "sau" in q else "nữa")
+        if direction == "trước":
+            m_total = today.month - 1 - months
+            new_year = today.year + m_total // 12
+            new_month = m_total % 12 + 1
+            max_day = calendar.monthrange(new_year, new_month)[1]
+            target_date = datetime.date(new_year, new_month, min(today.day, max_day))
+            wd = target_date.weekday()
+            return {
+                "type": "sub_months",
+                "months_subtracted": months,
+                "target_date": target_date.strftime("%d/%m/%Y"),
+                "weekday": _WEEKDAYS_VN[wd],
+                "explanation": f"{months} tháng trước (tính từ {today.strftime('%d/%m/%Y')}) là ngày **{target_date.strftime('%d/%m/%Y')}** ({_WEEKDAYS_VN[wd]}).",
+            }
+        else:
+            m_total = today.month - 1 + months
+            new_year = today.year + m_total // 12
+            new_month = m_total % 12 + 1
+            max_day = calendar.monthrange(new_year, new_month)[1]
+            target_date = datetime.date(new_year, new_month, min(today.day, max_day))
+            wd = target_date.weekday()
+            return {
+                "type": "add_months",
+                "months_added": months,
+                "target_date": target_date.strftime("%d/%m/%Y"),
+                "weekday": _WEEKDAYS_VN[wd],
+                "explanation": f"{months} tháng sau (ngày **{target_date.strftime('%d/%m/%Y')}**) là ngày **{_WEEKDAYS_VN[wd]}**.",
+            }
+
+    # 6. 'N năm nữa', 'sau N năm', 'N năm sau', 'N năm trước'
+    add_years_match = re.search(r"(?:sau\s+)?(\d+)\s+năm(?:\s+(nữa|trước|sau))?", q)
+    if add_years_match:
+        years = int(add_years_match.group(1))
+        direction = add_years_match.group(2) or ("sau" if "sau" in q else "nữa")
+        if direction == "trước":
+            new_year = today.year - years
+            max_day = calendar.monthrange(new_year, today.month)[1]
+            target_date = datetime.date(new_year, today.month, min(today.day, max_day))
+            wd = target_date.weekday()
+            return {
+                "type": "sub_years",
+                "years_subtracted": years,
+                "target_date": target_date.strftime("%d/%m/%Y"),
+                "weekday": _WEEKDAYS_VN[wd],
+                "explanation": f"{years} năm trước (tính từ {today.strftime('%d/%m/%Y')}) là ngày **{target_date.strftime('%d/%m/%Y')}** ({_WEEKDAYS_VN[wd]}).",
+            }
+        else:
+            new_year = today.year + years
+            max_day = calendar.monthrange(new_year, today.month)[1]
+            target_date = datetime.date(new_year, today.month, min(today.day, max_day))
+            wd = target_date.weekday()
+            return {
+                "type": "add_years",
+                "years_added": years,
+                "target_date": target_date.strftime("%d/%m/%Y"),
+                "weekday": _WEEKDAYS_VN[wd],
+                "explanation": f"{years} năm sau (ngày **{target_date.strftime('%d/%m/%Y')}**) là ngày **{_WEEKDAYS_VN[wd]}**.",
             }
 
     return {"error": "Không nhận diện được biểu thức ngày tháng cần tính."}

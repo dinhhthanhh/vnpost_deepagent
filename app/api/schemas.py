@@ -208,3 +208,16 @@ class S3IngestRequest(BaseModel):
         if not value:
             return None
         return validate_safe_url(value)
+
+
+class ActionConfirmRequest(BaseModel):
+    action_type: Literal["booking", "complaint"] = Field(..., description="Loại hành động: booking hoặc complaint")
+    draft_id: str = Field(..., description="Mã bản nháp đơn hàng hoặc phiếu khiếu nại (ví dụ: BK-DRAFT-... hoặc KN-DRAFT-...)")
+
+
+class ActionCancelRequest(BaseModel):
+    action_type: Literal["booking", "complaint"] = Field("booking", description="Loại hành động: booking hoặc complaint")
+    target_id: str = Field("", description="Mã vận đơn, mã đơn nháp hoặc mã phiếu khiếu nại cần hủy")
+    reason: str = Field("", description="Lý do hủy")
+    verification_phone: str = Field("", description="4 số cuối hoặc số điện thoại người gửi để xác minh quyền sở hữu khi hủy từ session khác")
+

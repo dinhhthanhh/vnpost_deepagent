@@ -76,7 +76,7 @@ export class WavPCMParser {
       throw new Error("Luồng WAV chưa đầy đủ hoặc không có dữ liệu âm thanh.");
     }
     if (this.remaining !== null && this.remaining > (this.format.channels * 2)) {
-      throw new Error("Luồng WAV bị ngắt trước khi hoàn tất.");
+      throw new Error("Luồng WAV chưa đầy đủ hoặc bị ngắt trước khi hoàn tất.");
     }
   }
 }

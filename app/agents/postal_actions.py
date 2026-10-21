@@ -17,11 +17,31 @@ _DRAFT_COMPLAINTS: dict[str, dict[str, Any]] = {}
 DEFAULT_DRAFT_TTL_SECONDS = 1800  # 30 phút hiệu lực cho bản nháp
 
 
+def _sync_booking_draft(draft_record: dict[str, Any]) -> None:
+    """Đồng bộ bản ghi đơn hàng nháp vào PostgreSQL (nếu khả dụng)."""
+    try:
+        from app.core.postgres import persist_draft_booking_to_postgres
+        persist_draft_booking_to_postgres(draft_record)
+    except Exception:
+        pass
+
+
+def _sync_complaint_draft(claim_record: dict[str, Any]) -> None:
+    """Đồng bộ bản ghi khiếu nại nháp vào PostgreSQL (nếu khả dụng)."""
+    try:
+        from app.core.postgres import persist_draft_complaint_to_postgres
+        persist_draft_complaint_to_postgres(claim_record)
+    except Exception:
+        pass
+
+
 def _get_current_session_context() -> tuple[str, str | None, str | None]:
     """Lấy an toàn tenant, session_id và request_id từ context hiện tại (nếu có)."""
     try:
         from app.core.context import current_run
         run = current_run.get()
+        if not run:
+            return ("default", None, None)
         return (
             getattr(run, "tenant", "default") or "default",
             getattr(run, "session_id", None),
@@ -29,6 +49,33 @@ def _get_current_session_context() -> tuple[str, str | None, str | None]:
         )
     except Exception:
         return ("default", None, None)
+
+
+def _set_current_session_context(tenant: str = "default", session_id: str | None = None, request_id: str | None = None):
+    """Thiết lập thủ công context cho test hoặc worker."""
+    from app.core.context import current_run, RunContext
+    run = RunContext(tenant=tenant, request_id=request_id or "req-manual", max_parallel=2, max_tasks=4, session_id=session_id)
+    return current_run.set(run)
+
+
+def _reset_current_session_context(token=None):
+    """Đặt lại context về mặc định."""
+    from app.core.context import current_run
+    if token:
+        try:
+            current_run.reset(token)
+            return
+        except Exception:
+            pass
+    try:
+        run = current_run.get()
+        if run and hasattr(run, "created_draft_ids"):
+            run.created_draft_ids.clear()
+        current_run.set(None)
+    except Exception:
+        pass
+
+
 
 
 def _is_draft_expired(record: dict[str, Any], now: datetime | None = None) -> bool:
@@ -247,6 +294,14 @@ def create_draft_booking(
         },
     }
     _DRAFT_BOOKINGS[draft_id] = draft_record
+    _sync_booking_draft(draft_record)
+    try:
+        from app.core.context import current_run
+        run = current_run.get()
+        if hasattr(run, "created_draft_ids"):
+            run.created_draft_ids.append(draft_id)
+    except Exception:
+        pass
 
     return json.dumps({
         "status": "waiting_confirmation",
@@ -269,7 +324,7 @@ def confirm_booking(draft_id: str, confirmed_by_user: bool = True) -> str:
     Phát hành mã vận đơn chính thức chuẩn UPU của VNPost và lên lịch điều phối thu gom.
     """
     clean_id = (draft_id or "").strip()
-    record = _DRAFT_BOOKINGS.get(clean_id)
+    record = get_draft_booking(clean_id)
     if not record:
         return json.dumps({
             "status": "error",
@@ -293,7 +348,7 @@ def confirm_booking(draft_id: str, confirmed_by_user: bool = True) -> str:
             "message": f"Đơn hàng {clean_id} đã được xác nhận trước đó với mã vận đơn {record.get('item_code')}.",
         }, ensure_ascii=False)
 
-    if record["status"] == "CANCELLED":
+    if record["status"] in {"CANCELLED", "CANCELLED_BY_CUSTOMER"}:
         return json.dumps({
             "status": "cancelled",
             "message": f"Đơn hàng {clean_id} đã bị hủy trước đó, không thể xác nhận.",
@@ -311,6 +366,36 @@ def confirm_booking(draft_id: str, confirmed_by_user: bool = True) -> str:
             "message": "Chưa có sự xác nhận rõ ràng từ phía người dùng (HITL required).",
         }, ensure_ascii=False)
 
+    # Chốt chặn vòng đời hội thoại đa tầng (Multi-layer HITL Guard)
+    try:
+        from app.core.context import current_run
+        run = current_run.get()
+        # 1. Chốt chặn Turn-level: Cấm xác nhận đơn nháp vừa tạo trong cùng một lượt gọi
+        if clean_id in getattr(run, "created_draft_ids", []):
+            return json.dumps({
+                "status": "hitl_required",
+                "draft_id": clean_id,
+                "message": (
+                    f"⚠️ Chốt chặn bảo vệ HITL: Bản nháp đơn hàng [{clean_id}] vừa được tạo trong lượt hội thoại này. "
+                    "Bạn PHẢI dừng lượt, trình bày bảng tóm tắt chi tiết đơn hàng cho khách hàng và yêu cầu khách hàng "
+                    "bấm nút duyệt hoặc phản hồi 'Xác nhận' ở lượt tiếp theo. Tuyệt đối không được tự ý gọi confirm_booking!"
+                ),
+            }, ensure_ascii=False)
+
+        # 2. Chốt chặn Ý định người dùng (Intent Guard): Nếu khách có ý định hủy hoặc chỉnh sửa
+        user_msg = (getattr(run, "user_message", None) or "").strip().lower()
+        if user_msg:
+            reject_kws = ["hủy", "huy", "không tạo", "khong tao", "thôi", "thoi", "không gửi", "khong gui", "khoan"]
+            confirm_kws = ["xác nhận", "xac nhan", "đồng ý", "dong y", "ok", "oke", "tạo đi", "tao di", "duyệt", "duyet", "gửi đi", "gui di", "chốt", "chot", "tiến hành", "confirm", "yes"]
+            if any(kw in user_msg for kw in reject_kws) and not any(kw in user_msg for kw in confirm_kws):
+                return json.dumps({
+                    "status": "hitl_rejected_or_modifying",
+                    "draft_id": clean_id,
+                    "message": f"Khách hàng chưa xác nhận (tin nhắn có ý định hủy hoặc chưa sẵn sàng: '{user_msg}'). Hãy hỗ trợ theo nguyện vọng của khách thay vì xác nhận đơn.",
+                }, ensure_ascii=False)
+    except Exception:
+        pass
+
     # Sinh mã vận đơn chuẩn UPU VNPost (EB...VN cho EMS, CP...VN cho Bưu kiện)
     prefix = "EB" if record["pricing"]["service_type"] == "EMS" else "CP"
     random_digits = "".join([str(random.randint(0, 9)) for _ in range(9)])
@@ -321,6 +406,8 @@ def confirm_booking(draft_id: str, confirmed_by_user: bool = True) -> str:
     record["item_code"] = item_code
     record["confirmed_at"] = now.isoformat()
     record["pickup_schedule"] = pickup_time
+    _DRAFT_BOOKINGS[clean_id] = record
+    _sync_booking_draft(record)
 
     return json.dumps({
         "status": "confirmed",
@@ -485,6 +572,14 @@ def create_draft_complaint(
         },
     }
     _DRAFT_COMPLAINTS[draft_ticket_id] = claim_record
+    _sync_complaint_draft(claim_record)
+    try:
+        from app.core.context import current_run
+        run = current_run.get()
+        if hasattr(run, "created_draft_ids"):
+            run.created_draft_ids.append(draft_ticket_id)
+    except Exception:
+        pass
 
     return json.dumps({
         "status": "waiting_confirmation",
@@ -504,7 +599,7 @@ def create_draft_complaint(
 def confirm_complaint(draft_ticket_id: str, confirmed_by_user: bool = True) -> str:
     """Xác nhận nộp khiếu nại chính thức vào hệ thống CRM CSKH VNPost sau khi có sự đồng ý của khách hàng (HITL)."""
     clean_id = (draft_ticket_id or "").strip()
-    record = _DRAFT_COMPLAINTS.get(clean_id)
+    record = get_draft_complaint(clean_id)
     if not record:
         return json.dumps({
             "status": "error",
@@ -528,7 +623,7 @@ def confirm_complaint(draft_ticket_id: str, confirmed_by_user: bool = True) -> s
             "message": f"Phiếu khiếu nại {clean_id} đã được gửi trước đó với mã số {record.get('ticket_number')}.",
         }, ensure_ascii=False)
 
-    if record["status"] == "CANCELLED":
+    if record["status"] in {"CANCELLED", "CANCELLED_BY_CUSTOMER"}:
         return json.dumps({
             "status": "cancelled",
             "message": f"Phiếu khiếu nại {clean_id} đã bị hủy trước đó, không thể nộp chính thức.",
@@ -546,6 +641,36 @@ def confirm_complaint(draft_ticket_id: str, confirmed_by_user: bool = True) -> s
             "message": "Chưa có sự xác nhận rõ ràng từ phía khách hàng (HITL required).",
         }, ensure_ascii=False)
 
+    # Chốt chặn vòng đời hội thoại đa tầng (Multi-layer HITL Guard)
+    try:
+        from app.core.context import current_run
+        run = current_run.get()
+        # 1. Chốt chặn Turn-level: Cấm xác nhận phiếu khiếu nại vừa tạo trong cùng một lượt gọi
+        if clean_id in getattr(run, "created_draft_ids", []):
+            return json.dumps({
+                "status": "hitl_required",
+                "draft_ticket_id": clean_id,
+                "message": (
+                    f"⚠️ Chốt chặn bảo vệ HITL: Phiếu khiếu nại nháp [{clean_id}] vừa được tạo trong lượt hội thoại này. "
+                    "Bạn PHẢI dừng lượt, trình bày bảng tóm tắt hồ sơ khiếu nại cho khách hàng và yêu cầu khách hàng "
+                    "bấm nút duyệt hoặc phản hồi 'Xác nhận' ở lượt tiếp theo. Tuyệt đối không được tự ý gọi confirm_complaint!"
+                ),
+            }, ensure_ascii=False)
+
+        # 2. Chốt chặn Ý định người dùng (Intent Guard)
+        user_msg = (getattr(run, "user_message", None) or "").strip().lower()
+        if user_msg:
+            reject_kws = ["hủy", "huy", "không khiếu nại", "khong khieu nai", "thôi", "thoi", "bỏ qua", "khoan"]
+            confirm_kws = ["xác nhận", "xac nhan", "đồng ý", "dong y", "ok", "oke", "nộp đi", "gửi đi", "chốt", "chot", "tiến hành", "confirm", "yes"]
+            if any(kw in user_msg for kw in reject_kws) and not any(kw in user_msg for kw in confirm_kws):
+                return json.dumps({
+                    "status": "hitl_rejected_or_modifying",
+                    "draft_ticket_id": clean_id,
+                    "message": f"Khách hàng chưa xác nhận (tin nhắn có ý định hủy hoặc chưa sẵn sàng: '{user_msg}'). Hãy hỗ trợ theo nguyện vọng của khách thay vì xác nhận gửi khiếu nại.",
+                }, ensure_ascii=False)
+    except Exception:
+        pass
+
     ticket_number = f"KN-VNPOST-{now.strftime('%Y')}-{random.randint(10000, 99999)}"
     
     # SLA theo SKILL.md: 20 ngày làm việc nội địa, 30 ngày làm việc quốc tế (EMS)
@@ -558,6 +683,8 @@ def confirm_complaint(draft_ticket_id: str, confirmed_by_user: bool = True) -> s
     record["submitted_at"] = now.isoformat()
     record["sla_days"] = sla_days
     record["sla_deadline"] = deadline
+    _DRAFT_COMPLAINTS[clean_id] = record
+    _sync_complaint_draft(record)
 
     scope_name = "Quốc tế" if is_intl else "Nội địa"
     return json.dumps({
@@ -596,7 +723,7 @@ def update_draft_booking(
 ) -> str:
     """Cập nhật thông tin bản nháp đơn hàng trước khi người dùng xác nhận duyệt (HITL)."""
     clean_id = (draft_id or "").strip()
-    record = _DRAFT_BOOKINGS.get(clean_id)
+    record = get_draft_booking(clean_id)
     if not record:
         return json.dumps({"status": "error", "message": f"Không tìm thấy bản nháp '{clean_id}'."}, ensure_ascii=False)
 
@@ -699,6 +826,8 @@ def update_draft_booking(
     # Gia hạn thêm TTL kể từ thời điểm sửa đổi
     record["updated_at"] = now.isoformat()
     record["expires_at"] = (now + timedelta(seconds=DEFAULT_DRAFT_TTL_SECONDS)).isoformat()
+    _DRAFT_BOOKINGS[clean_id] = record
+    _sync_booking_draft(record)
 
     return json.dumps({
         "status": "updated",
@@ -717,7 +846,7 @@ def update_draft_complaint(
 ) -> str:
     """Cập nhật thông tin phiếu khiếu nại nháp trước khi duyệt chính thức (HITL)."""
     clean_id = (draft_ticket_id or "").strip()
-    record = _DRAFT_COMPLAINTS.get(clean_id)
+    record = get_draft_complaint(clean_id)
     if not record:
         return json.dumps({"status": "error", "message": f"Không tìm thấy phiếu khiếu nại nháp '{clean_id}'."}, ensure_ascii=False)
 
@@ -763,6 +892,8 @@ def update_draft_complaint(
 
     record["updated_at"] = now.isoformat()
     record["expires_at"] = (now + timedelta(seconds=DEFAULT_DRAFT_TTL_SECONDS)).isoformat()
+    _DRAFT_COMPLAINTS[clean_id] = record
+    _sync_complaint_draft(record)
 
     return json.dumps({
         "status": "updated",
@@ -772,32 +903,423 @@ def update_draft_complaint(
     }, ensure_ascii=False)
 
 
-def cancel_draft_booking(draft_id: str) -> str:
-    """Hủy đơn hàng nháp theo yêu cầu của người dùng."""
+def cancel_draft_booking(draft_id: str = "", verification_phone: str = "") -> str:
+    """Hủy đơn hàng nháp theo yêu cầu của người dùng.
+    
+    Tham số:
+    - draft_id: Mã đơn nháp (BK-DRAFT-...).
+    - verification_phone: 4 số cuối hoặc toàn bộ số điện thoại người gửi (bắt buộc khi hủy từ session khác).
+    """
     clean_id = (draft_id or "").strip()
-    record = _DRAFT_BOOKINGS.get(clean_id)
+    if not clean_id:
+        tenant, session_id, _ = _get_current_session_context()
+        drafts = get_session_drafts(session_id=session_id, tenant=tenant, status="WAITING_CONFIRMATION")["bookings"]
+        if drafts:
+            clean_id = drafts[-1]["draft_id"]
+        else:
+            return json.dumps({"status": "error", "message": "Không tìm thấy đơn nháp nào trong phiên hiện tại để hủy."}, ensure_ascii=False)
+
+    record = get_draft_booking(clean_id)
     if not record:
         return json.dumps({"status": "error", "message": f"Không tìm thấy đơn nháp '{clean_id}'."}, ensure_ascii=False)
     if record["status"] == "CONFIRMED":
-        return json.dumps({"status": "error", "message": f"Đơn hàng '{clean_id}' đã phát hành vận đơn, không thể hủy nháp."}, ensure_ascii=False)
-    if record["status"] == "CANCELLED":
+        return json.dumps({
+            "status": "error",
+            "message": f"Đơn hàng '{clean_id}' đã phát hành vận đơn ({record.get('item_code')}). Vui lòng sử dụng công cụ cancel_booking để hủy lấy hàng.",
+        }, ensure_ascii=False)
+    if record["status"] in {"CANCELLED", "CANCELLED_BY_CUSTOMER"}:
         return json.dumps({"status": "already_cancelled", "draft_id": clean_id, "message": f"Đơn nháp {clean_id} đã ở trạng thái đã hủy."}, ensure_ascii=False)
+
+    # BẢO VỆ CHÍNH CHỦ XUYÊN PHIÊN (Cross-Session Phone Identity Matching):
+    orig_session_id = record.get("session_id")
+    tenant, current_session_id, _ = _get_current_session_context()
+    if orig_session_id and current_session_id and orig_session_id != current_session_id:
+        sender_phone = (
+            record.get("sender", {}).get("phone")
+            or record.get("sender_phone")
+            or (record.get("detail", {}).get("sender", {}).get("phone"))
+            or ""
+        )
+        if sender_phone:
+            clean_sender = re.sub(r"\D", "", sender_phone)
+            clean_verif = re.sub(r"\D", "", verification_phone or "")
+            if not clean_verif:
+                masked = f"...{clean_sender[-4:]}" if len(clean_sender) >= 4 else "***"
+                return json.dumps({
+                    "status": "requires_verification",
+                    "draft_id": clean_id,
+                    "masked_phone": masked,
+                    "message": (
+                        f"🔒 BẢO VỆ CHÍNH CHỦ: Đơn nháp [{clean_id}] được tạo ở một phiên làm việc khác. "
+                        f"Để đảm bảo an toàn, vui lòng cung cấp 4 số cuối của Số điện thoại người gửi "
+                        f"(SĐT đuôi {masked}) để xác nhận hủy đơn."
+                    ),
+                }, ensure_ascii=False)
+            is_matched = (clean_verif == clean_sender or (len(clean_verif) >= 4 and clean_sender.endswith(clean_verif)))
+            if not is_matched:
+                return json.dumps({
+                    "status": "verification_failed",
+                    "draft_id": clean_id,
+                    "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người gửi của đơn này. Yêu cầu hủy bị từ chối.",
+                }, ensure_ascii=False)
+
     record["status"] = "CANCELLED"
+    _DRAFT_BOOKINGS[clean_id] = record
+    _sync_booking_draft(record)
     return json.dumps({"status": "cancelled", "draft_id": clean_id, "message": f"Đã hủy đơn nháp {clean_id} thành công."}, ensure_ascii=False)
 
 
-def cancel_draft_complaint(draft_ticket_id: str) -> str:
+def cancel_booking(item_code_or_draft_id: str = "", reason: str = "", verification_phone: str = "") -> str:
+    """Hủy đơn hàng gửi bưu phẩm VNPost (hỗ trợ cả đơn nháp lẫn đơn hàng đã xác nhận phát hành mã vận đơn trước khi bưu phẩm được bưu tá thu gom).
+
+    Tham số:
+    - item_code_or_draft_id: Mã vận đơn chuẩn UPU (EB...VN, CP...VN) hoặc mã đơn nháp (BK-DRAFT-...). Nếu để trống, tự động tìm đơn hàng gần nhất trong phiên.
+    - reason: Lý do hủy đơn hàng (ví dụ: 'Khách đổi ý', 'Gửi kênh khác', 'Sai địa chỉ').
+    - verification_phone: 4 số cuối hoặc toàn bộ số điện thoại người gửi (bắt buộc khi hủy đơn tạo từ phiên khác).
+    """
+    clean_id = (item_code_or_draft_id or "").strip()
+    now = _get_vn_now()
+    target_record = None
+
+    if clean_id:
+        target_record = get_draft_booking(clean_id)
+        if not target_record:
+            for rec in _DRAFT_BOOKINGS.values():
+                if rec.get("item_code") == clean_id.upper():
+                    target_record = rec
+                    break
+    else:
+        tenant, session_id, _ = _get_current_session_context()
+        data = get_session_drafts(session_id=session_id, tenant=tenant)
+        active = [b for b in data["bookings"] if b.get("status") in {"WAITING_CONFIRMATION", "CONFIRMED"}]
+        if active:
+            target_record = active[-1]
+        else:
+            return json.dumps({"status": "error", "message": "Không tìm thấy đơn hàng nào trong phiên hội thoại hiện tại để hủy."}, ensure_ascii=False)
+
+    if target_record:
+        status = target_record.get("status")
+        draft_id = target_record.get("draft_id")
+        item_code = target_record.get("item_code")
+        orig_session_id = target_record.get("session_id")
+        tenant, current_session_id, _ = _get_current_session_context()
+
+        # BẢO VỆ CHÍNH CHỦ XUYÊN PHIÊN (Cross-Session Phone Identity Matching):
+        if orig_session_id and current_session_id and orig_session_id != current_session_id:
+            sender_phone = (
+                target_record.get("sender", {}).get("phone")
+                or target_record.get("sender_phone")
+                or (target_record.get("detail", {}).get("sender", {}).get("phone"))
+                or ""
+            )
+            if sender_phone:
+                clean_sender = re.sub(r"\D", "", sender_phone)
+                clean_verif = re.sub(r"\D", "", verification_phone or "")
+                if not clean_verif:
+                    masked = f"...{clean_sender[-4:]}" if len(clean_sender) >= 4 else "***"
+                    return json.dumps({
+                        "status": "requires_verification",
+                        "draft_id": draft_id,
+                        "item_code": item_code,
+                        "masked_phone": masked,
+                        "message": (
+                            f"🔒 BẢO VỆ CHÍNH CHỦ: Đơn hàng [{item_code or draft_id}] được tạo ở một phiên làm việc khác. "
+                            f"Để ngăn chặn người lạ hủy nhầm hoặc phá hoại đơn hàng, vui lòng cung cấp 4 số cuối của "
+                            f"Số điện thoại người gửi (SĐT đuôi {masked}) để xác nhận hủy đơn."
+                        ),
+                    }, ensure_ascii=False)
+                is_matched = (clean_verif == clean_sender or (len(clean_verif) >= 4 and clean_sender.endswith(clean_verif)))
+                if not is_matched:
+                    return json.dumps({
+                        "status": "verification_failed",
+                        "draft_id": draft_id,
+                        "item_code": item_code,
+                        "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người gửi của đơn này. Yêu cầu hủy đơn bị từ chối vì lý do an toàn bảo mật.",
+                    }, ensure_ascii=False)
+
+        if status == "WAITING_CONFIRMATION":
+            target_record["status"] = "CANCELLED"
+            target_record["cancellation_reason"] = reason or "Khách hàng yêu cầu hủy đơn nháp"
+            target_record["cancelled_at"] = now.isoformat()
+            if draft_id:
+                _DRAFT_BOOKINGS[draft_id] = target_record
+            _sync_booking_draft(target_record)
+            return json.dumps({
+                "status": "cancelled",
+                "cancellation_type": "draft",
+                "draft_id": draft_id,
+                "message": f"Đã hủy đơn nháp {draft_id} thành công theo yêu cầu của quý khách.",
+            }, ensure_ascii=False)
+
+        elif status == "CONFIRMED":
+            target_record["status"] = "CANCELLED_BY_CUSTOMER"
+            target_record["cancellation_reason"] = reason or "Khách hàng yêu cầu hủy gửi hàng"
+            target_record["cancelled_at"] = now.isoformat()
+            if draft_id:
+                _DRAFT_BOOKINGS[draft_id] = target_record
+            _sync_booking_draft(target_record)
+            return json.dumps({
+                "status": "cancelled",
+                "cancellation_type": "confirmed_order",
+                "draft_id": draft_id,
+                "item_code": item_code,
+                "reason": target_record["cancellation_reason"],
+                "message": (
+                    f"Đã hủy đơn hàng {item_code or draft_id} thành công theo yêu cầu của quý khách. "
+                    "Hệ thống điều phối bưu tá VNPost đã được cập nhật (bưu tá sẽ không đến thu gom bưu phẩm này)."
+                ),
+            }, ensure_ascii=False)
+
+        elif status in {"CANCELLED", "CANCELLED_BY_CUSTOMER"}:
+            return json.dumps({
+                "status": "already_cancelled",
+                "draft_id": draft_id,
+                "item_code": item_code,
+                "message": f"Đơn hàng {item_code or draft_id} đã ở trạng thái hủy trước đó.",
+            }, ensure_ascii=False)
+
+        elif status == "EXPIRED":
+            return json.dumps({
+                "status": "expired",
+                "draft_id": draft_id,
+                "message": f"Đơn nháp {draft_id} đã hết hạn hiệu lực.",
+            }, ensure_ascii=False)
+
+    # Nếu không nằm trong bộ nhớ nhưng khớp định dạng mã vận đơn chuẩn UPU
+    if clean_id and re.match(r"^[A-Z]{2}\d{9}[A-Z]{2}$", clean_id.upper()):
+        return json.dumps({
+            "status": "cancelled",
+            "cancellation_type": "tracking_order",
+            "item_code": clean_id.upper(),
+            "reason": reason or "Khách hàng yêu cầu hủy lấy hàng",
+            "message": f"Đã tiếp nhận yêu cầu hủy lấy hàng cho mã vận đơn {clean_id.upper()}. Bưu cục VNPost phụ trách đã được thông báo để dừng lịch lấy hàng.",
+        }, ensure_ascii=False)
+
+    return json.dumps({"status": "error", "message": f"Không tìm thấy đơn hàng hoặc mã vận đơn '{clean_id}' để thực hiện hủy."}, ensure_ascii=False)
+
+
+def cancel_draft_complaint(draft_ticket_id: str = "", verification_phone: str = "") -> str:
     """Hủy phiếu khiếu nại nháp theo yêu cầu của khách hàng."""
     clean_id = (draft_ticket_id or "").strip()
-    record = _DRAFT_COMPLAINTS.get(clean_id)
+    if not clean_id:
+        tenant, session_id, _ = _get_current_session_context()
+        drafts = get_session_drafts(session_id=session_id, tenant=tenant, status="WAITING_CONFIRMATION")["complaints"]
+        if drafts:
+            clean_id = drafts[-1]["draft_ticket_id"]
+        else:
+            return json.dumps({"status": "error", "message": "Không tìm thấy phiếu khiếu nại nháp nào trong phiên hiện tại để hủy."}, ensure_ascii=False)
+
+    record = get_draft_complaint(clean_id)
     if not record:
         return json.dumps({"status": "error", "message": f"Không tìm thấy phiếu khiếu nại nháp '{clean_id}'."}, ensure_ascii=False)
     if record["status"] == "SUBMITTED":
-        return json.dumps({"status": "error", "message": f"Phiếu khiếu nại '{clean_id}' đã nộp chính thức, không thể hủy nháp."}, ensure_ascii=False)
-    if record["status"] == "CANCELLED":
+        return json.dumps({
+            "status": "error",
+            "message": f"Phiếu khiếu nại '{clean_id}' đã nộp chính thức ({record.get('ticket_number')}). Vui lòng sử dụng cancel_complaint để rút khiếu nại.",
+        }, ensure_ascii=False)
+    if record["status"] in {"CANCELLED", "CANCELLED_BY_CUSTOMER"}:
         return json.dumps({"status": "already_cancelled", "draft_ticket_id": clean_id, "message": f"Phiếu khiếu nại nháp {clean_id} đã ở trạng thái đã hủy."}, ensure_ascii=False)
+
+    # BẢO VỆ CHÍNH CHỦ XUYÊN PHIÊN (Cross-Session Phone Identity Matching):
+    orig_session_id = record.get("session_id")
+    tenant, current_session_id, _ = _get_current_session_context()
+    if orig_session_id and current_session_id and orig_session_id != current_session_id:
+        cust_phone = (
+            record.get("customer", {}).get("phone")
+            or record.get("customer_phone")
+            or (record.get("detail", {}).get("customer", {}).get("phone"))
+            or ""
+        )
+        if cust_phone:
+            clean_cust = re.sub(r"\D", "", cust_phone)
+            clean_verif = re.sub(r"\D", "", verification_phone or "")
+            if not clean_verif:
+                masked = f"...{clean_cust[-4:]}" if len(clean_cust) >= 4 else "***"
+                return json.dumps({
+                    "status": "requires_verification",
+                    "draft_ticket_id": clean_id,
+                    "masked_phone": masked,
+                    "message": (
+                        f"🔒 BẢO VỆ CHÍNH CHỦ: Phiếu khiếu nại [{clean_id}] được lập ở một phiên làm việc khác. "
+                        f"Để đảm bảo an toàn, vui lòng cung cấp 4 số cuối của SĐT người khiếu nại "
+                        f"(SĐT đuôi {masked}) để xác nhận hủy."
+                    ),
+                }, ensure_ascii=False)
+            is_matched = (clean_verif == clean_cust or (len(clean_verif) >= 4 and clean_cust.endswith(clean_verif)))
+            if not is_matched:
+                return json.dumps({
+                    "status": "verification_failed",
+                    "draft_ticket_id": clean_id,
+                    "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người khiếu nại. Yêu cầu hủy bị từ chối.",
+                }, ensure_ascii=False)
+
     record["status"] = "CANCELLED"
+    _DRAFT_COMPLAINTS[clean_id] = record
+    _sync_complaint_draft(record)
     return json.dumps({"status": "cancelled", "draft_ticket_id": clean_id, "message": f"Đã hủy phiếu khiếu nại nháp {clean_id}."}, ensure_ascii=False)
+
+
+def cancel_complaint(ticket_id_or_draft_id: str = "", reason: str = "", verification_phone: str = "") -> str:
+    """Hủy hoặc rút phiếu khiếu nại VNPost (hỗ trợ cả phiếu nháp lẫn khiếu nại đã gửi chính thức).
+
+    Tham số:
+    - ticket_id_or_draft_id: Mã phiếu khiếu nại (TK-...) hoặc mã nháp (KN-DRAFT-...).
+    - reason: Lý do rút khiếu nại.
+    - verification_phone: 4 số cuối hoặc toàn bộ số điện thoại người khiếu nại (bắt buộc khi hủy từ phiên khác).
+    """
+    clean_id = (ticket_id_or_draft_id or "").strip()
+    now = _get_vn_now()
+    target_record = None
+
+    if clean_id:
+        target_record = get_draft_complaint(clean_id)
+        if not target_record:
+            for rec in _DRAFT_COMPLAINTS.values():
+                if rec.get("ticket_number") == clean_id.upper():
+                    target_record = rec
+                    break
+    else:
+        tenant, session_id, _ = _get_current_session_context()
+        data = get_session_drafts(session_id=session_id, tenant=tenant)
+        active = [c for c in data["complaints"] if c.get("status") in {"WAITING_CONFIRMATION", "SUBMITTED"}]
+        if active:
+            target_record = active[-1]
+        else:
+            return json.dumps({"status": "error", "message": "Không tìm thấy phiếu khiếu nại nào trong phiên hiện tại để hủy."}, ensure_ascii=False)
+
+    if target_record:
+        status = target_record.get("status")
+        draft_id = target_record.get("draft_ticket_id")
+        ticket_number = target_record.get("ticket_number")
+        orig_session_id = target_record.get("session_id")
+        tenant, current_session_id, _ = _get_current_session_context()
+
+        # BẢO VỆ CHÍNH CHỦ XUYÊN PHIÊN (Cross-Session Phone Identity Matching):
+        if orig_session_id and current_session_id and orig_session_id != current_session_id:
+            cust_phone = (
+                target_record.get("customer", {}).get("phone")
+                or target_record.get("customer_phone")
+                or (target_record.get("detail", {}).get("customer", {}).get("phone"))
+                or ""
+            )
+            if cust_phone:
+                clean_cust = re.sub(r"\D", "", cust_phone)
+                clean_verif = re.sub(r"\D", "", verification_phone or "")
+                if not clean_verif:
+                    masked = f"...{clean_cust[-4:]}" if len(clean_cust) >= 4 else "***"
+                    return json.dumps({
+                        "status": "requires_verification",
+                        "ticket_number": ticket_number,
+                        "draft_ticket_id": draft_id,
+                        "masked_phone": masked,
+                        "message": (
+                            f"🔒 BẢO VỆ CHÍNH CHỦ: Phiếu khiếu nại [{ticket_number or draft_id}] được tạo ở một phiên làm việc khác. "
+                            f"Để đảm bảo an toàn, vui lòng cung cấp 4 số cuối của SĐT người khiếu nại "
+                            f"(SĐT đuôi {masked}) để xác nhận rút khiếu nại."
+                        ),
+                    }, ensure_ascii=False)
+                is_matched = (clean_verif == clean_cust or (len(clean_verif) >= 4 and clean_cust.endswith(clean_verif)))
+                if not is_matched:
+                    return json.dumps({
+                        "status": "verification_failed",
+                        "ticket_number": ticket_number,
+                        "draft_ticket_id": draft_id,
+                        "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người khiếu nại. Yêu cầu rút khiếu nại bị từ chối vì lý do an toàn bảo mật.",
+                    }, ensure_ascii=False)
+
+        if status == "WAITING_CONFIRMATION":
+            target_record["status"] = "CANCELLED"
+            target_record["cancellation_reason"] = reason or "Khách hàng yêu cầu hủy phiếu khiếu nại nháp"
+            target_record["cancelled_at"] = now.isoformat()
+            if draft_id:
+                _DRAFT_COMPLAINTS[draft_id] = target_record
+            _sync_complaint_draft(target_record)
+            return json.dumps({
+                "status": "cancelled",
+                "cancellation_type": "draft",
+                "draft_ticket_id": draft_id,
+                "message": f"Đã hủy phiếu khiếu nại nháp {draft_id} thành công.",
+            }, ensure_ascii=False)
+
+        elif status == "SUBMITTED":
+            target_record["status"] = "CANCELLED_BY_CUSTOMER"
+            target_record["cancellation_reason"] = reason or "Khách hàng yêu cầu rút khiếu nại"
+            target_record["cancelled_at"] = now.isoformat()
+            if draft_id:
+                _DRAFT_COMPLAINTS[draft_id] = target_record
+            _sync_complaint_draft(target_record)
+            return json.dumps({
+                "status": "cancelled",
+                "cancellation_type": "submitted_ticket",
+                "ticket_number": ticket_number,
+                "draft_ticket_id": draft_id,
+                "reason": target_record["cancellation_reason"],
+                "message": f"Đã rút phiếu khiếu nại {ticket_number or draft_id} thành công theo yêu cầu của quý khách.",
+            }, ensure_ascii=False)
+
+        elif status in {"CANCELLED", "CANCELLED_BY_CUSTOMER"}:
+            return json.dumps({
+                "status": "already_cancelled",
+                "draft_ticket_id": draft_id,
+                "ticket_number": ticket_number,
+                "message": f"Phiếu khiếu nại {ticket_number or draft_id} đã ở trạng thái hủy trước đó.",
+            }, ensure_ascii=False)
+
+    return json.dumps({"status": "error", "message": f"Không tìm thấy phiếu khiếu nại '{clean_id}' để hủy."}, ensure_ascii=False)
+
+
+def list_my_orders(session_id: str | None = None, tenant: str | None = None) -> str:
+    """Truy vấn danh sách đơn hàng, đơn nháp và khiếu nại của khách hàng trong phiên hội thoại hiện tại."""
+    ctx_tenant, ctx_session_id, _ = _get_current_session_context()
+    target_tenant = tenant or ctx_tenant
+    target_session_id = session_id or ctx_session_id
+    data = get_session_drafts(session_id=target_session_id, tenant=target_tenant)
+    bookings = data.get("bookings", [])
+    complaints = data.get("complaints", [])
+
+    active_drafts = [b for b in bookings if b.get("status") == "WAITING_CONFIRMATION"]
+    confirmed_orders = [b for b in bookings if b.get("status") == "CONFIRMED"]
+    cancelled_orders = [b for b in bookings if b.get("status") in {"CANCELLED", "CANCELLED_BY_CUSTOMER"}]
+
+    draft_complaints = [c for c in complaints if c.get("status") == "WAITING_CONFIRMATION"]
+    submitted_complaints = [c for c in complaints if c.get("status") == "SUBMITTED"]
+
+    summary_lines = []
+    if active_drafts:
+        summary_lines.append(f"📦 **Đơn hàng nháp chờ duyệt ({len(active_drafts)}):**")
+        for b in active_drafts:
+            summary_lines.append(f"  • Mã nháp: `{b['draft_id']}` | Gửi từ: {b['sender']['address']} ➜ {b['receiver']['address']} | Cước ước tính: {b['pricing']['estimated_fee_text']}")
+    if confirmed_orders:
+        summary_lines.append(f"🚚 **Đơn hàng đã xác nhận ({len(confirmed_orders)}):**")
+        for b in confirmed_orders:
+            summary_lines.append(f"  • Mã vận đơn: `{b.get('item_code')}` | Lấy hàng dự kiến: {b.get('pickup_schedule', 'Hôm nay')} | Cước: {b['pricing']['estimated_fee_text']}")
+    if cancelled_orders:
+        summary_lines.append(f"❌ **Đơn hàng đã hủy ({len(cancelled_orders)}):**")
+        for b in cancelled_orders:
+            summary_lines.append(f"  • Mã: `{b.get('item_code', b['draft_id'])}`")
+    if draft_complaints:
+        summary_lines.append(f"📝 **Phiếu khiếu nại nháp chờ duyệt ({len(draft_complaints)}):**")
+        for c in draft_complaints:
+            summary_lines.append(f"  • Mã nháp: `{c['draft_ticket_id']}` | Mã bưu gửi: `{c['item_code']}`")
+    if submitted_complaints:
+        summary_lines.append(f"📬 **Phiếu khiếu nại đã tiếp nhận ({len(submitted_complaints)}):**")
+        for c in submitted_complaints:
+            summary_lines.append(f"  • Mã Ticket: `{c.get('ticket_number')}` | Hạn xử lý: {c.get('sla_deadline')}")
+
+    summary_text = "\n".join(summary_lines) if summary_lines else "Hiện tại chưa có đơn hàng hoặc phiếu khiếu nại nào được tạo trong phiên này."
+    return json.dumps({
+        "status": "success",
+        "active_drafts_count": len(active_drafts),
+        "confirmed_orders_count": len(confirmed_orders),
+        "summary": summary_text,
+        "detail": {
+            "active_draft_bookings": active_drafts,
+            "confirmed_bookings": confirmed_orders,
+            "cancelled_bookings": cancelled_orders,
+            "draft_complaints": draft_complaints,
+            "submitted_complaints": submitted_complaints,
+        },
+    }, ensure_ascii=False)
 
 
 def prune_expired_drafts(ttl_seconds: int = DEFAULT_DRAFT_TTL_SECONDS, max_age_hours: int = 24) -> dict[str, int]:
@@ -838,32 +1360,78 @@ def prune_expired_drafts(ttl_seconds: int = DEFAULT_DRAFT_TTL_SECONDS, max_age_h
 
 
 def get_session_drafts(session_id: str | None = None, tenant: str = "default", status: str | None = None) -> dict[str, list[dict[str, Any]]]:
-    """Truy vấn các bản nháp theo phạm vi session và tenant của người dùng."""
-    bookings = []
+    """Truy vấn các bản nháp theo phạm vi session và tenant của người dùng (kết hợp RAM và PostgreSQL)."""
+    bookings_map: dict[str, dict[str, Any]] = {}
+    complaints_map: dict[str, dict[str, Any]] = {}
+
+    # 1. Truy xuất từ PostgreSQL trước (nếu có kết nối)
+    try:
+        from app.core.postgres import fetch_session_drafts_from_postgres
+        pg_drafts = fetch_session_drafts_from_postgres(tenant=tenant, session_id=session_id)
+        for b in pg_drafts.get("bookings", []):
+            bid = b.get("draft_id")
+            if bid:
+                bookings_map[bid] = b
+        for c in pg_drafts.get("complaints", []):
+            cid = c.get("draft_ticket_id")
+            if cid:
+                complaints_map[cid] = c
+    except Exception:
+        pass
+
+    # 2. Ghi đè bằng trạng thái mới nhất trong RAM
     for rec in _DRAFT_BOOKINGS.values():
         if rec.get("tenant", "default") == tenant:
             if session_id is None or rec.get("session_id") == session_id:
-                if status is None or rec.get("status") == status:
-                    bookings.append(rec)
+                bid = rec.get("draft_id")
+                if bid:
+                    bookings_map[bid] = rec
 
-    complaints = []
     for rec in _DRAFT_COMPLAINTS.values():
         if rec.get("tenant", "default") == tenant:
             if session_id is None or rec.get("session_id") == session_id:
-                if status is None or rec.get("status") == status:
-                    complaints.append(rec)
+                cid = rec.get("draft_ticket_id")
+                if cid:
+                    complaints_map[cid] = rec
+
+    bookings = [b for b in bookings_map.values() if status is None or b.get("status") == status]
+    complaints = [c for c in complaints_map.values() if status is None or c.get("status") == status]
 
     return {"bookings": bookings, "complaints": complaints}
 
 
 def get_draft_booking(draft_id: str) -> dict[str, Any] | None:
-    """Lấy dữ liệu chi tiết của một đơn hàng nháp."""
-    return _DRAFT_BOOKINGS.get((draft_id or "").strip())
+    """Lấy dữ liệu chi tiết của một đơn hàng nháp (ưu tiên RAM, truy vấn PostgreSQL nếu chưa có)."""
+    clean_id = (draft_id or "").strip()
+    rec = _DRAFT_BOOKINGS.get(clean_id)
+    if rec is not None:
+        return rec
+    try:
+        from app.core.postgres import fetch_draft_booking_from_postgres
+        pg_rec = fetch_draft_booking_from_postgres(clean_id)
+        if pg_rec is not None:
+            _DRAFT_BOOKINGS[clean_id] = pg_rec
+            return pg_rec
+    except Exception:
+        pass
+    return None
 
 
 def get_draft_complaint(draft_ticket_id: str) -> dict[str, Any] | None:
-    """Lấy dữ liệu chi tiết của một phiếu khiếu nại nháp."""
-    return _DRAFT_COMPLAINTS.get((draft_ticket_id or "").strip())
+    """Lấy dữ liệu chi tiết của một phiếu khiếu nại nháp (ưu tiên RAM, truy vấn PostgreSQL nếu chưa có)."""
+    clean_id = (draft_ticket_id or "").strip()
+    rec = _DRAFT_COMPLAINTS.get(clean_id)
+    if rec is not None:
+        return rec
+    try:
+        from app.core.postgres import fetch_draft_complaint_from_postgres
+        pg_rec = fetch_draft_complaint_from_postgres(clean_id)
+        if pg_rec is not None:
+            _DRAFT_COMPLAINTS[clean_id] = pg_rec
+            return pg_rec
+    except Exception:
+        pass
+    return None
 
 
 def execute_action_with_interrupt(action_type: str, draft_id: str) -> dict[str, Any]:

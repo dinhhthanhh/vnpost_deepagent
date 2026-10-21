@@ -1069,26 +1069,179 @@ button:disabled {
   text-decoration: underline;
 }
 
-.bot-pending-indicator {
+/* Khối trạng thái suy nghĩ hiện đại của MiPo */
+.bot-thinking-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #fffbeb 0%, #fef9c3 35%, #ffffff 100%);
+  border: 1px solid #fde68a;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.08);
+  max-width: 600px;
+  animation: fadeInThinking 0.25s ease-out;
+}
+
+@keyframes fadeInThinking {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.thinking-pulse-dot {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  background: #f59e0b;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.thinking-pulse-dot::before {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: rgba(245, 158, 11, 0.4);
+  animation: pulseRipple 1.6s infinite ease-out;
+}
+
+@keyframes pulseRipple {
+  0% { transform: scale(0.6); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+.thinking-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #92400e;
+  letter-spacing: -0.01em;
+}
+
+.thinking-typing-dots {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 2px;
+}
+
+.thinking-typing-dots span {
+  width: 4px;
+  height: 4px;
+  background: #d97706;
+  border-radius: 50%;
+  display: inline-block;
+  animation: typingBounce 1.4s infinite ease-in-out;
+}
+
+.thinking-typing-dots span:nth-child(1) { animation-delay: 0s; }
+.thinking-typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typingBounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1.2); opacity: 1; }
+}
+
+/* Các bước chi tiết của Deep Agent & Router tích hợp */
+.thinking-steps-box {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(253, 230, 138, 0.8);
+  border-radius: 8px;
+}
+
+.thinking-step-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #64748b;
-  font-size: 13px;
-  padding: 8px 0;
+  font-size: 12px;
+  color: #475569;
 }
 
-.dot-pulse {
-  width: 8px;
-  height: 8px;
-  background: #f59e0b;
+.step-badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  background: #eff6ff;
+  color: #2563eb;
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.step-badge.deep-agent {
+  background: #eef2ff;
+  color: #4f46e5;
+  border-color: #c7d2fe;
+}
+
+.step-badge.fast-rag {
+  background: #ecfdf5;
+  color: #059669;
+  border-color: #a7f3d0;
+}
+
+.step-text {
+  font-size: 12px;
+  color: #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-pulse-dot {
+  width: 6px;
+  height: 6px;
+  background: #3b82f6;
   border-radius: 50%;
-  animation: pulse 1s infinite ease-in-out;
+  animation: pulse 1s infinite;
+  flex-shrink: 0;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 0.3; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1.2); }
+.step-agent-name {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.step-status {
+  color: #64748b;
+}
+
+/* Shimmer Loading Bars */
+.thinking-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 2px;
+}
+
+.skeleton-line {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #fef3c7 25%, #fde68a 50%, #fef3c7 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+.skeleton-line.w-75 { width: 75%; }
+.skeleton-line.w-50 { width: 50%; }
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 .activity-floating-bar {
@@ -1559,5 +1712,248 @@ button:disabled {
   border-radius: 50%;
   animation: pulseGps 0.9s infinite ease-in-out;
 }
+
+/* POSTAL ACTION CARD (HITL & ORDER ACTIONS) */
+.postal-action-card {
+  margin-top: 12px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-left: 4px solid #f59e0b;
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+}
+
+.postal-action-card.booking-card {
+  border-left-color: #f59e0b;
+  background: linear-gradient(135deg, #fffdfa 0%, #ffffff 100%);
+}
+
+.postal-action-card.complaint-card {
+  border-left-color: #ef4444;
+  background: linear-gradient(135deg, #fffbfb 0%, #ffffff 100%);
+}
+
+.postal-action-card.confirmed-card {
+  border-left-color: #10b981;
+  background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%);
+}
+
+.action-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.action-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 9px;
+  border-radius: 6px;
+}
+
+.action-card-badge.status-waiting {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.action-card-badge.status-confirmed {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.action-card-id {
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+  background: #f1f5f9;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.action-card-id.tracking-code {
+  color: #0369a1;
+  background: #e0f2fe;
+}
+
+.action-card-desc {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.5;
+  margin: 0 0 12px 0;
+}
+
+.action-card-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.action-card-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.action-card-btn.btn-confirm {
+  background: #16a34a;
+  color: #ffffff;
+}
+
+.action-card-btn.btn-confirm:hover {
+  background: #15803d;
+  box-shadow: 0 2px 6px rgba(22, 163, 74, 0.25);
+  transform: translateY(-1px);
+}
+
+.action-card-btn.btn-cancel {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+.action-card-btn.btn-cancel:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+  transform: translateY(-1px);
+}
+
+.action-card-btn.btn-edit {
+  background: #f8fafc;
+  color: #475569;
+  border-color: #cbd5e1;
+}
+
+.action-card-btn.btn-edit:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+  transform: translateY(-1px);
+}
+
+.action-card-btn.btn-track {
+  background: #0284c7;
+  color: #ffffff;
+}
+
+.action-card-btn.btn-track:hover {
+  background: #0369a1;
+  transform: translateY(-1px);
+}
+
+.action-card-btn.btn-cancel-confirmed {
+  background: #fff1f2;
+  color: #e11d48;
+  border-color: #fecdd3;
+}
+
+.action-card-btn.btn-cancel-confirmed:hover {
+  background: #ffe4e6;
+  transform: translateY(-1px);
+}
+
+.action-card-badge svg,
+.action-card-btn svg {
+  display: inline-block;
+  vertical-align: -1px;
+}
+
+/* NOTICE BAR & VOICE INDICATORS (VECTOR SVG) */
+.mipo-notice-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  max-width: 900px;
+  width: 100%;
+  animation: fadeIn 0.2s ease;
+}
+
+.mipo-notice-bar span {
+  flex: 1;
+}
+
+.mipo-notice-bar button {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.mipo-notice-bar button:hover {
+  background: #dbeafe;
+  color: #1e3a8a;
+}
+
+.notice-fa-icon {
+  font-size: 13px;
+  color: #2563eb;
+  flex-shrink: 0;
+}
+
+.voice-recording-icon {
+  color: #dc2626;
+  font-size: 13px;
+}
+
+/* GOOGLE MAPS DIRECTIONS LINK & SVG PIN */
+.maps-direction-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #0284c7;
+  font-weight: 600;
+  text-decoration: none;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin: 2px 0;
+  transition: all 0.2s ease;
+}
+
+.maps-direction-link:hover {
+  background: #e0f2fe;
+  color: #0369a1;
+  text-decoration: underline;
+}
+
+.map-pin-svg-icon {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  background-color: #0284c7;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z'/%3E%3Ccircle cx='12' cy='10' r='3'/%3E%3C/svg%3E") no-repeat center / contain;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z'/%3E%3Ccircle cx='12' cy='10' r='3'/%3E%3C/svg%3E") no-repeat center / contain;
+  flex-shrink: 0;
+  vertical-align: -2px;
+}
+
 
 

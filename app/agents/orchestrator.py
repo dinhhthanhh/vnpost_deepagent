@@ -23,6 +23,7 @@ from app.agents.calculator import safe_calculate, safe_date_calculate
 from app.api.schemas import TaskSpec
 from app.core import prompts
 from app.core.checkpointer import PersistentSqliteCheckpointer
+from app.core.postgres import PersistentPostgresCheckpointer
 from app.core.config import Settings
 from app.core.context import current_run
 from app.core.demo import DemoChatModel, message_text
@@ -40,21 +41,42 @@ warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 
 def _load_enterprise_skills() -> dict[str, Any]:
     files = {}
-    skills_dir = pathlib.Path("data/skills")
-    if skills_dir.exists():
-        for f in skills_dir.rglob("*.md"):
-            rel = f.as_posix()
-            try:
-                content = f.read_text(encoding="utf-8")
-                files[f"/{rel}"] = {"content": content, "encoding": "utf-8"}
-                sub = rel.replace("data/skills/", "skills/")
-                files[f"/{sub}"] = {"content": content, "encoding": "utf-8"}
-            except Exception:
-                pass
+    for base in [pathlib.Path("skills"), pathlib.Path("data/skills")]:
+        if base.exists():
+            for f in base.rglob("*.md"):
+                rel = f.as_posix()
+                try:
+                    content = f.read_text(encoding="utf-8")
+                    files[f"/{rel}"] = {"content": content, "encoding": "utf-8"}
+                    files[rel] = {"content": content, "encoding": "utf-8"}
+                    for prefix in ["data/skills/", "skills/"]:
+                        if rel.startswith(prefix):
+                            sub = rel[len(prefix):]
+                            files[f"/skills/{sub}"] = {"content": content, "encoding": "utf-8"}
+                            files[f"skills/{sub}"] = {"content": content, "encoding": "utf-8"}
+                except Exception:
+                    pass
     return files
 
 
-def create_model(settings: Settings, role: str, clients: ProviderClients | None = None):
+def _get_supervisor_prompt() -> str:
+    """Tải prompt của supervisor từ app/agents/supervisor/prompt.md với fallback về prompts.SUPERVISOR."""
+    p_file = pathlib.Path(__file__).parent / "supervisor" / "prompt.md"
+    if p_file.exists():
+        try:
+            return p_file.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    return prompts.SUPERVISOR
+
+
+def create_model(
+    settings: Settings,
+    role: str,
+    clients: ProviderClients | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+):
     """Create an instrumented model without recording prompts or completions."""
     callbacks = [RunMetricsCallback()]
     tags = [f"role:{role}"]
@@ -70,16 +92,24 @@ def create_model(settings: Settings, role: str, clients: ProviderClients | None 
             "thinking": thinking_on,
             "chat_template_kwargs": {"enable_thinking": thinking_on},
         }
-    max_tokens = 1024 if role == "fast_rag" else 2500
-    return ChatOpenAI(model=(settings.subagent_model or settings.llm_model) if role != "supervisor" else settings.llm_model,
-                      base_url=settings.llm_base_url,
-                      api_key=api_key,
-                      temperature=0, max_tokens=max_tokens, timeout=settings.llm_timeout,
-                      max_retries=1, use_responses_api=False,
-                      extra_body=extra_body,
-                      http_client=clients.sync if clients else None,
-                      http_async_client=clients.async_ if clients else None,
-                      callbacks=callbacks, tags=tags)
+    if max_tokens is None:
+        max_tokens = 1024 if role == "fast_rag" else 2500
+    temp = 0 if temperature is None else temperature
+    return ChatOpenAI(
+        model=(settings.subagent_model or settings.llm_model) if role != "supervisor" else settings.llm_model,
+        base_url=settings.llm_base_url,
+        api_key=api_key,
+        temperature=temp,
+        max_tokens=max_tokens,
+        timeout=settings.llm_timeout,
+        max_retries=1,
+        use_responses_api=False,
+        extra_body=extra_body,
+        http_client=clients.sync if clients else None,
+        http_async_client=clients.async_ if clients else None,
+        callbacks=callbacks,
+        tags=tags,
+    )
 
 
 def _query_cache_key(query: str) -> str:
@@ -295,6 +325,41 @@ class AgentHarness:
             from app.agents.postal_actions import confirm_complaint as _confirm_complaint
             return _confirm_complaint(draft_ticket_id)
 
+        @tool
+        def cancel_draft_booking(draft_id: str = "", verification_phone: str = "") -> str:
+            """Hủy bản nháp đơn hàng bưu gửi VNPost khi người dùng đổi ý hoặc từ chối xác nhận (HITL). Nếu để trống draft_id, tự động tìm đơn nháp gần nhất trong phiên."""
+            from app.agents.postal_actions import cancel_draft_booking as _cancel_draft_booking
+            return _cancel_draft_booking(draft_id, verification_phone=verification_phone)
+
+        @tool
+        def cancel_booking(item_code_or_draft_id: str = "", reason: str = "", verification_phone: str = "") -> str:
+            """Hủy đơn hàng VNPost (hỗ trợ cả đơn nháp lẫn đơn hàng đã xác nhận phát hành mã vận đơn trước khi bưu phẩm được bưu tá thu gom).
+            Tham số item_code_or_draft_id: mã vận đơn (EB...VN, CP...VN) hoặc mã nháp (BK-DRAFT-...).
+            Tham số verification_phone: 4 số cuối hoặc toàn bộ số điện thoại người gửi (bắt buộc khi hủy đơn tạo từ phiên khác).
+            """
+            from app.agents.postal_actions import cancel_booking as _cancel_booking
+            return _cancel_booking(item_code_or_draft_id=item_code_or_draft_id, reason=reason, verification_phone=verification_phone)
+
+        @tool
+        def cancel_draft_complaint(draft_ticket_id: str = "", verification_phone: str = "") -> str:
+            """Hủy phiếu khiếu nại nháp khi khách hàng không muốn tiếp tục khiếu nại."""
+            from app.agents.postal_actions import cancel_draft_complaint as _cancel_draft_complaint
+            return _cancel_draft_complaint(draft_ticket_id, verification_phone=verification_phone)
+
+        @tool
+        def cancel_complaint(ticket_id_or_draft_id: str = "", reason: str = "", verification_phone: str = "") -> str:
+            """Hủy hoặc rút phiếu khiếu nại VNPost (hỗ trợ cả phiếu nháp và khiếu nại đã tiếp nhận chính thức).
+            Tham số verification_phone: 4 số cuối hoặc toàn bộ số điện thoại người khiếu nại (bắt buộc khi hủy từ phiên khác).
+            """
+            from app.agents.postal_actions import cancel_complaint as _cancel_complaint
+            return _cancel_complaint(ticket_id_or_draft_id=ticket_id_or_draft_id, reason=reason, verification_phone=verification_phone)
+
+        @tool
+        def list_my_orders() -> str:
+            """Tra cứu danh sách tất cả các đơn hàng, đơn nháp và phiếu khiếu nại của khách hàng trong phiên hội thoại hiện tại."""
+            from app.agents.postal_actions import list_my_orders as _list_my_orders
+            return _list_my_orders()
+
         self.search_documents = search_documents
         self.calculate = calculate
         self.calculate_date = calculate_date
@@ -304,33 +369,29 @@ class AgentHarness:
         self.create_draft_booking = create_draft_booking
         self.update_draft_booking = update_draft_booking
         self.confirm_booking = confirm_booking
+        self.cancel_draft_booking = cancel_draft_booking
+        self.cancel_booking = cancel_booking
         self.create_draft_complaint = create_draft_complaint
         self.update_draft_complaint = update_draft_complaint
         self.confirm_complaint = confirm_complaint
+        self.cancel_draft_complaint = cancel_draft_complaint
+        self.cancel_complaint = cancel_complaint
+        self.list_my_orders = list_my_orders
         self.read_file = read_file
         self.enterprise_skills = _load_enterprise_skills()
-        descriptions = {
-            "rag-agent": "Tra cứu bằng chứng tài liệu DOCX/TXT/PDF bằng LlamaIndex, trả nguồn [S...].",
-            "analyst-agent": "So sánh, phân tích bằng chứng được giao, tính toán số học và tính toán ngày tháng/lịch trình.",
-            "tracking-agent": "Tra cứu định vị hành trình, trạng thái bưu gửi VNPost theo mã vận đơn (ItemCode).",
-            "post-office-agent": "Tra cứu mạng lưới bưu cục, tìm bưu điện gần nhất qua GPS find_nearest_post_office hoặc địa chỉ lookup_post_office và chỉ đường Google Maps.",
-            "booking-agent": "Tạo đơn gửi hàng bưu phẩm/bưu kiện, tính cước thể tích (chuẩn chia 6000), tạo nháp, sửa đổi và chốt đơn sau khi khách xác nhận (HITL).",
-            "complaint-agent": "Tiếp nhận khiếu nại, đối chiếu thời hiệu 06/12 tháng, ước tính bồi thường, sửa đổi và lập Ticket khiếu nại sau khi khách duyệt (HITL).",
-            "writer-agent": "Soạn/tóm tắt nội dung từ bằng chứng có sẵn, giữ nguồn và số liệu.",
+
+        from app.agents.subagents import get_subagents_registry
+        subagents_registry = get_subagents_registry()
+
+        tools_map = {
+            "rag-agent": [search_documents, read_file],
+            "analyst-agent": [calculate, calculate_date, read_file],
+            "tracking-agent": [track_item],
+            "post-office-agent": [lookup_post_office, find_nearest_post_office],
+            "booking-agent": [create_draft_booking, update_draft_booking, confirm_booking, cancel_draft_booking, cancel_booking, list_my_orders],
+            "complaint-agent": [create_draft_complaint, update_draft_complaint, confirm_complaint, cancel_draft_complaint, cancel_complaint, list_my_orders],
+            "writer-agent": [read_file],
         }
-        roles = {
-            "rag-agent": ("rag", prompts.RAG, [search_documents, read_file]),
-            "analyst-agent": ("analyst", prompts.ANALYST, [calculate, calculate_date, read_file]),
-            "tracking-agent": ("tracking", prompts.TRACKING, [track_item]),
-            "post-office-agent": ("post_office", prompts.POST_OFFICE, [lookup_post_office, find_nearest_post_office]),
-            "booking-agent": ("booking", prompts.BOOKING, [create_draft_booking, update_draft_booking, confirm_booking]),
-            "complaint-agent": ("complaint", prompts.COMPLAINT, [create_draft_complaint, update_draft_complaint, confirm_complaint]),
-            "writer-agent": ("writer", prompts.WRITER, [read_file]),
-        }
-        self.subagents = {}
-        for name, (role, prompt, tools) in roles.items():
-            inner = create_agent(model=create_model(settings, role, clients), tools=tools, system_prompt=prompt)
-            self.subagents[name] = self._tracked_agent(name, inner)
 
         class SubagentProxy(Runnable):
             def __init__(self, harness, name):
@@ -344,15 +405,27 @@ class AgentHarness:
                 target = self.harness.subagents[self.name]
                 return await target.ainvoke(input, config=config, **kwargs)
 
-        specs = [
-            {
-                "name": n,
-                "description": descriptions[n],
-                "runnable": SubagentProxy(self, n),
-                "mode": "fork" if n == "writer-agent" else "isolated",
-            }
-            for n in self.subagents
-        ]
+        self.subagents = {}
+        specs = []
+        for name, meta in subagents_registry.items():
+            role = meta["role"]
+            tools = tools_map.get(name, [])
+            prompt = meta["prompt"]
+            temp = meta.get("temperature", 0.0)
+            max_tok = meta.get("max_tokens", 2500)
+
+            inner = create_agent(
+                model=create_model(settings, role, clients, temperature=temp, max_tokens=max_tok),
+                tools=tools,
+                system_prompt=prompt,
+            )
+            self.subagents[name] = self._tracked_agent(name, inner)
+            specs.append({
+                "name": name,
+                "description": meta["description"],
+                "runnable": SubagentProxy(self, name),
+                "mode": meta.get("mode", "isolated"),
+            })
 
         @tool
         async def parallel_tasks(tasks: Annotated[list[TaskSpec], Field(min_length=1, max_length=8)]) -> str:
@@ -391,7 +464,15 @@ class AgentHarness:
         self.parallel_tasks = parallel_tasks
 
         if getattr(settings, "checkpointer_enabled", True):
-            if getattr(settings, "checkpointer_type", "memory") == "sqlite":
+            cp_type = getattr(settings, "checkpointer_type", "memory")
+            pg_url = getattr(settings, "postgres_url", "")
+            if cp_type == "postgres" and pg_url:
+                self.checkpointer = PersistentPostgresCheckpointer(
+                    postgres_url=pg_url,
+                    min_size=getattr(settings, "postgres_min_connections", 1),
+                    max_size=getattr(settings, "postgres_max_connections", 10),
+                )
+            elif cp_type == "sqlite":
                 db_path = settings.data_dir / "checkpoints.sqlite3"
                 self.checkpointer = PersistentSqliteCheckpointer(db_path)
             else:
@@ -402,8 +483,13 @@ class AgentHarness:
 
         state_backend = StateBackend()
         self.graph = create_deep_agent(
-            model=create_model(settings, "supervisor", clients), system_prompt=prompts.SUPERVISOR,
-            tools=[calculate_date, find_nearest_post_office, lookup_post_office, create_draft_booking, update_draft_booking, confirm_booking, create_draft_complaint, update_draft_complaint, confirm_complaint, parallel_tasks], subagents=specs, backend=state_backend,
+            model=create_model(settings, "supervisor", clients), system_prompt=_get_supervisor_prompt(),
+            tools=[
+                calculate_date, find_nearest_post_office, lookup_post_office,
+                create_draft_booking, update_draft_booking, confirm_booking, cancel_draft_booking, cancel_booking,
+                create_draft_complaint, update_draft_complaint, confirm_complaint, cancel_draft_complaint, cancel_complaint,
+                list_my_orders, parallel_tasks,
+            ], subagents=specs, backend=state_backend,
             skills=["/skills/"],
             checkpointer=self.checkpointer,
             middleware=[FilesystemMiddleware(backend=state_backend, tools=["read_file"])],
@@ -413,6 +499,11 @@ class AgentHarness:
     async def close(self):
         if self.checkpointer and hasattr(self.checkpointer, "aclose"):
             await self.checkpointer.aclose()
+        try:
+            from app.core.postgres import close_postgres_pools
+            await close_postgres_pools()
+        except Exception:
+            pass
 
 
 

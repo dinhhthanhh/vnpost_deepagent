@@ -2,6 +2,8 @@ import json
 from unittest.mock import patch
 
 from app.agents.postal_actions import (
+    cancel_booking,
+    cancel_complaint,
     cancel_draft_booking,
     cancel_draft_complaint,
     confirm_booking,
@@ -12,6 +14,7 @@ from app.agents.postal_actions import (
     get_draft_booking,
     get_draft_complaint,
     get_session_drafts,
+    list_my_orders,
     prune_expired_drafts,
     update_draft_booking,
     update_draft_complaint,
@@ -630,5 +633,232 @@ def test_session_scoped_draft_isolation():
     beta_ids = [d["draft_id"] for d in drafts_beta["bookings"]]
     assert b2_id in beta_ids
     assert b1_id not in beta_ids
+
+
+def test_cancel_booking_suite():
+    """Kiểm tra chức năng hủy đơn hàng: hủy đơn nháp và hủy đơn đã xác nhận có mã vận đơn."""
+    # 1. Hủy đơn nháp
+    b_draft = json.loads(create_draft_booking(
+        sender_name="Trần Văn C", sender_phone="0911223344", sender_address="Hà Nội",
+        receiver_name="Lê Thị D", receiver_phone="0988776655", receiver_address="Hải Phòng",
+        weight_grams=500,
+    ))
+    draft_id = b_draft["draft_id"]
+
+    res_cancel_draft = json.loads(cancel_booking(draft_id, reason="Khách đổi địa chỉ nhận"))
+    assert res_cancel_draft["status"] == "cancelled"
+    assert res_cancel_draft["cancellation_type"] == "draft"
+    assert get_draft_booking(draft_id)["status"] == "CANCELLED"
+
+    # 2. Hủy đơn đã xác nhận (có mã vận đơn UPU)
+    b_confirmed = json.loads(create_draft_booking(
+        sender_name="Phạm Văn E", sender_phone="0912345678", sender_address="Hồ Chí Minh",
+        receiver_name="Đặng Thị F", receiver_phone="0987654321", receiver_address="Cần Thơ",
+        weight_grams=1200,
+    ))
+    draft_id_2 = b_confirmed["draft_id"]
+    confirm_data = json.loads(confirm_booking(draft_id_2))
+    assert confirm_data["status"] == "confirmed"
+    item_code = confirm_data["item_code"]
+
+    res_cancel_confirmed = json.loads(cancel_booking(item_code, reason="Khách tự mang ra bưu cục gửi"))
+    assert res_cancel_confirmed["status"] == "cancelled"
+    assert res_cancel_confirmed["cancellation_type"] == "confirmed_order"
+    assert res_cancel_confirmed["item_code"] == item_code
+    assert get_draft_booking(draft_id_2)["status"] == "CANCELLED_BY_CUSTOMER"
+
+    # Hủy lại -> đã hủy
+    re_cancel = json.loads(cancel_booking(item_code))
+    assert re_cancel["status"] == "already_cancelled"
+
+
+def test_cross_session_phone_identity_verification():
+    """Kiểm tra lớp bảo mật đối chiếu số điện thoại khi hủy đơn xuyên session (Cross-Session Identity Matching)."""
+    from app.agents.postal_actions import _set_current_session_context, _reset_current_session_context
+
+    # Session 1: Người gửi tạo đơn ở phiên A
+    t1 = _set_current_session_context("vnpost", "session-device-alice-1", "req-1")
+    b = json.loads(create_draft_booking(
+        sender_name="Nguyễn Văn An", sender_phone="0901234567", sender_address="Hà Nội",
+        receiver_name="Trần Thị Bình", receiver_phone="0987654321", receiver_address="Hải Phòng",
+        weight_grams=500,
+    ))
+    draft_id = b["draft_id"]
+
+    # Session 2: Yêu cầu hủy ở phiên B (khác session_id)
+    t2 = _set_current_session_context("vnpost", "session-device-stranger-2", "req-2")
+
+    # 1. Thử hủy mà không cung cấp SĐT -> Bắt buộc xác minh
+    res_req = json.loads(cancel_booking(draft_id))
+    assert res_req["status"] == "requires_verification"
+    assert "...4567" in res_req["message"]
+
+    # 2. Thử hủy với SĐT sai (ví dụ 9999) -> Từ chối xác thực thất bại
+    res_fail = json.loads(cancel_booking(draft_id, verification_phone="9999"))
+    assert res_fail["status"] == "verification_failed"
+
+    # 3. Hủy với đúng 4 số cuối của SĐT người gửi (4567) -> Thành công
+    res_ok = json.loads(cancel_booking(draft_id, verification_phone="4567"))
+    assert res_ok["status"] == "cancelled"
+    assert get_draft_booking(draft_id)["status"] == "CANCELLED"
+
+    _reset_current_session_context(t2)
+    _reset_current_session_context(t1)
+    _reset_current_session_context()
+
+
+
+def test_cancel_complaint_suite():
+    """Kiểm tra chức năng hủy phiếu khiếu nại: hủy phiếu nháp và rút phiếu đã nộp."""
+    c_draft = json.loads(create_draft_complaint(
+        item_code="EB888999111VN", customer_name="Vũ Hoàng", customer_phone="0901234567",
+        complaint_type="Phát chậm", description="Chậm 2 ngày so với cam kết",
+    ))
+    draft_ticket_id = c_draft["draft_ticket_id"]
+
+    # Hủy phiếu khiếu nại nháp
+    res_cancel_c = json.loads(cancel_complaint(draft_ticket_id, reason="Bưu phẩm đã được phát"))
+    assert res_cancel_c["status"] == "cancelled"
+    assert res_cancel_c["cancellation_type"] == "draft"
+
+    # Nộp phiếu khiếu nại rồi rút
+    c_submitted = json.loads(create_draft_complaint(
+        item_code="EB888999222VN", customer_name="Ngô Thanh", customer_phone="0907654321",
+        complaint_type="Hư hỏng", description="Vỡ hộp hàng",
+    ))
+    draft_t2 = c_submitted["draft_ticket_id"]
+    conf_c = json.loads(confirm_complaint(draft_t2))
+    assert conf_c["status"] == "submitted"
+    ticket_num = conf_c["ticket_number"]
+
+    res_cancel_submitted = json.loads(cancel_complaint(ticket_num, reason="Người nhận đã thỏa thuận xong với người gửi"))
+    assert res_cancel_submitted["status"] == "cancelled"
+    assert res_cancel_submitted["cancellation_type"] == "submitted_ticket"
+
+
+def test_list_my_orders_in_session():
+    """Kiểm tra chức năng tra cứu danh sách đơn hàng và khiếu nại trong phiên (list_my_orders)."""
+    from app.core.context import RunContext, current_run
+
+    ctx = RunContext(tenant="tenant-orders", request_id="req-orders-1", max_parallel=2, max_tasks=5, session_id="sess-orders-99")
+    tok = current_run.set(ctx)
+    try:
+        # Tạo 1 đơn nháp
+        create_draft_booking(
+            sender_name="Người Gửi A", sender_phone="091", sender_address="Hà Nội",
+            receiver_name="Người Nhận B", receiver_phone="092", receiver_address="Hải Phòng",
+            weight_grams=300,
+        )
+        # Tạo 1 đơn đã xác nhận (ở lượt phản hồi tiếp theo của khách)
+        d2 = json.loads(create_draft_booking(
+            sender_name="Người Gửi C", sender_phone="093", sender_address="Đà Nẵng",
+            receiver_name="Người Nhận D", receiver_phone="094", receiver_address="Huế",
+            weight_grams=600,
+        ))
+        ctx.created_draft_ids.clear()
+        ctx.user_message = "Tôi xác nhận tạo đơn hàng này"
+        conf = json.loads(confirm_booking(d2["draft_id"]))
+        assert conf["status"] == "confirmed"
+
+        # Gọi list_my_orders
+        res = json.loads(list_my_orders())
+        assert res["status"] == "success"
+        assert res["active_drafts_count"] >= 1
+        assert res["confirmed_orders_count"] >= 1
+        assert "Đơn hàng nháp chờ duyệt" in res["summary"]
+        assert "Đơn hàng đã xác nhận" in res["summary"]
+    finally:
+        current_run.reset(tok)
+
+
+def test_multi_layer_hitl_confirmation_guard():
+    """Kiểm tra chốt chặn bảo vệ xác nhận đa tầng (Multi-layer Confirmation Guard)."""
+    from app.core.context import RunContext, current_run
+
+    ctx = RunContext(
+        tenant="default", request_id="req-guard-1", max_parallel=2, max_tasks=5,
+        session_id="sess-guard-1", user_message="Tạo giúp tôi đơn gửi hàng từ HN vào SG",
+    )
+    tok = current_run.set(ctx)
+    try:
+        # 1. Tạo đơn nháp trong lượt hội thoại này
+        b_res = json.loads(create_draft_booking(
+            sender_name="Hoàng Nam", sender_phone="0912000111", sender_address="Hà Nội",
+            receiver_name="Minh Tú", receiver_phone="0987000222", receiver_address="Hồ Chí Minh",
+            weight_grams=1000,
+        ))
+        draft_id = b_res["draft_id"]
+        assert draft_id in ctx.created_draft_ids
+
+        # 2. Cố tình gọi confirm_booking trong CÙNG LƯỢT CHẠY -> Bị chốt chặn Turn-level HITL Guard từ chối
+        guard_res = json.loads(confirm_booking(draft_id))
+        assert guard_res["status"] == "hitl_required"
+        assert "Chốt chặn bảo vệ HITL" in guard_res["message"]
+    finally:
+        current_run.reset(tok)
+
+    # 3. Lượt tiếp theo: Khách nhắn có ý định hủy/chỉnh sửa -> Bị chốt chặn Intent Guard từ chối
+    ctx2 = RunContext(
+        tenant="default", request_id="req-guard-2", max_parallel=2, max_tasks=5,
+        session_id="sess-guard-1", user_message="Khoan đã, tôi muốn hủy đơn hoặc sửa địa chỉ",
+    )
+    tok2 = current_run.set(ctx2)
+    try:
+        guard_res2 = json.loads(confirm_booking(draft_id))
+        assert guard_res2["status"] == "hitl_rejected_or_modifying"
+        assert "Khách hàng chưa xác nhận" in guard_res2["message"]
+    finally:
+        current_run.reset(tok2)
+
+    # 4. Lượt tiếp theo: Khách đồng ý xác nhận -> Xác nhận thành công
+    ctx3 = RunContext(
+        tenant="default", request_id="req-guard-3", max_parallel=2, max_tasks=5,
+        session_id="sess-guard-1", user_message="Tôi xác nhận đồng ý tạo đơn hàng",
+    )
+    tok3 = current_run.set(ctx3)
+    try:
+        confirm_ok = json.loads(confirm_booking(draft_id))
+        assert confirm_ok["status"] == "confirmed"
+        assert confirm_ok["item_code"].startswith("EB")
+    finally:
+        current_run.reset(tok3)
+
+
+def test_action_api_endpoints():
+    """Kiểm tra các endpoint RESTful /api/actions/orders, confirm, cancel qua FastAPI TestClient."""
+    from fastapi.testclient import TestClient
+    from app.api.main import create_app
+    from app.core.config import Settings
+
+    settings = Settings(checkpointer_enabled=False)
+    with TestClient(create_app(settings)) as client:
+        # 1. Tạo trước 1 đơn nháp
+        d = json.loads(create_draft_booking(
+            sender_name="API Sender", sender_phone="0911", sender_address="Hà Nội",
+            receiver_name="API Recv", receiver_phone="0922", receiver_address="Đà Nẵng",
+            weight_grams=400,
+        ))
+        draft_id = d["draft_id"]
+
+        # 2. Xác nhận qua POST /api/actions/confirm
+        res_conf = client.post("/api/actions/confirm", json={"action_type": "booking", "draft_id": draft_id})
+        assert res_conf.status_code == 200
+        conf_data = res_conf.json()
+        assert conf_data["status"] == "confirmed"
+        item_code = conf_data["item_code"]
+
+        # 3. Hủy đơn qua POST /api/actions/cancel
+        res_cancel = client.post("/api/actions/cancel", json={"action_type": "booking", "target_id": item_code, "reason": "Hủy qua UI"})
+        assert res_cancel.status_code == 200
+        cancel_data = res_cancel.json()
+        assert cancel_data["status"] == "cancelled"
+
+        # 4. Tra cứu qua GET /api/actions/orders
+        res_orders = client.get("/api/actions/orders")
+        assert res_orders.status_code == 200
+        orders_data = res_orders.json()
+        assert "bookings" in orders_data
+        assert "complaints" in orders_data
+
 
 

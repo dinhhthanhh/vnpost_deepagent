@@ -1,0 +1,16 @@
+[
+  {
+    "id": "BOOK-001",
+    "query": "Tôi muốn tạo đơn gửi hàng từ Hà Nội đi Đà Nẵng, người nhận Nguyễn Văn A, sđt 0901234567",
+    "expected_action": "booking_draft",
+    "expected_keywords": ["đơn", "xác nhận", "Hà Nội", "Đà Nẵng"],
+    "description": "Tạo đơn hàng nháp đầy đủ thông tin"
+  },
+  {
+    "id": "BOOK-002",
+    "query": "Hủy đơn hàng BOOK-1234 giúp tôi",
+    "expected_action": "cancel_draft",
+    "expected_keywords": ["hủy", "BOOK-1234"],
+    "description": "Yêu cầu hủy đơn hàng nháp"
+  }
+]

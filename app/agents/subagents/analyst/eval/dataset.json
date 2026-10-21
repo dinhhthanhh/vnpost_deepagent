@@ -1,0 +1,8 @@
+[
+  {
+    "id": "ANALYST-001",
+    "query": "Phân tích xem đơn hàng VN123456789VN có giao đúng hẹn cam kết SLA không?",
+    "expected_keywords": ["SLA", "thời gian", "cam kết", "phân tích"],
+    "description": "Đánh giá cam kết SLA thời gian giao hàng"
+  }
+]

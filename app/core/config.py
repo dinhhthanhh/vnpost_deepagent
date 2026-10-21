@@ -99,7 +99,10 @@ class Settings(BaseSettings):
     # Specific S3 domains / bucket endpoints allowed for ingest (empty means allow public domains if SSRF-safe)
     allowed_s3_domains: str = Field("", validation_alias=AliasChoices("ALLOWED_S3_DOMAINS", "allowed_s3_domains"))
     checkpointer_enabled: bool = Field(True, validation_alias=AliasChoices("CHECKPOINTER_ENABLED", "checkpointer_enabled"))
-    checkpointer_type: Literal["memory", "sqlite"] = Field("memory", validation_alias=AliasChoices("CHECKPOINTER_TYPE", "checkpointer_type"))
+    checkpointer_type: Literal["memory", "sqlite", "postgres"] = Field("memory", validation_alias=AliasChoices("CHECKPOINTER_TYPE", "checkpointer_type"))
+    postgres_url: str = Field("", validation_alias=AliasChoices("POSTGRES_URL", "postgres_url"))
+    postgres_min_connections: int = Field(1, ge=1, le=20, validation_alias=AliasChoices("POSTGRES_MIN_CONNECTIONS", "postgres_min_connections"))
+    postgres_max_connections: int = Field(10, ge=1, le=100, validation_alias=AliasChoices("POSTGRES_MAX_CONNECTIONS", "postgres_max_connections"))
 
     # Short clean property aliases
     @property

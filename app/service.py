@@ -156,6 +156,7 @@ class ChatService:
             queue=queue,
             stream_voice=bool(request.voice and request.stream_voice),
             voice_name=request.voice_name or self.settings.tts_voice,
+            user_message=request.message,
         )
         run.event("start", request_id=request_id, session_id=session_id)
         token = current_run.set(run)
@@ -306,6 +307,18 @@ class ChatService:
             return result
         finally:
             current_run.reset(token)
+
+    async def warmup(self):
+        """Khởi động ấm (warmup) dịch vụ để xóa bỏ độ trễ cold-start ở lượt gọi đầu tiên."""
+        try:
+            from app.router.fastpath import local_answer
+            local_answer("xin chào", chitchat=True)
+            kb = await asyncio.to_thread(self.knowledge.for_tenant, "default")
+            if kb:
+                await asyncio.to_thread(kb.retrieve, "VNPost chuyển phát nhanh", 1)
+            logger.info("ChatService warmup completed successfully.")
+        except Exception as exc:
+            logger.warning("ChatService warmup non-fatal exception: %s", exc)
 
     async def close(self):
         await self.harness.close()

@@ -11,7 +11,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api.schemas import ChatRequest, S3IngestRequest, SpeechRequest
+from app.api.schemas import ActionCancelRequest, ActionConfirmRequest, ChatRequest, S3IngestRequest, SpeechRequest
 from app.core.config import Settings
 from app.service import ChatService
 from app.tts import TTSError
@@ -24,10 +24,14 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
 
     @asynccontextmanager
     async def lifespan(app):
-        app.state.service = service or ChatService(settings)
+        svc = service or ChatService(settings)
+        app.state.service = svc
+        warmup_task = asyncio.create_task(svc.warmup())
         try:
             yield
         finally:
+            if not warmup_task.done():
+                warmup_task.cancel()
             await app.state.service.close()
 
     app = FastAPI(title="VNPost Deep Agent Chatbot", version="1.0.0", lifespan=lifespan)
@@ -53,12 +57,22 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
         return request.app.state.service
 
     @app.get("/api/health")
+    @app.get("/healthz")
     async def health():
         return {"status": "ok", "router_enabled": settings.router_enabled,
                 "embedding_provider": settings.embedding_provider,
                 "reranker_enabled": settings.reranker_enabled,
                 "tts_enabled": settings.tts_enabled,
                 "upstream_status": "not_probed", "version": "1.0.0"}
+
+    @app.get("/.well-known/agent.json")
+    @app.get("/a2a/agent_card.json")
+    async def get_agent_card():
+        card_file = Path("agent_card.json")
+        if card_file.is_file():
+            return json.loads(card_file.read_text(encoding="utf-8"))
+        return {"name": "VNPost Deep Agent Mipo", "version": "1.0.0", "description": "Enterprise VNPost Postal Assistant"}
+
 
     @app.post("/api/chat")
     async def chat(body: ChatRequest, scope=Depends(tenant), svc=Depends(get_service)):
@@ -416,6 +430,36 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
             raise HTTPException(502, f"Lỗi chuyển đổi giọng nói: {exc}") from exc
         finally:
             await file.close()
+
+    @app.get("/api/actions/orders")
+    async def get_orders(session_id: str | None = None, scope=Depends(tenant)):
+        """Tra cứu danh sách đơn hàng, đơn nháp và phiếu khiếu nại trong phiên (session)."""
+        from app.agents.postal_actions import get_session_drafts
+        return get_session_drafts(session_id=session_id, tenant=scope)
+
+    @app.post("/api/actions/confirm")
+    async def confirm_action(body: ActionConfirmRequest, scope=Depends(tenant)):
+        """Xác nhận trực tiếp một bản nháp đơn hàng hoặc khiếu nại (Human-in-the-Loop approval)."""
+        from app.agents.postal_actions import confirm_booking, confirm_complaint
+        if body.action_type == "booking":
+            res_str = confirm_booking(body.draft_id, confirmed_by_user=True)
+        elif body.action_type == "complaint":
+            res_str = confirm_complaint(body.draft_id, confirmed_by_user=True)
+        else:
+            raise HTTPException(400, "action_type không hợp lệ (chấp nhận 'booking' hoặc 'complaint')")
+        return json.loads(res_str)
+
+    @app.post("/api/actions/cancel")
+    async def cancel_action(body: ActionCancelRequest, scope=Depends(tenant)):
+        """Hủy trực tiếp một đơn hàng hoặc khiếu nại."""
+        from app.agents.postal_actions import cancel_booking, cancel_complaint
+        if body.action_type == "booking":
+            res_str = cancel_booking(item_code_or_draft_id=body.target_id, reason=body.reason, verification_phone=body.verification_phone)
+        elif body.action_type == "complaint":
+            res_str = cancel_complaint(ticket_id_or_draft_id=body.target_id, reason=body.reason, verification_phone=body.verification_phone)
+        else:
+            raise HTTPException(400, "action_type không hợp lệ (chấp nhận 'booking' hoặc 'complaint')")
+        return json.loads(res_str)
 
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if dist.is_dir():

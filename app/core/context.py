@@ -27,6 +27,8 @@ class RunContext:
     # The service emits final, validated TTS segments after validation.
     stream_voice: bool = False
     voice_name: str | None = None
+    user_message: str | None = None
+    created_draft_ids: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         self.slots = asyncio.Semaphore(self.max_parallel)

@@ -26,8 +26,9 @@ _TEMPORAL_CALC = re.compile(
     r"|tuần\s+sau\s+nữa"
     r"|\b\d{1,2}[/\-.]\d{1,2}(?:[/\-.]\d{2,4})?.*?(?:thứ\s+mấy|ngày\s+mấy|ngày\s+bao\s+nhiêu|rơi\s+vào)"
     r"|(?:năm\s+sau|năm\s+tới|năm\s+ngoái|năm\s+trước).*?(?:thứ\s+mấy|ngày\s+mấy|ngày\s+bao\s+nhiêu)"
-    r"|(?:\d+\s+ngày|\d+\s+tuần)\s+(?:nữa|trước|sau).*?(?:thứ\s+mấy|ngày\s+mấy|ngày\s+bao\s+nhiêu|là\s+ngày)"
-    r"|(?:còn\s+)?(?:bao\s+nhiêu|mấy)\s+ngày.*?(?:đến|tới|nữa)"
+    r"|(?:\d+\s+(?:ngày|tuần|tháng|năm))\s+(?:nữa|trước|sau).*?(?:thứ\s+mấy|ngày\s+mấy|ngày\s+bao\s+nhiêu|là\s+ngày)?"
+    r"|(?:sau\s+)\d+\s+(?:ngày|tuần|tháng|năm).*?(?:thứ\s+mấy|ngày\s+mấy|ngày\s+bao\s+nhiêu|là\s+ngày)?"
+    r"|(?:còn\s+)?(?:bao\s+nhiêu|mấy)\s+(?:ngày|tuần|tháng).*?(?:đến|tới|nữa)"
     r"|ngày\s+\d{1,2}[/\-.]\d{1,2}.*?thứ\s+mấy"
     r")"
 )
