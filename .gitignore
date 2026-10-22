@@ -29,6 +29,7 @@ scripts/generate_understand_batches.py
 Hướng dẫn cài đặt và chạy*.md
 Mipo*.md
 !Mipo báo cáo kỹ thuật Deep Agent, RAG LlamaIndex và TTS.md
+agent.template
 agent.template/
 .postman/
 reference/
