@@ -89,11 +89,7 @@ class SpeechTranscriber:
                 logger.warning("Upstream STT request failed: %s", exc)
 
         # 2. Thử nghiệm trích xuất qua Gemini Vision/Multimodal nếu dùng Gemini API key
-        if (
-            api_key
-            and "googleapis.com" in self.settings.llm_base_url
-            and self.settings.demo_mode is False
-        ):
+        if api_key and "googleapis.com" in self.settings.llm_base_url:
             try:
                 import base64
 

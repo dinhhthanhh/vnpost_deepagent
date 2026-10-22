@@ -38,7 +38,7 @@ for record in records:
     results.append({"id": record.get("id"), "passed": passed, "rank": rank, "latency_ms": delays[-1], "returned_chunks": len(hits)})
 answerable = [r for r, original in zip(results, records, strict=True) if not original.get("no_answer")]
 negative = [r for r, original in zip(results, records, strict=True) if original.get("no_answer")]
-report = {"demo": settings.demo_mode, "embedding_provider": settings.embedding_provider,
+report = {"embedding_provider": settings.embedding_provider,
           "questions": len(results), "top_k": settings.retrieval_top_k,
           "pass_rate": sum(r["passed"] for r in results) / len(results),
           "recall_at_k": sum(r["passed"] for r in answerable) / len(answerable) if answerable else None,

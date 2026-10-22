@@ -250,7 +250,6 @@ Hệ thống được cấu hình qua file `.env`. Mẫu [`.env.example`](file:/
 
 | Nhóm cấu hình | Các biến tiêu biểu | Mô tả & Khuyến nghị Production |
 |---|---|---|
-| **Chế độ chạy** | `DEMO_MODE` | Đặt `false` để kích hoạt kết nối LLM thật và Deep Agent đầy đủ. |
 | **Mô hình LLM chính** | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | Hỗ trợ mọi endpoint OpenAI-compatible (OpenAI, Gemini via proxy, vLLM, Ollama). |
 | **Embedding & RAG** | `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL` | Hỗ trợ cụm GPU nội bộ `BAAI/bge-m3` tại `https://ai.vnpost.vn/vllm-bge-m3/v1` (1024 dims), hoặc `bkai-foundation-models/vietnamese-bi-encoder`. |
 | **Xếp hạng lại** | `RERANKER_ENABLED`, `RERANKER_MODEL` | Hỗ trợ Cross-Encoder `Qwen/Qwen3-Reranker-8B` tại `https://ai.vnpost.vn/vllm-qwen3-reranker-8b/rerank` (hoặc `BAAI/bge-reranker-v2-m3`). |

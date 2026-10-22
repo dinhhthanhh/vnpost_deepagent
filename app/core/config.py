@@ -375,13 +375,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "CHUNK_SIZE must not exceed EMBEDDING_MAX_LENGTH for vietnamese-bi-encoder"
             )
-        if self.demo_mode is False:
+        is_live = bool(
+            self.llm_api_key.get_secret_value() and not self.llm_model.startswith("your-")
+        )
+        if self.demo_mode is False or (is_live and self.demo_mode is not True):
             if not keys:
-                raise ValueError("Live mode requires API_KEYS_JSON")
+                raise ValueError("Production mode requires API_KEYS_JSON")
             if not self.llm_api_key.get_secret_value() or self.llm_model.startswith("your-"):
-                raise ValueError("Live mode requires LLM_API_KEY and a real LLM_MODEL")
+                raise ValueError("Production mode requires LLM_API_KEY and a real LLM_MODEL")
             if self.embedding_provider == "hash" and not self.allow_hash:
-                raise ValueError("Hash embeddings are demo-only; configure a semantic embedding")
+                raise ValueError("Hash embeddings are not allowed; configure a semantic embedding")
             if (
                 self.embedding_provider == "openai"
                 and not self.embedding_api_key.get_secret_value()

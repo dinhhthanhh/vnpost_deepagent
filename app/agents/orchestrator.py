@@ -105,10 +105,6 @@ def create_model(
     tags = [f"role:{role}"]
     api_key = settings.llm_api_key.get_secret_value()
     if not api_key:
-        if settings.demo_mode is False:
-            raise RuntimeError(
-                "Chế độ Live (DEMO_MODE=false) yêu cầu cấu hình LLM_API_KEY hợp lệ trong .env."
-            )
         return DemoChatModel(role=role, callbacks=callbacks, tags=tags)
     thinking_on = getattr(settings, "llm_thinking", False)
     extra_body = None

@@ -26,8 +26,6 @@ def probe(value: str) -> str:
 
 async def main():
     settings = Settings()
-    if settings.demo_mode:
-        raise SystemExit("Set DEMO_MODE=false and configure live providers first")
     report = {}
     try:
         model = create_model(settings, "supervisor").bind_tools([probe], tool_choice="probe")
