@@ -63,7 +63,7 @@ class SafeStreamBuffer:
 class ChatService:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.store = Store(settings.data_dir)
+        self.store = Store(settings.data_dir, postgres_url=settings.postgres_url)
         self.providers = ProviderClients(settings)
         self.knowledge = KnowledgeBases(settings, self.providers)
         self.harness = AgentHarness(settings, self.knowledge, self.providers)

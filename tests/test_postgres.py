@@ -78,3 +78,49 @@ def test_session_drafts_fallback_with_mock():
     record = get_draft_booking(draft_id)
     assert record is not None
     assert record["draft_id"] == draft_id
+
+
+def test_store_sqlite_fallback(tmp_path):
+    """Kiểm tra Store hoạt động ở chế độ fallback SQLite khi không có postgres_url."""
+    from app.rag.store import Store
+
+    store = Store(tmp_path, postgres_url=None)
+    assert not store.use_postgres
+    assert store.db_path.is_file()
+
+    store.save_turn("tenant-x", "sess-1", "Hello", "Hi there!", 10)
+    history = store.history("tenant-x", "sess-1")
+    assert len(history) == 2
+    assert history[0]["content"] == "Hello"
+
+    sessions = store.list_sessions("tenant-x")
+    assert len(sessions) == 1
+    assert sessions[0]["id"] == "sess-1"
+
+    store.delete_session("tenant-x", "sess-1")
+    assert len(store.list_sessions("tenant-x")) == 0
+
+
+def test_store_postgres_live(settings, tmp_path):
+    """Kiểm tra Store kết nối và thao tác bền vững trên PostgreSQL khi postgres_url được cấu hình."""
+    from app.rag.store import Store
+
+    if not settings.postgres_url:
+        return
+    store = Store(tmp_path, postgres_url=settings.postgres_url)
+    if not store.use_postgres:
+        return
+
+    test_sid = f"test-sess-pg-{tmp_path.name}"
+    store.save_turn("tenant-test", test_sid, "Tra cứu bưu gửi", "Dạ mã bưu gửi là gì ạ?", 16)
+    history = store.history("tenant-test", test_sid)
+    assert len(history) == 2
+    assert history[0]["content"] == "Tra cứu bưu gửi"
+
+    sessions = store.list_sessions("tenant-test")
+    assert any(s["id"] == test_sid for s in sessions)
+
+    store.delete_session("tenant-test", test_sid)
+    history_after = store.history("tenant-test", test_sid)
+    assert len(history_after) == 0
+

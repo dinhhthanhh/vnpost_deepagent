@@ -13,9 +13,16 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timezone
 from typing import Any
+
+if sys.platform == "win32":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        pass
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import (
@@ -98,6 +105,39 @@ CREATE TABLE IF NOT EXISTS draft_complaints (
 CREATE INDEX IF NOT EXISTS idx_draft_complaints_tenant_session ON draft_complaints(tenant, session_id);
 CREATE INDEX IF NOT EXISTS idx_draft_complaints_status ON draft_complaints(status);
 CREATE INDEX IF NOT EXISTS idx_draft_complaints_expires_at ON draft_complaints(expires_at);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    tenant VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(128) NOT NULL,
+    messages JSONB NOT NULL,
+    updated DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY (tenant, id)
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_tenant_updated ON sessions(tenant, updated DESC);
+
+CREATE TABLE IF NOT EXISTS replies (
+    tenant VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(128) NOT NULL,
+    payload JSONB NOT NULL,
+    created DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY (tenant, id)
+);
+CREATE INDEX IF NOT EXISTS idx_replies_tenant ON replies(tenant);
+
+CREATE TABLE IF NOT EXISTS audio (
+    tenant VARCHAR(64) NOT NULL DEFAULT 'default',
+    id VARCHAR(128) NOT NULL,
+    path TEXT NOT NULL,
+    created DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY (tenant, id)
+);
+
+CREATE TABLE IF NOT EXISTS embedding_cache (
+    key VARCHAR(64) PRIMARY KEY,
+    value BYTEA NOT NULL,
+    created_at DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_embedding_cache_created ON embedding_cache(created_at);
 """
 
 
@@ -513,3 +553,45 @@ def fetch_session_drafts_from_postgres(
         logger.debug("Lỗi fetch session drafts từ PostgreSQL: %s", exc)
 
     return {"bookings": bookings, "complaints": complaints}
+
+
+def purge_session_from_postgres(
+    tenant: str,
+    session_id: str,
+    postgres_url: str | None = None,
+) -> bool:
+    """Xóa triệt để toàn bộ dữ liệu drafts và checkpoints của phiên trong PostgreSQL."""
+    pool = get_sync_pool(postgres_url)
+    if not pool:
+        return False
+    try:
+        with pool.connection() as conn:
+            conn.execute(
+                "DELETE FROM draft_bookings WHERE tenant = %s AND session_id = %s;",
+                (tenant, session_id),
+            )
+            conn.execute(
+                "DELETE FROM draft_complaints WHERE tenant = %s AND session_id = %s;",
+                (tenant, session_id),
+            )
+            thread_pattern = f"{tenant}:{session_id}%"
+            try:
+                conn.execute(
+                    "DELETE FROM checkpoints WHERE thread_id LIKE %s;",
+                    (thread_pattern,),
+                )
+                conn.execute(
+                    "DELETE FROM checkpoint_blobs WHERE thread_id LIKE %s;",
+                    (thread_pattern,),
+                )
+                conn.execute(
+                    "DELETE FROM checkpoint_writes WHERE thread_id LIKE %s;",
+                    (thread_pattern,),
+                )
+            except Exception:
+                pass
+        return True
+    except Exception as exc:
+        logger.debug("Lỗi purge session từ PostgreSQL: %s", exc)
+        return False
+

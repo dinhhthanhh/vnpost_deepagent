@@ -923,6 +923,7 @@ class KnowledgeBases:
             make_embedding(settings, clients),
             settings.data_dir.resolve() / "embedding-cache.sqlite3",
             namespace,
+            postgres_url=settings.postgres_url,
         )
         self.items: dict[str, KnowledgeBase] = {}
         self.lock = threading.Lock()

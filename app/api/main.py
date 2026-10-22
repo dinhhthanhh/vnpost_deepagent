@@ -3,9 +3,16 @@ import hmac
 import json
 import logging
 import re
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
+
+if sys.platform == "win32":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        pass
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -465,6 +472,12 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
     ):
         sid = str(session_id).strip()
         await asyncio.to_thread(svc.store.delete_session, scope, sid)
+        if settings.postgres_url or settings.checkpointer_type == "postgres":
+            from app.core.postgres import purge_session_from_postgres
+
+            await asyncio.to_thread(
+                purge_session_from_postgres, scope, sid, settings.postgres_url
+            )
 
         async def cleanup_session_documents():
             try:
@@ -484,7 +497,12 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
 
         # Rebuilding the RAG snapshot can take seconds; it must not delay the UI.
         background_tasks.add_task(cleanup_session_documents)
-        return {"deleted": sid, "document_cleanup": "scheduled"}
+        return {
+            "deleted": sid,
+            "storage_deleted": True,
+            "document_cleanup": "scheduled",
+            "message": "Đã xóa hoàn toàn cuộc trò chuyện khỏi bộ lưu trữ.",
+        }
 
     @app.get("/api/replies/{request_id}")
     async def reply(request_id: str, scope=Depends(tenant), svc=Depends(get_service)):
