@@ -43,6 +43,7 @@ class CachedEmbedding(BaseEmbedding):
     Document vectors are cached on disk as compact float32 binary blobs.
     User queries are kept in an in-memory LRU cache to avoid persisting sensitive queries.
     """
+
     _inner: BaseEmbedding = PrivateAttr()
     _path: Path = PrivateAttr()
     _namespace: str = PrivateAttr()
@@ -55,7 +56,9 @@ class CachedEmbedding(BaseEmbedding):
         path.parent.mkdir(parents=True, exist_ok=True)
         with _connect(path) as db:
             db.execute("PRAGMA journal_mode=WAL")
-            db.execute("CREATE TABLE IF NOT EXISTS vectors (key TEXT PRIMARY KEY, value BLOB NOT NULL)")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS vectors (key TEXT PRIMARY KEY, value BLOB NOT NULL)"
+            )
 
     def _key(self, text: str, kind: str) -> str:
         return hashlib.sha256(f"{self._namespace}|{kind}|{text}".encode()).hexdigest()
@@ -88,10 +91,14 @@ class CachedEmbedding(BaseEmbedding):
             for i in range(0, len(unique_keys), 250):
                 batch = unique_keys[i : i + 250]
                 placeholders = ",".join("?" * len(batch))
-                cur = db.execute(f"SELECT key, value FROM vectors WHERE key IN ({placeholders})", batch)
+                cur = db.execute(
+                    f"SELECT key, value FROM vectors WHERE key IN ({placeholders})", batch
+                )
                 for r_key, r_val in cur.fetchall():
                     known[r_key] = _blob_to_vector(r_val)
-        missing = dict((key, text) for key, text in zip(keys, texts, strict=True) if key not in known)
+        missing = dict(
+            (key, text) for key, text in zip(keys, texts, strict=True) if key not in known
+        )
         if missing:
             vectors = self._inner.get_text_embedding_batch(list(missing.values()))
             if len(vectors) != len(missing):

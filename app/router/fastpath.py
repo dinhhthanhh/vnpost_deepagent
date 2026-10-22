@@ -1,4 +1,3 @@
-
 """Đường tắt không dùng LLM: phép tính thuần và xã giao.
 
 Chạy trước router, tốn dưới 1 ms. Chỉ trả lời khi CHẮC CHẮN:
@@ -6,6 +5,7 @@ Chạy trước router, tốn dưới 1 ms. Chỉ trả lời khi CHẮC CHẮN:
   * hoặc là câu xã giao (cờ do app.signals.analyze(...).chitchat quyết định).
 Mọi trường hợp còn lại trả None để đi router như cũ.
 """
+
 from __future__ import annotations
 
 import re
@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 try:
     from zoneinfo import ZoneInfo
+
     _VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 except Exception:
     _VN_TZ = timezone(timedelta(hours=7))
@@ -24,7 +25,7 @@ from app.agents.calculator import _vn_numbers, safe_calculate, safe_date_calcula
 
 @dataclass(frozen=True)
 class LocalAnswer:
-    kind: str   # "calc" | "chitchat"
+    kind: str  # "calc" | "chitchat"
     text: str
 
 
@@ -35,10 +36,47 @@ def _fold(text: str) -> str:
 
 # Từ đệm được phép đứng cạnh biểu thức (đã bỏ dấu).
 _FILLER = {
-    "tinh", "giup", "ho", "gium", "dum", "toi", "minh", "cho", "bang", "may", "bao", "nhieu",
-    "la", "ket", "qua", "cua", "phep", "dong", "vnd", "vn", "d", "va", "neu", "cach",
-    "hay", "vui", "long", "oi", "nhe", "a", "xin", "ban", "mipo", "giai", "thich",
-    "calculate", "what", "is", "please", "bằng", "mod",
+    "tinh",
+    "giup",
+    "ho",
+    "gium",
+    "dum",
+    "toi",
+    "minh",
+    "cho",
+    "bang",
+    "may",
+    "bao",
+    "nhieu",
+    "la",
+    "ket",
+    "qua",
+    "cua",
+    "phep",
+    "dong",
+    "vnd",
+    "vn",
+    "d",
+    "va",
+    "neu",
+    "cach",
+    "hay",
+    "vui",
+    "long",
+    "oi",
+    "nhe",
+    "a",
+    "xin",
+    "ban",
+    "mipo",
+    "giai",
+    "thich",
+    "calculate",
+    "what",
+    "is",
+    "please",
+    "bằng",
+    "mod",
 }
 _SPAN = re.compile(r"[\d(][\d\s+\-*/%().,]*")
 _DATE = re.compile(
@@ -52,9 +90,9 @@ _OPERATOR = re.compile(r"(?<=[\d)])\s*(?:\*\*|[+\-*/%])\s*(?=[\d(])")
 def _prepare(message: str) -> str:
     t = message.strip().lower()
     t = t.replace("×", "*").replace("÷", "/").replace("**", "^")
-    t = re.sub(r"(?<=[\d)])\s*x\s*(?=[\d(])", "*", t)          # 3002x2, 3 x 4
-    t = re.sub(r"(?<=\d)\s*:\s*(?=\d)", "/", t)                  # 10:2
-    t = re.sub(r"(?<=\d)\s*mod\s*(?=\d)", "%", t)               # 10 mod 3
+    t = re.sub(r"(?<=[\d)])\s*x\s*(?=[\d(])", "*", t)  # 3002x2, 3 x 4
+    t = re.sub(r"(?<=\d)\s*:\s*(?=\d)", "/", t)  # 10:2
+    t = re.sub(r"(?<=\d)\s*mod\s*(?=\d)", "%", t)  # 10 mod 3
     t = t.replace("^", "**")
     return t
 
@@ -107,75 +145,141 @@ def today_answer(message: str) -> LocalAnswer | None:
 
     # 1. Các câu hỏi về NGÀY MAI / MAI
     tomorrow_matches = {
-        "ngay mai la ngay bao nhieu", "ngay mai ngay bao nhieu", "ngay mai la ngay may", "ngay mai ngay may",
-        "ngay mai la ngay gi", "ngay mai la thu may", "ngay mai thu may", "mai la ngay bao nhieu",
-        "mai la ngay may", "mai ngay may", "mai la thu may", "mai thu may", "mai la ngay gi",
-        "ngay mai la ngay nao", "ngay mai", "mai la ngay gi", "mai ngay bao nhieu",
+        "ngay mai la ngay bao nhieu",
+        "ngay mai ngay bao nhieu",
+        "ngay mai la ngay may",
+        "ngay mai ngay may",
+        "ngay mai la ngay gi",
+        "ngay mai la thu may",
+        "ngay mai thu may",
+        "mai la ngay bao nhieu",
+        "mai la ngay may",
+        "mai ngay may",
+        "mai la thu may",
+        "mai thu may",
+        "mai la ngay gi",
+        "ngay mai la ngay nao",
+        "ngay mai",
+        "mai la ngay gi",
+        "mai ngay bao nhieu",
     }
     is_tomorrow = plain in tomorrow_matches or (
         ("ngay mai" in plain or plain.startswith("mai "))
-        and any(k in plain for k in ["ngay bao nhieu", "ngay may", "thu may", "ngay gi", "ngay nao"])
+        and any(
+            k in plain for k in ["ngay bao nhieu", "ngay may", "thu may", "ngay gi", "ngay nao"]
+        )
     )
     if is_tomorrow:
         now = datetime.now(_VN_TZ)
         tomorrow = now + timedelta(days=1)
         special = _SPECIAL_DATES.get(tomorrow.strftime("%d/%m"))
         suffix = f" — {special}" if special else ""
-        return LocalAnswer("date", f"Ngày mai là ngày **{tomorrow:%d/%m/%Y}** ({_WEEKDAYS_VN[tomorrow.weekday()]}){suffix}.")
+        return LocalAnswer(
+            "date",
+            f"Ngày mai là ngày **{tomorrow:%d/%m/%Y}** ({_WEEKDAYS_VN[tomorrow.weekday()]}){suffix}.",
+        )
 
     # 2. Các câu hỏi về HÔM QUA
     yesterday_matches = {
-        "hom qua la ngay bao nhieu", "hom qua ngay bao nhieu", "hom qua la ngay may", "hom qua ngay may",
-        "hom qua la ngay gi", "hom qua la thu may", "hom qua thu may", "hom qua la ngay nao", "hom qua",
+        "hom qua la ngay bao nhieu",
+        "hom qua ngay bao nhieu",
+        "hom qua la ngay may",
+        "hom qua ngay may",
+        "hom qua la ngay gi",
+        "hom qua la thu may",
+        "hom qua thu may",
+        "hom qua la ngay nao",
+        "hom qua",
     }
     is_yesterday = plain in yesterday_matches or (
-        "hom qua" in plain and any(k in plain for k in ["ngay bao nhieu", "ngay may", "thu may", "ngay gi", "ngay nao"])
+        "hom qua" in plain
+        and any(
+            k in plain for k in ["ngay bao nhieu", "ngay may", "thu may", "ngay gi", "ngay nao"]
+        )
     )
     if is_yesterday:
         now = datetime.now(_VN_TZ)
         yesterday = now - timedelta(days=1)
         special = _SPECIAL_DATES.get(yesterday.strftime("%d/%m"))
         suffix = f" — {special}" if special else ""
-        return LocalAnswer("date", f"Hôm qua là ngày **{yesterday:%d/%m/%Y}** ({_WEEKDAYS_VN[yesterday.weekday()]}){suffix}.")
+        return LocalAnswer(
+            "date",
+            f"Hôm qua là ngày **{yesterday:%d/%m/%Y}** ({_WEEKDAYS_VN[yesterday.weekday()]}){suffix}.",
+        )
 
     # 3. Các câu hỏi về NGÀY KIA / NGÀY MỐT
     after_tomorrow_matches = {
-        "ngay kia la ngay bao nhieu", "ngay kia ngay bao nhieu", "ngay kia la ngay may", "ngay kia ngay may",
-        "ngay kia la thu may", "ngay kia thu may", "ngay mot la ngay bao nhieu", "ngay mot ngay may", "ngay mot", "ngay kia",
+        "ngay kia la ngay bao nhieu",
+        "ngay kia ngay bao nhieu",
+        "ngay kia la ngay may",
+        "ngay kia ngay may",
+        "ngay kia la thu may",
+        "ngay kia thu may",
+        "ngay mot la ngay bao nhieu",
+        "ngay mot ngay may",
+        "ngay mot",
+        "ngay kia",
     }
     if plain in after_tomorrow_matches:
         now = datetime.now(_VN_TZ)
         target = now + timedelta(days=2)
         special = _SPECIAL_DATES.get(target.strftime("%d/%m"))
         suffix = f" — {special}" if special else ""
-        return LocalAnswer("date", f"Ngày kia (ngày mốt) là ngày **{target:%d/%m/%Y}** ({_WEEKDAYS_VN[target.weekday()]}){suffix}.")
+        return LocalAnswer(
+            "date",
+            f"Ngày kia (ngày mốt) là ngày **{target:%d/%m/%Y}** ({_WEEKDAYS_VN[target.weekday()]}){suffix}.",
+        )
 
     # 4. Các câu hỏi về GIỜ HIỆN TẠI
     time_matches = {
-        "bay gio la may gio", "bay gio may gio", "may gio roi", "may gio", "hien tai la may gio",
-        "thoi gian hien tai", "xem gio", "bay gio la may gio roi",
+        "bay gio la may gio",
+        "bay gio may gio",
+        "may gio roi",
+        "may gio",
+        "hien tai la may gio",
+        "thoi gian hien tai",
+        "xem gio",
+        "bay gio la may gio roi",
     }
     if plain in time_matches:
         now = datetime.now(_VN_TZ)
-        return LocalAnswer("date", f"Bây giờ là **{now:%H:%M}**, ngày **{now:%d/%m/%Y}** ({_WEEKDAYS_VN[now.weekday()]}).")
+        return LocalAnswer(
+            "date",
+            f"Bây giờ là **{now:%H:%M}**, ngày **{now:%d/%m/%Y}** ({_WEEKDAYS_VN[now.weekday()]}).",
+        )
 
     # 5. Các câu hỏi về HÔM NAY
     today_matches = {
-        "hom nay la ngay bao nhieu", "hom nay ngay bao nhieu", "hom nay la ngay may", "hom nay ngay may",
-        "ngay hom nay la ngay bao nhieu", "ngay hom nay la ngay may", "hom nay la ngay may",
-        "hom nay la ngay gi", "ngay hom nay la ngay gi", "hom nay la ngay nao",
-        "hom nay la thu may", "hom nay thu may", "thu may hom nay", "ngay may hom nay",
-        "hom nay", "ngay hom nay",
+        "hom nay la ngay bao nhieu",
+        "hom nay ngay bao nhieu",
+        "hom nay la ngay may",
+        "hom nay ngay may",
+        "ngay hom nay la ngay bao nhieu",
+        "ngay hom nay la ngay may",
+        "hom nay la ngay may",
+        "hom nay la ngay gi",
+        "ngay hom nay la ngay gi",
+        "hom nay la ngay nao",
+        "hom nay la thu may",
+        "hom nay thu may",
+        "thu may hom nay",
+        "ngay may hom nay",
+        "hom nay",
+        "ngay hom nay",
     }
     is_today = plain in today_matches or (
         ("hom nay" in plain or "ngay nay" in plain)
-        and any(k in plain for k in ["ngay bao nhieu", "ngay may", "thu may", "ngay gi", "ngay nao"])
+        and any(
+            k in plain for k in ["ngay bao nhieu", "ngay may", "thu may", "ngay gi", "ngay nao"]
+        )
     )
     if is_today:
         now = datetime.now(_VN_TZ)
         special = _SPECIAL_DATES.get(now.strftime("%d/%m"))
         suffix = f" — {special}" if special else ""
-        return LocalAnswer("date", f"Hôm nay là ngày **{now:%d/%m/%Y}** ({_WEEKDAYS_VN[now.weekday()]}){suffix}.")
+        return LocalAnswer(
+            "date", f"Hôm nay là ngày **{now:%d/%m/%Y}** ({_WEEKDAYS_VN[now.weekday()]}){suffix}."
+        )
 
     return None
 
@@ -187,11 +291,19 @@ def try_modulo(message: str) -> LocalAnswer | None:
     f = _fold(message)
 
     # 1. Mẫu: "tìm số dư khi chia A cho B"
-    m1 = re.search(r"(?:tim\s+)?so\s+du\s+(?:khi\s+)?chia\s+(\d+(?:[.,]\d+)?)\s+cho\s+(\d+(?:[.,]\d+)?)", f)
+    m1 = re.search(
+        r"(?:tim\s+)?so\s+du\s+(?:khi\s+)?chia\s+(\d+(?:[.,]\d+)?)\s+cho\s+(\d+(?:[.,]\d+)?)", f
+    )
     # 2. Mẫu: "số dư của / khi A chia (cho) B"
-    m2 = re.search(r"(?:tim\s+)?so\s+du\s+(?:khi|cua)?\s*(\d+(?:[.,]\d+)?)\s*chia\s*(?:cho)?\s*(\d+(?:[.,]\d+)?)", f)
+    m2 = re.search(
+        r"(?:tim\s+)?so\s+du\s+(?:khi|cua)?\s*(\d+(?:[.,]\d+)?)\s*chia\s*(?:cho)?\s*(\d+(?:[.,]\d+)?)",
+        f,
+    )
     # 3. Mẫu: "A chia (cho) B (thì) dư mấy / dư bao nhiêu"
-    m3 = re.search(r"\b(\d+(?:[.,]\d+)?)\s*chia\s*(?:cho)?\s*(\d+(?:[.,]\d+)?)\s*(?:thi\s+)?du\s*(?:may|bao\s+nhieu|\?)?", f)
+    m3 = re.search(
+        r"\b(\d+(?:[.,]\d+)?)\s*chia\s*(?:cho)?\s*(\d+(?:[.,]\d+)?)\s*(?:thi\s+)?du\s*(?:may|bao\s+nhieu|\?)?",
+        f,
+    )
     # 4. Mẫu: "A mod B" hoặc "A % B"
     m4 = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(?:mod|%)\s*(\d+(?:[.,]\d+)?)\b", f)
 
@@ -233,10 +345,29 @@ def try_date_query(message: str) -> LocalAnswer | None:
 
     # Không nhận nếu chứa các từ khóa nghiệp vụ bưu chính
     business_keywords = (
-        "bưu phẩm", "bưu gửi", "bưu kiện", "vận đơn", "kiện hàng", "gửi hàng",
-        "khiếu nại", "bồi thường", "hoàn cước", "cước", "giá", "phí", "bưu cục",
-        "bưu điện", "vpostcode", "quy định", "thời hiệu", "thời hạn", "sla",
-        "eb", "cp", "ee", "rk",
+        "bưu phẩm",
+        "bưu gửi",
+        "bưu kiện",
+        "vận đơn",
+        "kiện hàng",
+        "gửi hàng",
+        "khiếu nại",
+        "bồi thường",
+        "hoàn cước",
+        "cước",
+        "giá",
+        "phí",
+        "bưu cục",
+        "bưu điện",
+        "vpostcode",
+        "quy định",
+        "thời hiệu",
+        "thời hạn",
+        "sla",
+        "eb",
+        "cp",
+        "ee",
+        "rk",
     )
     clean = message.lower()
     if any(k in clean for k in business_keywords):
@@ -244,10 +375,25 @@ def try_date_query(message: str) -> LocalAnswer | None:
 
     # Phải có tín hiệu câu hỏi hoặc ý định tính toán thời gian rõ ràng (tránh nhầm văn bản hành chính)
     temporal_question_markers = (
-        "thứ mấy", "ngày mấy", "ngày bao nhiêu", "ngày gì", "ngày nào",
-        "tuần sau", "tuần tới", "tuần trước", "tuần này", "tuần nữa",
-        "năm sau", "năm tới", "năm ngoái", "năm trước",
-        "ngày nữa", "ngày trước", "bao nhiêu ngày", "mấy ngày", "mấy ngày nữa",
+        "thứ mấy",
+        "ngày mấy",
+        "ngày bao nhiêu",
+        "ngày gì",
+        "ngày nào",
+        "tuần sau",
+        "tuần tới",
+        "tuần trước",
+        "tuần này",
+        "tuần nữa",
+        "năm sau",
+        "năm tới",
+        "năm ngoái",
+        "năm trước",
+        "ngày nữa",
+        "ngày trước",
+        "bao nhiêu ngày",
+        "mấy ngày",
+        "mấy ngày nữa",
     )
     if not any(k in clean for k in temporal_question_markers):
         return None
@@ -272,12 +418,12 @@ def try_arithmetic(message: str) -> LocalAnswer | None:
     rest = _fold(t.replace(span, " "))
     words = re.findall(r"[a-z]+", rest)
     if any(w not in _FILLER for w in words):
-        return None                      # còn từ nghiệp vụ -> không phải phép tính thuần
+        return None  # còn từ nghiệp vụ -> không phải phép tính thuần
     expr = _vn_numbers(span.strip())
     try:
         value = safe_calculate(expr)
     except (SyntaxError, ValueError):
-        return None                      # vd "1+!" -> để LLM xử lý
+        return None  # vd "1+!" -> để LLM xử lý
     shown = re.sub(r"\s*(\*\*|[+\-*/%])\s*", r" \1 ", span.strip()).replace("**", "^")
     shown = shown.replace("*", "×").replace("/", "÷").replace("%", " mod ")
     text = f"{shown} = **{_fmt(value)}**"
@@ -303,4 +449,9 @@ def local_answer(message: str, *, chitchat: bool = False) -> LocalAnswer | None:
     """chitchat: cờ từ app.signals.analyze(message).chitchat (một định nghĩa duy nhất)."""
     if chitchat:
         return chitchat_reply(message)
-    return today_answer(message) or try_date_query(message) or try_modulo(message) or try_arithmetic(message)
+    return (
+        today_answer(message)
+        or try_date_query(message)
+        or try_modulo(message)
+        or try_arithmetic(message)
+    )

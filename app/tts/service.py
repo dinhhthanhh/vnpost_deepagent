@@ -47,15 +47,33 @@ def spoken_text(text: str) -> str:
     text = re.sub(r"(?m)^\s*[#>*-]+\s*", "", text)
     # 4. Chuẩn hóa ngày tháng dd/mm/yyyy và khoảng số (ví dụ: 24-36 giờ -> 24 đến 36 giờ)
     text = re.sub(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", r"ngày \1 tháng \2 năm \3", text)
-    text = re.sub(r"\b(\d+)\s*-\s*(\d+)\s*(giờ|ngày|tuần|tháng|năm|kg|g|gam|đồng)\b", r"\1 đến \2 \3", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"\b(\d+)\s*-\s*(\d+)\s*(giờ|ngày|tuần|tháng|năm|kg|g|gam|đồng)\b",
+        r"\1 đến \2 \3",
+        text,
+        flags=re.IGNORECASE,
+    )
 
     # 5. Phân biệt số thập phân (đơn vị đo lường) vs số tiền hàng nghìn (1.125 kg -> 1 phẩy 125 ki lô gam)
-    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*(?:đ/kg|đồng/kg)\b", r"\1 phẩy \2 đồng một ki lô gam", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*kg\b", r"\1 phẩy \2 ki lô gam", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*g(?:am)?\b", r"\1 phẩy \2 gam", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*cm\b", r"\1 phẩy \2 xăng ti mét", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"\b(\d+)[.,](\d{1,4})\s*(?:đ/kg|đồng/kg)\b",
+        r"\1 phẩy \2 đồng một ki lô gam",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\b(\d+)[.,](\d{1,4})\s*kg\b", r"\1 phẩy \2 ki lô gam", text, flags=re.IGNORECASE
+    )
+    text = re.sub(
+        r"\b(\d+)[.,](\d{1,4})\s*g(?:am)?\b", r"\1 phẩy \2 gam", text, flags=re.IGNORECASE
+    )
+    text = re.sub(
+        r"\b(\d+)[.,](\d{1,4})\s*cm\b", r"\1 phẩy \2 xăng ti mét", text, flags=re.IGNORECASE
+    )
     text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*m\b", r"\1 phẩy \2 mét", text, flags=re.IGNORECASE)
-    text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*km\b", r"\1 phẩy \2 ki lô mét", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"\b(\d+)[.,](\d{1,4})\s*km\b", r"\1 phẩy \2 ki lô mét", text, flags=re.IGNORECASE
+    )
     text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*tấn\b", r"\1 phẩy \2 tấn", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(\d+)[.,](\d{1,4})\s*lít\b", r"\1 phẩy \2 lít", text, flags=re.IGNORECASE)
     # Số thập phân bắt đầu bằng 0 (ví dụ: 0.125 hoặc 0.5)
@@ -63,7 +81,9 @@ def spoken_text(text: str) -> str:
 
     # 6. Chuẩn hóa số tiền Việt Nam (125.000đ -> 125000 đồng) và đơn vị số nguyên
     text = re.sub(r"(?<=\d)\.(?=\d{3}(?!\d))", "", text)
-    text = re.sub(r"\b(\d+)\s*(?:đ/kg|đồng/kg)\b", r"\1 đồng một ki lô gam", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"\b(\d+)\s*(?:đ/kg|đồng/kg)\b", r"\1 đồng một ki lô gam", text, flags=re.IGNORECASE
+    )
     text = re.sub(r"\b(\d+)\s*(?:đ|vnđ|vnd)\b", r"\1 đồng", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(\d+)\s*kg\b", r"\1 ki lô gam", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(\d+)\s*g\b", r"\1 gam", text, flags=re.IGNORECASE)
@@ -101,11 +121,16 @@ class ZeroTTS:
         headers = {"ngrok-skip-browser-warning": "true"}
         if settings.tts_api_key.get_secret_value():
             headers["Authorization"] = "Bearer " + settings.tts_api_key.get_secret_value()
-        self.client = client or httpx.AsyncClient(base_url=settings.tts_base_url.rstrip("/") + "/",
-                                                 headers=headers, follow_redirects=False,
-                                                 timeout=httpx.Timeout(settings.tts_timeout_seconds, connect=10),
-                                                 limits=httpx.Limits(max_connections=settings.max_parallel_tts,
-                                                                     max_keepalive_connections=settings.max_parallel_tts))
+        self.client = client or httpx.AsyncClient(
+            base_url=settings.tts_base_url.rstrip("/") + "/",
+            headers=headers,
+            follow_redirects=False,
+            timeout=httpx.Timeout(settings.tts_timeout_seconds, connect=10),
+            limits=httpx.Limits(
+                max_connections=settings.max_parallel_tts,
+                max_keepalive_connections=settings.max_parallel_tts,
+            ),
+        )
         self.owns_client = client is None
         self.last_health = "disabled" if not settings.tts_enabled else "unknown"
 
@@ -150,7 +175,7 @@ class ZeroTTS:
                 "input": text,
                 "voice": voice,
                 "response_format": "wav",
-                "speed": kwargs.get("speed", 1.0)
+                "speed": kwargs.get("speed", 1.0),
             }
         return "tts", {
             "text": text,
@@ -162,7 +187,9 @@ class ZeroTTS:
             "audio_topp": kwargs.get("audio_topp", 0.95),
         }
 
-    async def synthesize(self, text: str, voice: str | None = None, mode: str | None = None, **kwargs) -> bytes:
+    async def synthesize(
+        self, text: str, voice: str | None = None, mode: str | None = None, **kwargs
+    ) -> bytes:
         effective_mode = mode or self.settings.tts_mode
         key = self.cache_key(text, voice, effective_mode, kwargs)
         if key in self._cache:
@@ -210,7 +237,9 @@ class ZeroTTS:
     async def open_stream(self, text: str, voice: str | None = None, **kwargs):
         _, payload = self.payload(text, voice, "standard", **kwargs)
         try:
-            response = await self.client.send(self.client.build_request("POST", "tts/stream", json=payload), stream=True)
+            response = await self.client.send(
+                self.client.build_request("POST", "tts/stream", json=payload), stream=True
+            )
             response.raise_for_status()
         except httpx.HTTPError as exc:
             if "response" in locals():

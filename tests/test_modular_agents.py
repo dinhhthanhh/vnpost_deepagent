@@ -1,9 +1,8 @@
 import json
 import pathlib
-import pytest
 
-from app.agents.orchestrator import _load_enterprise_skills, _get_supervisor_prompt
-from app.agents.subagents import get_subagents_registry, SUBAGENT_NAMES
+from app.agents.orchestrator import _get_supervisor_prompt, _load_enterprise_skills
+from app.agents.subagents import SUBAGENT_NAMES, get_subagents_registry
 from app.mcp.server import mcp
 
 
@@ -80,6 +79,7 @@ def test_agent_card_json_valid():
 def test_subagent_evaluation_benchmarks():
     """Kiểm tra toàn bộ bộ eval benchmarks của các subagent hoạt động chính xác."""
     from app.agents.eval_runner import run_all_benchmarks
+
     summary = run_all_benchmarks()
     assert summary["total_agents"] == 7
     assert summary["passed_agents"] == 7
@@ -100,17 +100,17 @@ def test_k8s_manifests_exist_and_valid():
 def test_healthz_and_agent_card_routes():
     """Kiểm tra endpoint /healthz và /.well-known/agent.json."""
     from fastapi.testclient import TestClient
+
     from app.api.main import create_app
     from app.core.config import Settings
-    
+
     settings = Settings(allow_anonymous=True)
     app = create_app(settings)
     with TestClient(app) as client:
         res = client.get("/healthz")
         assert res.status_code == 200
         assert res.json().get("status") == "ok"
-        
+
         card_res = client.get("/.well-known/agent.json")
         assert card_res.status_code == 200
         assert "name" in card_res.json()
-

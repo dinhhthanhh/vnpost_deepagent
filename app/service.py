@@ -19,7 +19,7 @@ from app.rag.fast_rag import FastRAGExecutor, PreparedRAG
 from app.rag.store import Store
 from app.router import RouterDecision, classify_query_adaptive, rule_based_decision
 from app.router.fastpath import local_answer
-from app.tts import STTError, SpeechTranscriber, TTSError, ZeroTTS
+from app.tts import SpeechTranscriber, STTError, TTSError, ZeroTTS
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,12 @@ logger = logging.getLogger(__name__)
 class SafeStreamBuffer:
     """Bộ đệm token streaming giữ lại và chuyển đổi cờ [[NO_EVIDENCE]] tránh rò rỉ ra giao diện."""
 
-    def __init__(self, emit_fn, target_marker: str = NO_EVIDENCE_MARKER, replacement: str = NO_EVIDENCE_TEMPLATE):
+    def __init__(
+        self,
+        emit_fn,
+        target_marker: str = NO_EVIDENCE_MARKER,
+        replacement: str = NO_EVIDENCE_TEMPLATE,
+    ):
         self.emit_fn = emit_fn
         self.target = target_marker
         self.replacement = replacement
@@ -55,7 +60,6 @@ class SafeStreamBuffer:
             self.buffer = ""
 
 
-
 class ChatService:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -66,6 +70,9 @@ class ChatService:
         self.fast_rag = FastRAGExecutor(settings, self.knowledge, self.providers)
         self.tts = ZeroTTS(settings)
         self.stt = SpeechTranscriber(settings)
+        from app.mcp.clients import ExternalMCPManager
+
+        self.mcp_manager = ExternalMCPManager(settings)
         self.active = asyncio.Semaphore(settings.max_active_requests)
         self.ingest_slots = asyncio.Semaphore(2)
         self.session_locks: dict[tuple[str, str], tuple[asyncio.Lock, int]] = {}
@@ -127,8 +134,13 @@ class ChatService:
         try:
             async with asyncio.timeout(self.settings.deep_timeout):
                 raw = await self.harness.invoke(
-                    request.message.strip(), history, request.grounded, request.image,
-                    prefetched_evidence=prepared.evidence_json if prepared and request.grounded else None,
+                    request.message.strip(),
+                    history,
+                    request.grounded,
+                    request.image,
+                    prefetched_evidence=prepared.evidence_json
+                    if prepared and request.grounded
+                    else None,
                     thread_id=f"{run.tenant}:{run.session_id}:{run.request_id}",
                     location=request.location,
                 )
@@ -137,14 +149,23 @@ class ChatService:
             run.event("deep_timeout", timeout_seconds=self.settings.deep_timeout, fallback="fast")
             if prepared is None:
                 prepared = await self.fast_rag.prepare(
-                    run.tenant, request.message.strip(), history, request.grounded,
+                    run.tenant,
+                    request.message.strip(),
+                    history,
+                    request.grounded,
                 )
             raw = await self.fast_rag.execute(
-                run.tenant, request.message.strip(), history, request.grounded, prepared=prepared,
+                run.tenant,
+                request.message.strip(),
+                history,
+                request.grounded,
+                prepared=prepared,
             )
             return raw, "fast_fallback", route_reason + "; hết ngân sách deep, trả lời theo Tier 1"
 
-    async def chat(self, tenant: str, request: ChatRequest, queue: asyncio.Queue | None = None) -> ChatResponse:
+    async def chat(
+        self, tenant: str, request: ChatRequest, queue: asyncio.Queue | None = None
+    ) -> ChatResponse:
         started = time.monotonic()
         request_id, session_id = uuid.uuid4().hex, str(request.session_id or uuid.uuid4())
         run = RunContext(
@@ -161,9 +182,14 @@ class ChatService:
         run.event("start", request_id=request_id, session_id=session_id)
         token = current_run.set(run)
         try:
-            shortcut = local_answer(request.message, chitchat=analyze(request.message).chitchat) if not request.image else None
+            shortcut = (
+                local_answer(request.message, chitchat=analyze(request.message).chitchat)
+                if not request.image
+                else None
+            )
             if request.image and not self.settings.supports_vision:
                 from app.router.fastpath import LocalAnswer
+
                 shortcut = LocalAnswer(
                     kind="chitchat",
                     text=(
@@ -173,20 +199,31 @@ class ChatService:
                     ),
                 )
             if shortcut is not None:
-                decision = RouterDecision("fast", "Đường tắt cục bộ không gọi LLM", "rule", 1.0, tier=0)
+                decision = RouterDecision(
+                    "fast", "Đường tắt cục bộ không gọi LLM", "rule", 1.0, tier=0
+                )
             elif request.mode == "fast":
-                decision = RouterDecision("fast", "Đường nhanh do người dùng yêu cầu", "rule", 1.0, tier=1)
+                decision = RouterDecision(
+                    "fast", "Đường nhanh do người dùng yêu cầu", "rule", 1.0, tier=1
+                )
             elif request.mode == "deep":
-                decision = RouterDecision("deep", "Đường sâu do người dùng yêu cầu", "rule", 1.0, tier=2)
+                decision = RouterDecision(
+                    "deep", "Đường sâu do người dùng yêu cầu", "rule", 1.0, tier=2
+                )
             elif self.settings.router_enabled:
                 # This is rules/retrieval-first by default; its optional LLM experiment
                 # remains disabled unless LLM_ROUTER_ENABLED=true.
                 decision = await classify_query_adaptive(
-                    self.settings, self.providers, request.message, request.image,
+                    self.settings,
+                    self.providers,
+                    request.message,
+                    request.image,
                 )
             else:
                 decision = rule_based_decision(
-                    request.message, request.image, max_characters=self.settings.router_max_characters,
+                    request.message,
+                    request.image,
+                    max_characters=self.settings.router_max_characters,
                 )
 
             if shortcut is not None:
@@ -194,8 +231,14 @@ class ChatService:
                 route_reason = f"local {shortcut.kind}"
             else:
                 route, route_reason = decision.route, decision.reason
-            run.event("router_decision", route=route, tier=decision.tier, reason=route_reason,
-                      strategy=decision.strategy, confidence=decision.confidence)
+            run.event(
+                "router_decision",
+                route=route,
+                tier=decision.tier,
+                reason=route_reason,
+                strategy=decision.strategy,
+                confidence=decision.confidence,
+            )
 
             async with asyncio.timeout(self.settings.request_timeout):
                 async with self.active, self.session_lock(tenant, session_id):
@@ -206,17 +249,44 @@ class ChatService:
                     if route == "fast":
                         run.event("planning", message=f"Tier 1 — Direct RAG: {route_reason}")
                         prepared = await self.fast_rag.prepare(
-                            tenant, request.message.strip(), history, request.grounded,
+                            tenant,
+                            request.message.strip(),
+                            history,
+                            request.grounded,
                         )
-                        if request.mode == "auto" and request.grounded and not prepared.has_sufficient_evidence(self.settings.fast_min_sources, self.settings.fast_min_retrieval_score):
+                        if (
+                            request.mode == "auto"
+                            and request.grounded
+                            and not prepared.has_sufficient_evidence(
+                                self.settings.fast_min_sources,
+                                self.settings.fast_min_retrieval_score,
+                            )
+                        ):
                             route = "deep"
                             route_reason += "; cổng nguồn Tier 1 không đủ bằng chứng"
-                            run.event("source_gate", status="escalate", source_count=prepared.source_count,
-                                      required=self.settings.fast_min_sources, top_retrieval_score=prepared.top_retrieval_score, min_retrieval_score=self.settings.fast_min_retrieval_score)
-                            run.event("route_escalated", from_tier=1, to_tier=2, reason="insufficient_evidence")
+                            run.event(
+                                "source_gate",
+                                status="escalate",
+                                source_count=prepared.source_count,
+                                required=self.settings.fast_min_sources,
+                                top_retrieval_score=prepared.top_retrieval_score,
+                                min_retrieval_score=self.settings.fast_min_retrieval_score,
+                            )
+                            run.event(
+                                "route_escalated",
+                                from_tier=1,
+                                to_tier=2,
+                                reason="insufficient_evidence",
+                            )
                         else:
-                            run.event("source_gate", status="pass", source_count=prepared.source_count,
-                                      required=self.settings.fast_min_sources, top_retrieval_score=prepared.top_retrieval_score, min_retrieval_score=self.settings.fast_min_retrieval_score)
+                            run.event(
+                                "source_gate",
+                                status="pass",
+                                source_count=prepared.source_count,
+                                required=self.settings.fast_min_sources,
+                                top_retrieval_score=prepared.top_retrieval_score,
+                                min_retrieval_score=self.settings.fast_min_retrieval_score,
+                            )
 
                     if route in {"calculator", "local"}:
                         raw = shortcut.text
@@ -230,7 +300,11 @@ class ChatService:
                             parts = []
                             safe_buf = SafeStreamBuffer(run.emit_token)
                             async for delta in self.fast_rag.stream(
-                                tenant, request.message.strip(), history, request.grounded, prepared=prepared,
+                                tenant,
+                                request.message.strip(),
+                                history,
+                                request.grounded,
+                                prepared=prepared,
                             ):
                                 parts.append(delta)
                                 safe_buf.push(delta)
@@ -238,12 +312,22 @@ class ChatService:
                             raw = "".join(parts)
                         else:
                             raw = await self.fast_rag.execute(
-                                tenant, request.message.strip(), history, request.grounded, prepared=prepared,
+                                tenant,
+                                request.message.strip(),
+                                history,
+                                request.grounded,
+                                prepared=prepared,
                             )
                     elif route not in {"calculator", "local"}:
-                        run.event("planning", message=f"Tier {decision.tier if decision.tier > 1 else 2} — Deep Agent: {route_reason}")
+                        run.event(
+                            "planning",
+                            message=f"Tier {decision.tier if decision.tier > 1 else 2} — Deep Agent: {route_reason}",
+                        )
                         raw, route, route_reason = await self._deep_or_fallback(
-                            request, history, prepared, route_reason,
+                            request,
+                            history,
+                            prepared,
+                            route_reason,
                         )
                         if queue is not None:
                             safe_buf = SafeStreamBuffer(run.emit_token)
@@ -253,30 +337,54 @@ class ChatService:
 
                     if route not in {"calculator", "local"}:
                         answer, sources, status, warnings = validate_answer(
-                            raw, run.sources, request.grounded, request.message,
+                            raw,
+                            run.sources,
+                            request.grounded,
+                            request.message,
                         )
                     answer = postprocess_func(answer)
                     await asyncio.to_thread(
-                        self.store.save_turn, tenant, session_id, request.message, answer,
+                        self.store.save_turn,
+                        tenant,
+                        session_id,
+                        request.message,
+                        answer,
                         self.settings.max_history,
-                        {"request_id": request_id, "sources": [s.model_dump() for s in sources],
-                         "grounding_status": status, "route": route, "route_reason": route_reason,
-                         "elapsed_ms": round((time.monotonic() - started) * 1000)},
+                        {
+                            "request_id": request_id,
+                            "sources": [s.model_dump() for s in sources],
+                            "grounding_status": status,
+                            "route": route,
+                            "route_reason": route_reason,
+                            "elapsed_ms": round((time.monotonic() - started) * 1000),
+                        },
                     )
-            result = ChatResponse(request_id=request_id, session_id=session_id, answer=answer,
-                                  sources=sources, grounding_status=status,
-                                  route=route, route_reason=route_reason,
-                                  elapsed_ms=round((time.monotonic() - started) * 1000),
-                                  events=run.events, warnings=warnings)
+            result = ChatResponse(
+                request_id=request_id,
+                session_id=session_id,
+                answer=answer,
+                sources=sources,
+                grounding_status=status,
+                route=route,
+                route_reason=route_reason,
+                elapsed_ms=round((time.monotonic() - started) * 1000),
+                events=run.events,
+                warnings=warnings,
+            )
             # Deliver validated text before awaiting an optional, slow TTS synthesis.
             await asyncio.to_thread(self.store.save_reply, tenant, request_id, result.model_dump())
             if queue is not None:
                 queue.put_nowait({"type": "answer", "data": result.model_dump()})
             if request.voice and request.stream_voice and queue is not None:
                 from app.tts import spoken_text
+
                 clean_speech = spoken_text(answer)
                 if clean_speech:
-                    raw_parts = [p.strip() for p in re.split(r"(?<=[.!?;])\s+|\n+", clean_speech) if p.strip()]
+                    raw_parts = [
+                        p.strip()
+                        for p in re.split(r"(?<=[.!?;])\s+|\n+", clean_speech)
+                        if p.strip()
+                    ]
                     segments, current = [], ""
                     for part in raw_parts:
                         current = f"{current} {part}".strip() if current else part
@@ -287,21 +395,38 @@ class ChatService:
                         segments.append(current)
                     voice_target = request.voice_name or self.settings.tts_voice
                     for idx, seg in enumerate(segments):
-                        run.event("tts_segment", index=idx, total=len(segments), text=seg, voice=voice_target)
+                        run.event(
+                            "tts_segment",
+                            index=idx,
+                            total=len(segments),
+                            text=seg,
+                            voice=voice_target,
+                        )
             if request.voice and not request.stream_voice:
                 run.event("speech_start")
                 try:
                     result.audio_url = await self.save_speech(tenant, answer, request.voice_name)
                     run.event("speech_ready", audio_url=result.audio_url)
                 except (TTSError, OSError) as exc:
-                    warning = str(exc) if isinstance(exc, TTSError) else "Không lưu được âm thanh; câu trả lời chữ vẫn khả dụng."
+                    warning = (
+                        str(exc)
+                        if isinstance(exc, TTSError)
+                        else "Không lưu được âm thanh; câu trả lời chữ vẫn khả dụng."
+                    )
                     result.warnings.append(warning)
                     run.event("speech_error", message=warning)
             result.elapsed_ms = round((time.monotonic() - started) * 1000)
             result.events = list(run.events)
             await asyncio.to_thread(self.store.save_reply, tenant, request_id, result.model_dump())
-            logger.info("chat_complete request_id=%s tenant=%s ms=%s sources=%s tasks=%s route=%s",
-                        request_id, tenant, result.elapsed_ms, len(sources), run.tasks_started, route)
+            logger.info(
+                "chat_complete request_id=%s tenant=%s ms=%s sources=%s tasks=%s route=%s",
+                request_id,
+                tenant,
+                result.elapsed_ms,
+                len(sources),
+                run.tasks_started,
+                route,
+            )
             if queue is not None:
                 queue.put_nowait({"type": "done", "data": result.model_dump()})
             return result
@@ -312,15 +437,18 @@ class ChatService:
         """Khởi động ấm (warmup) dịch vụ để xóa bỏ độ trễ cold-start ở lượt gọi đầu tiên."""
         try:
             from app.router.fastpath import local_answer
+
             local_answer("xin chào", chitchat=True)
             kb = await asyncio.to_thread(self.knowledge.for_tenant, "default")
             if kb:
                 await asyncio.to_thread(kb.retrieve, "VNPost chuyển phát nhanh", 1)
+            await self.mcp_manager.initialize()
             logger.info("ChatService warmup completed successfully.")
         except Exception as exc:
             logger.warning("ChatService warmup non-fatal exception: %s", exc)
 
     async def close(self):
+        await self.mcp_manager.close()
         await self.harness.close()
         await self.tts.close()
         await self.providers.close()

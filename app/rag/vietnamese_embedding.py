@@ -27,6 +27,7 @@ class VietnameseBiEncoderEmbedding(BaseEmbedding):
         super().__init__(**data)
         try:
             import importlib
+
             pyvi = importlib.import_module("pyvi")
             ViTokenizer = pyvi.ViTokenizer
             st = importlib.import_module("sentence_transformers")
@@ -41,6 +42,7 @@ class VietnameseBiEncoderEmbedding(BaseEmbedding):
         if actual_device == "auto":
             try:
                 import importlib
+
                 torch = importlib.import_module("torch")
                 actual_device = "cuda" if torch.cuda.is_available() else "cpu"
             except ImportError:

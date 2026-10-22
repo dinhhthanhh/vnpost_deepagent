@@ -1,4 +1,5 @@
 """OpenTelemetry & Tracing helpers for VNPost Deep Agent."""
+
 import json
 import logging
 from typing import Any
@@ -8,6 +9,7 @@ logger = logging.getLogger(__name__)
 try:
     from opentelemetry import baggage, trace
     from opentelemetry.context import Context
+
     OTEL_AVAILABLE = True
     _tracer = trace.get_tracer("vnpost_deepagent")
 except ImportError:

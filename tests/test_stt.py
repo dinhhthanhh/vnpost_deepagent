@@ -1,11 +1,11 @@
 import io
+
 import pytest
 from starlette.testclient import TestClient
 
 from app.api.main import create_app
 from app.core.config import Settings
-from app.service import ChatService
-from app.tts.stt import STTError, SpeechTranscriber
+from app.tts.stt import SpeechTranscriber, STTError
 
 
 @pytest.mark.asyncio

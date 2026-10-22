@@ -91,15 +91,17 @@ def test_booking_confirm_and_cancel_flow():
     assert reconfirm_res["item_code"] == item_code
 
     # 3. Test hủy đơn nháp mới
-    draft_id_2 = json.loads(create_draft_booking(
-        sender_name="Khách Hàng",
-        sender_phone="0900000000",
-        sender_address="Hà Nội",
-        receiver_name="Người Nhận",
-        receiver_phone="0911111111",
-        receiver_address="Hà Nội",
-        weight_grams=200,
-    ))["draft_id"]
+    draft_id_2 = json.loads(
+        create_draft_booking(
+            sender_name="Khách Hàng",
+            sender_phone="0900000000",
+            sender_address="Hà Nội",
+            receiver_name="Người Nhận",
+            receiver_phone="0911111111",
+            receiver_address="Hà Nội",
+            weight_grams=200,
+        )
+    )["draft_id"]
 
     cancel_res = json.loads(cancel_draft_booking(draft_id_2))
     assert cancel_res["status"] == "cancelled"
@@ -109,28 +111,32 @@ def test_booking_confirm_and_cancel_flow():
 def test_complaint_statute_of_limitations_and_draft():
     """Kiểm tra thời hiệu khiếu nại (06 tháng nội địa, 12 tháng quốc tế) và lập phiếu nháp."""
     # 1. Quá hạn 06 tháng nội địa (ví dụ ngày gửi 2024-01-01) -> Từ chối thụ lý
-    res_expired = json.loads(create_draft_complaint(
-        item_code="EB987654321VN",
-        customer_name="Phạm Văn C",
-        customer_phone="0977889900",
-        complaint_type="Hàng bị mất tích",
-        description="Bưu phẩm gửi đã lâu không thấy đến",
-        sent_date="2024-01-01",
-    ))
+    res_expired = json.loads(
+        create_draft_complaint(
+            item_code="EB987654321VN",
+            customer_name="Phạm Văn C",
+            customer_phone="0977889900",
+            complaint_type="Hàng bị mất tích",
+            description="Bưu phẩm gửi đã lâu không thấy đến",
+            sent_date="2024-01-01",
+        )
+    )
     assert res_expired["status"] == "rejected_expired"
     assert "vượt quá thời hiệu" in res_expired["message"].lower()
     assert "06 tháng" in res_expired["message"]
 
     # 2. Còn trong thời hiệu -> Tạo phiếu nháp thành công
-    res_valid = json.loads(create_draft_complaint(
-        item_code="EB123456789VN",
-        customer_name="Phạm Văn C",
-        customer_phone="0977889900",
-        complaint_type="Bưu gửi bị thất lạc, mất mát hoàn toàn",
-        description="Kiện hàng báo phát thành công nhưng khách chưa nhận được",
-        claimed_amount=500000.0,
-        sent_date="2026-09-01",
-    ))
+    res_valid = json.loads(
+        create_draft_complaint(
+            item_code="EB123456789VN",
+            customer_name="Phạm Văn C",
+            customer_phone="0977889900",
+            complaint_type="Bưu gửi bị thất lạc, mất mát hoàn toàn",
+            description="Kiện hàng báo phát thành công nhưng khách chưa nhận được",
+            claimed_amount=500000.0,
+            sent_date="2026-09-01",
+        )
+    )
     assert res_valid["status"] == "waiting_confirmation"
     draft_ticket_id = res_valid["draft_ticket_id"]
     assert draft_ticket_id.startswith("KN-DRAFT-")
@@ -143,14 +149,16 @@ def test_complaint_statute_of_limitations_and_draft():
     assert "500.000 đ" in detail["complaint_details"]["proposed_compensation_text"]
 
     # 3. Khi khách chưa khai báo số tiền (claimed_amount=0) -> Không hardcode tiền mà thẩm định theo thực tế
-    res_no_amount = json.loads(create_draft_complaint(
-        item_code="EB123456789VN",
-        customer_name="Trần Văn E",
-        customer_phone="0988001122",
-        complaint_type="Mất kiện hàng",
-        description="Không rõ hàng đi đâu",
-        claimed_amount=0.0,
-    ))
+    res_no_amount = json.loads(
+        create_draft_complaint(
+            item_code="EB123456789VN",
+            customer_name="Trần Văn E",
+            customer_phone="0988001122",
+            complaint_type="Mất kiện hàng",
+            description="Không rõ hàng đi đâu",
+            claimed_amount=0.0,
+        )
+    )
     detail_no_amount = res_no_amount["detail"]["complaint_details"]
     assert detail_no_amount["proposed_compensation"] == 0.0
     assert "Thẩm định theo giá trị thực tế" in detail_no_amount["proposed_compensation_text"]
@@ -159,27 +167,31 @@ def test_complaint_statute_of_limitations_and_draft():
 def test_slot_filling_detects_missing_fields():
     """Kiểm tra cơ chế Slot-filling phát hiện thiếu thông tin để Chatbot hỏi bù người dùng."""
     # Booking thiếu địa chỉ người nhận và SĐT người gửi
-    res_booking_missing = json.loads(create_draft_booking(
-        sender_name="Nguyễn Văn A",
-        sender_phone="",
-        sender_address="Hà Nội",
-        receiver_name="Trần B",
-        receiver_phone="0912345678",
-        receiver_address="",
-        weight_grams=500,
-    ))
+    res_booking_missing = json.loads(
+        create_draft_booking(
+            sender_name="Nguyễn Văn A",
+            sender_phone="",
+            sender_address="Hà Nội",
+            receiver_name="Trần B",
+            receiver_phone="0912345678",
+            receiver_address="",
+            weight_grams=500,
+        )
+    )
     assert res_booking_missing["status"] == "missing_info"
     assert "số điện thoại người gửi" in res_booking_missing["missing_fields"]
     assert "địa chỉ người nhận" in res_booking_missing["missing_fields"]
 
     # Complaint thiếu mã vận đơn và SĐT liên hệ
-    res_complaint_missing = json.loads(create_draft_complaint(
-        item_code="",
-        customer_name="Lê C",
-        customer_phone="",
-        complaint_type="Bị vỡ hộp quà",
-        description="Vỏ hộp bị móp méo",
-    ))
+    res_complaint_missing = json.loads(
+        create_draft_complaint(
+            item_code="",
+            customer_name="Lê C",
+            customer_phone="",
+            complaint_type="Bị vỡ hộp quà",
+            description="Vỏ hộp bị móp méo",
+        )
+    )
     assert res_complaint_missing["status"] == "missing_info"
     assert "mã vận đơn (item_code)" in res_complaint_missing["missing_fields"]
     assert "số điện thoại liên hệ" in res_complaint_missing["missing_fields"]
@@ -187,13 +199,15 @@ def test_slot_filling_detects_missing_fields():
 
 def test_complaint_confirm_and_sla_flow():
     """Kiểm tra xác nhận nộp khiếu nại, cấp Ticket VNPost và cam kết SLA tối đa 20 ngày."""
-    draft_res = json.loads(create_draft_complaint(
-        item_code="CP555666777VN",
-        customer_name="Đỗ Hoàng D",
-        customer_phone="0933445566",
-        complaint_type="Phát chậm so với chỉ tiêu toàn trình",
-        description="Gửi EMS mà 10 ngày chưa tới",
-    ))
+    draft_res = json.loads(
+        create_draft_complaint(
+            item_code="CP555666777VN",
+            customer_name="Đỗ Hoàng D",
+            customer_phone="0933445566",
+            complaint_type="Phát chậm so với chỉ tiêu toàn trình",
+            description="Gửi EMS mà 10 ngày chưa tới",
+        )
+    )
     draft_ticket_id = draft_res["draft_ticket_id"]
 
     # 1. Xác nhận khiếu nại (sau khi khách duyệt HITL)
@@ -210,13 +224,15 @@ def test_complaint_confirm_and_sla_flow():
     assert resubmit_res["ticket_number"] == ticket_number
 
     # 3. Test hủy phiếu khiếu nại nháp
-    draft_ticket_2 = json.loads(create_draft_complaint(
-        item_code="CP111222333VN",
-        customer_name="Khách Hàng",
-        customer_phone="0911223344",
-        complaint_type="Hỏng nhẹ vỏ hộp",
-        description="Hộp bị móp méo",
-    ))["draft_ticket_id"]
+    draft_ticket_2 = json.loads(
+        create_draft_complaint(
+            item_code="CP111222333VN",
+            customer_name="Khách Hàng",
+            customer_phone="0911223344",
+            complaint_type="Hỏng nhẹ vỏ hộp",
+            description="Hộp bị móp méo",
+        )
+    )["draft_ticket_id"]
 
     cancel_res = json.loads(cancel_draft_complaint(draft_ticket_2))
     assert cancel_res["status"] == "cancelled"
@@ -226,15 +242,17 @@ def test_complaint_confirm_and_sla_flow():
 def test_hitl_interrupt_execution():
     """Kiểm tra hàm execute_action_with_interrupt phối hợp với LangGraph interrupt."""
     # Tạo đơn nháp
-    draft_id = json.loads(create_draft_booking(
-        sender_name="Người Gửi A",
-        sender_phone="0901234567",
-        sender_address="Hà Nội",
-        receiver_name="Người Nhận B",
-        receiver_phone="0987654321",
-        receiver_address="Hồ Chí Minh",
-        weight_grams=600,
-    ))["draft_id"]
+    draft_id = json.loads(
+        create_draft_booking(
+            sender_name="Người Gửi A",
+            sender_phone="0901234567",
+            sender_address="Hà Nội",
+            receiver_name="Người Nhận B",
+            receiver_phone="0987654321",
+            receiver_address="Hồ Chí Minh",
+            weight_grams=600,
+        )
+    )["draft_id"]
 
     # Case 1: Người dùng phê duyệt (approved=True)
     with patch("langgraph.types.interrupt", return_value={"approved": True}):
@@ -243,15 +261,17 @@ def test_hitl_interrupt_execution():
         assert approved_result["item_code"].startswith("EB")
 
     # Tạo đơn nháp thứ 2
-    draft_id_2 = json.loads(create_draft_booking(
-        sender_name="Người Gửi C",
-        sender_phone="0901234567",
-        sender_address="Hà Nội",
-        receiver_name="Người Nhận D",
-        receiver_phone="0987654321",
-        receiver_address="Hồ Chí Minh",
-        weight_grams=600,
-    ))["draft_id"]
+    draft_id_2 = json.loads(
+        create_draft_booking(
+            sender_name="Người Gửi C",
+            sender_phone="0901234567",
+            sender_address="Hà Nội",
+            receiver_name="Người Nhận D",
+            receiver_phone="0987654321",
+            receiver_address="Hồ Chí Minh",
+            weight_grams=600,
+        )
+    )["draft_id"]
 
     # Case 2: Người dùng từ chối (approved=False)
     with patch("langgraph.types.interrupt", return_value={"approved": False}):
@@ -302,36 +322,60 @@ def test_region_pricing_zones_skill_compliance():
     - Hà Nội đi Hà Nội: Vùng 1 (Nội tỉnh)
     """
     # 1. Hà Nội (Bắc) -> Đà Nẵng (Trung)
-    res_hn_dn = json.loads(create_draft_booking(
-        sender_name="A", sender_phone="0901", sender_address="Hà Nội",
-        receiver_name="B", receiver_phone="0902", receiver_address="Đà Nẵng",
-        weight_grams=500,
-    ))
+    res_hn_dn = json.loads(
+        create_draft_booking(
+            sender_name="A",
+            sender_phone="0901",
+            sender_address="Hà Nội",
+            receiver_name="B",
+            receiver_phone="0902",
+            receiver_address="Đà Nẵng",
+            weight_grams=500,
+        )
+    )
     assert res_hn_dn["detail"]["pricing"]["zone"] == "Vùng 3 (Liên miền)"
     assert res_hn_dn["detail"]["pricing"]["is_simulated_rate"] is True
 
     # 2. Đà Nẵng (Trung) -> Cần Thơ (Nam)
-    res_dn_ct = json.loads(create_draft_booking(
-        sender_name="A", sender_phone="0901", sender_address="Đà Nẵng",
-        receiver_name="B", receiver_phone="0902", receiver_address="Cần Thơ",
-        weight_grams=500,
-    ))
+    res_dn_ct = json.loads(
+        create_draft_booking(
+            sender_name="A",
+            sender_phone="0901",
+            sender_address="Đà Nẵng",
+            receiver_name="B",
+            receiver_phone="0902",
+            receiver_address="Cần Thơ",
+            weight_grams=500,
+        )
+    )
     assert res_dn_ct["detail"]["pricing"]["zone"] == "Vùng 3 (Liên miền)"
 
     # 3. Hà Nội (Bắc) -> Hải Phòng (Bắc)
-    res_hn_hp = json.loads(create_draft_booking(
-        sender_name="A", sender_phone="0901", sender_address="Hà Nội",
-        receiver_name="B", receiver_phone="0902", receiver_address="Hải Phòng",
-        weight_grams=500,
-    ))
+    res_hn_hp = json.loads(
+        create_draft_booking(
+            sender_name="A",
+            sender_phone="0901",
+            sender_address="Hà Nội",
+            receiver_name="B",
+            receiver_phone="0902",
+            receiver_address="Hải Phòng",
+            weight_grams=500,
+        )
+    )
     assert res_hn_hp["detail"]["pricing"]["zone"] == "Vùng 2 (Nội miền)"
 
     # 4. Đà Nẵng (Trung) -> Huế (Trung)
-    res_dn_hue = json.loads(create_draft_booking(
-        sender_name="A", sender_phone="0901", sender_address="Đà Nẵng",
-        receiver_name="B", receiver_phone="0902", receiver_address="Thừa Thiên Huế",
-        weight_grams=500,
-    ))
+    res_dn_hue = json.loads(
+        create_draft_booking(
+            sender_name="A",
+            sender_phone="0901",
+            sender_address="Đà Nẵng",
+            receiver_name="B",
+            receiver_phone="0902",
+            receiver_address="Thừa Thiên Huế",
+            weight_grams=500,
+        )
+    )
     assert res_dn_hue["detail"]["pricing"]["zone"] == "Vùng 2 (Nội miền)"
 
 
@@ -343,14 +387,16 @@ def test_domestic_vs_international_classification_and_missing_sent_date():
     - Entropy mã nháp cao (BK-DRAFT-..., KN-DRAFT-... có 8 ký tự hex).
     """
     # 1. Mã CP123456789VN (Bưu kiện nội địa Việt Nam)
-    res_cp_vn = json.loads(create_draft_complaint(
-        item_code="CP123456789VN",
-        customer_name="Trần Văn Nam",
-        customer_phone="0909000111",
-        complaint_type="Mất bưu gửi",
-        description="Gửi từ Hà Nội vào Đà Nẵng",
-        claimed_amount=300000.0,
-    ))
+    res_cp_vn = json.loads(
+        create_draft_complaint(
+            item_code="CP123456789VN",
+            customer_name="Trần Văn Nam",
+            customer_phone="0909000111",
+            complaint_type="Mất bưu gửi",
+            description="Gửi từ Hà Nội vào Đà Nẵng",
+            claimed_amount=300000.0,
+        )
+    )
     detail_vn = res_cp_vn["detail"]
     assert detail_vn["is_international"] is False
     assert detail_vn["complaint_details"]["scope"] == "Nội địa"
@@ -366,15 +412,17 @@ def test_domestic_vs_international_classification_and_missing_sent_date():
     assert "20 ngày làm việc" in confirm_vn["sla_resolution"]
 
     # 2. Mã CP123456789US (Bưu kiện quốc tế từ Mỹ về)
-    res_cp_intl = json.loads(create_draft_complaint(
-        item_code="CP123456789US",
-        customer_name="Lê Minh",
-        customer_phone="0909000222",
-        complaint_type="Hư hỏng bưu gửi",
-        description="Hàng gửi từ Mỹ về",
-        claimed_amount=1500000.0,
-        sent_date="2026-05-01",
-    ))
+    res_cp_intl = json.loads(
+        create_draft_complaint(
+            item_code="CP123456789US",
+            customer_name="Lê Minh",
+            customer_phone="0909000222",
+            complaint_type="Hư hỏng bưu gửi",
+            description="Hàng gửi từ Mỹ về",
+            claimed_amount=1500000.0,
+            sent_date="2026-05-01",
+        )
+    )
     detail_intl = res_cp_intl["detail"]
     assert detail_intl["is_international"] is True
     assert detail_intl["complaint_details"]["scope"] == "Quốc tế"
@@ -390,7 +438,11 @@ def test_domestic_vs_international_classification_and_missing_sent_date():
 
 def test_nearest_post_office_geolocation_and_distance():
     """Kiểm tra tìm kiếm bưu điện gần nhất qua GPS, khoảng cách Haversine và liên kết chỉ đường Google Maps."""
-    from app.domain.postal_services import find_nearest_post_offices, haversine_distance, lookup_postal_office
+    from app.domain.postal_services import (
+        find_nearest_post_offices,
+        haversine_distance,
+        lookup_postal_office,
+    )
 
     # 1. Tính toán khoảng cách Haversine
     # Hoàn Kiếm (21.0285, 105.8542) đến Cầu Giấy (21.0333, 105.7958) khoảng ~6km
@@ -432,15 +484,17 @@ def test_draft_ttl_expiration_guard():
     from datetime import datetime, timedelta, timezone
 
     # 1. Tạo đơn hàng nháp và chỉnh lùi thời gian hết hạn về quá khứ
-    b_draft = json.loads(create_draft_booking(
-        sender_name="Người Gửi A",
-        sender_phone="0911223344",
-        sender_address="Hà Nội",
-        receiver_name="Người Nhận B",
-        receiver_phone="0988776655",
-        receiver_address="Đà Nẵng",
-        weight_grams=400,
-    ))
+    b_draft = json.loads(
+        create_draft_booking(
+            sender_name="Người Gửi A",
+            sender_phone="0911223344",
+            sender_address="Hà Nội",
+            receiver_name="Người Nhận B",
+            receiver_phone="0988776655",
+            receiver_address="Đà Nẵng",
+            weight_grams=400,
+        )
+    )
     b_id = b_draft["draft_id"]
     booking_record = get_draft_booking(b_id)
     assert booking_record is not None
@@ -461,13 +515,15 @@ def test_draft_ttl_expiration_guard():
     assert update_res["status"] == "expired"
 
     # 2. Tạo phiếu khiếu nại nháp và kiểm tra hết hạn tương tự
-    c_draft = json.loads(create_draft_complaint(
-        item_code="EB123456789VN",
-        customer_name="Khách Hàng C",
-        customer_phone="0977112233",
-        complaint_type="Giao hàng chậm",
-        description="Giao muộn 5 ngày",
-    ))
+    c_draft = json.loads(
+        create_draft_complaint(
+            item_code="EB123456789VN",
+            customer_name="Khách Hàng C",
+            customer_phone="0977112233",
+            complaint_type="Giao hàng chậm",
+            description="Giao muộn 5 ngày",
+        )
+    )
     c_id = c_draft["draft_ticket_id"]
     complaint_record = get_draft_complaint(c_id)
     assert complaint_record is not None
@@ -491,11 +547,17 @@ def test_draft_state_machine_strict_guards():
     - Hủy phiếu khiếu nại đã gửi -> báo error.
     """
     # 1. Hủy rồi cố tình xác nhận -> Bị chặn
-    b_draft = json.loads(create_draft_booking(
-        sender_name="Gửi 1", sender_phone="0901", sender_address="Hà Nội",
-        receiver_name="Nhận 1", receiver_phone="0902", receiver_address="Hải Phòng",
-        weight_grams=300,
-    ))
+    b_draft = json.loads(
+        create_draft_booking(
+            sender_name="Gửi 1",
+            sender_phone="0901",
+            sender_address="Hà Nội",
+            receiver_name="Nhận 1",
+            receiver_phone="0902",
+            receiver_address="Hải Phòng",
+            weight_grams=300,
+        )
+    )
     b_id = b_draft["draft_id"]
 
     cancel_res1 = json.loads(cancel_draft_booking(b_id))
@@ -511,11 +573,17 @@ def test_draft_state_machine_strict_guards():
     assert "đã bị hủy" in confirm_cancelled["message"].lower()
 
     # 2. Xác nhận thành công rồi cố tình hủy -> Bị chặn
-    b_draft_ok = json.loads(create_draft_booking(
-        sender_name="Gửi 2", sender_phone="0901", sender_address="Hà Nội",
-        receiver_name="Nhận 2", receiver_phone="0902", receiver_address="Hải Phòng",
-        weight_grams=300,
-    ))
+    b_draft_ok = json.loads(
+        create_draft_booking(
+            sender_name="Gửi 2",
+            sender_phone="0901",
+            sender_address="Hà Nội",
+            receiver_name="Nhận 2",
+            receiver_phone="0902",
+            receiver_address="Hải Phòng",
+            weight_grams=300,
+        )
+    )
     b_id_ok = b_draft_ok["draft_id"]
     confirm_ok = json.loads(confirm_booking(b_id_ok))
     assert confirm_ok["status"] == "confirmed"
@@ -533,25 +601,33 @@ def test_draft_update_before_confirmation():
     - Chặn cập nhật khi đơn đã được xác nhận.
     """
     # 1. Tạo đơn 500g từ Hà Nội đi Hải Phòng (Vùng 2 - Nội miền, cước 32.000đ)
-    draft_res = json.loads(create_draft_booking(
-        sender_name="Nguyễn Văn A", sender_phone="0911", sender_address="Hà Nội",
-        receiver_name="Trần Văn B", receiver_phone="0922", receiver_address="Hải Phòng",
-        weight_grams=500,
-    ))
+    draft_res = json.loads(
+        create_draft_booking(
+            sender_name="Nguyễn Văn A",
+            sender_phone="0911",
+            sender_address="Hà Nội",
+            receiver_name="Trần Văn B",
+            receiver_phone="0922",
+            receiver_address="Hải Phòng",
+            weight_grams=500,
+        )
+    )
     draft_id = draft_res["draft_id"]
     assert draft_res["detail"]["pricing"]["zone"] == "Vùng 2 (Nội miền)"
     assert draft_res["detail"]["pricing"]["estimated_fee"] == 32000
 
     # 2. Khách đổi ý: đổi địa chỉ nhận sang Đà Nẵng (thành Vùng 3 Liên miền),
     # đóng kiện kích thước 60x50x40 cm = 120,000 / 6000 = 20.0 kg thể tích
-    update_res = json.loads(update_draft_booking(
-        draft_id=draft_id,
-        receiver_address="Quận Hải Châu, Đà Nẵng",
-        length_cm=60,
-        width_cm=50,
-        height_cm=40,
-        declared_value=2000000.0,  # Khai giá 2 triệu (+10.000đ phí)
-    ))
+    update_res = json.loads(
+        update_draft_booking(
+            draft_id=draft_id,
+            receiver_address="Quận Hải Châu, Đà Nẵng",
+            length_cm=60,
+            width_cm=50,
+            height_cm=40,
+            declared_value=2000000.0,  # Khai giá 2 triệu (+10.000đ phí)
+        )
+    )
     assert update_res["status"] == "updated"
     updated_detail = update_res["detail"]
     assert updated_detail["parcel"]["weight_volumetric_kg"] == 20.0
@@ -570,23 +646,27 @@ def test_draft_update_before_confirmation():
     assert update_after_confirm["status"] == "error"
 
     # 5. Kiểm tra cập nhật phiếu khiếu nại nháp
-    c_draft = json.loads(create_draft_complaint(
-        item_code="CP999888777VN",
-        customer_name="Lê D",
-        customer_phone="0933",
-        complaint_type="Hư hỏng",
-        description="Móp vỏ hộp",
-        claimed_amount=100000.0,
-    ))
+    c_draft = json.loads(
+        create_draft_complaint(
+            item_code="CP999888777VN",
+            customer_name="Lê D",
+            customer_phone="0933",
+            complaint_type="Hư hỏng",
+            description="Móp vỏ hộp",
+            claimed_amount=100000.0,
+        )
+    )
     c_id = c_draft["draft_ticket_id"]
     assert c_draft["detail"]["complaint_details"]["proposed_compensation"] == 100000.0
 
     # Khách cập nhật số tiền yêu cầu bồi thường và mô tả chi tiết
-    update_c = json.loads(update_draft_complaint(
-        draft_ticket_id=c_id,
-        claimed_amount=450000.0,
-        description="Vỏ hộp móp làm gãy vỡ quà tặng lưu niệm bên trong",
-    ))
+    update_c = json.loads(
+        update_draft_complaint(
+            draft_ticket_id=c_id,
+            claimed_amount=450000.0,
+            description="Vỏ hộp móp làm gãy vỡ quà tặng lưu niệm bên trong",
+        )
+    )
     assert update_c["status"] == "updated"
     assert update_c["detail"]["complaint_details"]["proposed_compensation"] == 450000.0
     assert "450.000 đ" in update_c["detail"]["complaint_details"]["proposed_compensation_text"]
@@ -597,27 +677,51 @@ def test_session_scoped_draft_isolation():
     from app.core.context import RunContext, current_run
 
     # Tạo draft trong phiên của tenant-alpha, session-101
-    ctx1 = RunContext(tenant="tenant-alpha", request_id="req-1", max_parallel=2, max_tasks=5, session_id="session-101")
+    ctx1 = RunContext(
+        tenant="tenant-alpha",
+        request_id="req-1",
+        max_parallel=2,
+        max_tasks=5,
+        session_id="session-101",
+    )
     tok1 = current_run.set(ctx1)
     try:
-        b1 = json.loads(create_draft_booking(
-            sender_name="Alpha Sender", sender_phone="0911", sender_address="Hà Nội",
-            receiver_name="Alpha Recv", receiver_phone="0922", receiver_address="Hà Nội",
-            weight_grams=250,
-        ))
+        b1 = json.loads(
+            create_draft_booking(
+                sender_name="Alpha Sender",
+                sender_phone="0911",
+                sender_address="Hà Nội",
+                receiver_name="Alpha Recv",
+                receiver_phone="0922",
+                receiver_address="Hà Nội",
+                weight_grams=250,
+            )
+        )
         b1_id = b1["draft_id"]
     finally:
         current_run.reset(tok1)
 
     # Tạo draft trong phiên của tenant-beta, session-202
-    ctx2 = RunContext(tenant="tenant-beta", request_id="req-2", max_parallel=2, max_tasks=5, session_id="session-202")
+    ctx2 = RunContext(
+        tenant="tenant-beta",
+        request_id="req-2",
+        max_parallel=2,
+        max_tasks=5,
+        session_id="session-202",
+    )
     tok2 = current_run.set(ctx2)
     try:
-        b2 = json.loads(create_draft_booking(
-            sender_name="Beta Sender", sender_phone="0933", sender_address="Đà Nẵng",
-            receiver_name="Beta Recv", receiver_phone="0944", receiver_address="Đà Nẵng",
-            weight_grams=400,
-        ))
+        b2 = json.loads(
+            create_draft_booking(
+                sender_name="Beta Sender",
+                sender_phone="0933",
+                sender_address="Đà Nẵng",
+                receiver_name="Beta Recv",
+                receiver_phone="0944",
+                receiver_address="Đà Nẵng",
+                weight_grams=400,
+            )
+        )
         b2_id = b2["draft_id"]
     finally:
         current_run.reset(tok2)
@@ -638,11 +742,17 @@ def test_session_scoped_draft_isolation():
 def test_cancel_booking_suite():
     """Kiểm tra chức năng hủy đơn hàng: hủy đơn nháp và hủy đơn đã xác nhận có mã vận đơn."""
     # 1. Hủy đơn nháp
-    b_draft = json.loads(create_draft_booking(
-        sender_name="Trần Văn C", sender_phone="0911223344", sender_address="Hà Nội",
-        receiver_name="Lê Thị D", receiver_phone="0988776655", receiver_address="Hải Phòng",
-        weight_grams=500,
-    ))
+    b_draft = json.loads(
+        create_draft_booking(
+            sender_name="Trần Văn C",
+            sender_phone="0911223344",
+            sender_address="Hà Nội",
+            receiver_name="Lê Thị D",
+            receiver_phone="0988776655",
+            receiver_address="Hải Phòng",
+            weight_grams=500,
+        )
+    )
     draft_id = b_draft["draft_id"]
 
     res_cancel_draft = json.loads(cancel_booking(draft_id, reason="Khách đổi địa chỉ nhận"))
@@ -651,17 +761,25 @@ def test_cancel_booking_suite():
     assert get_draft_booking(draft_id)["status"] == "CANCELLED"
 
     # 2. Hủy đơn đã xác nhận (có mã vận đơn UPU)
-    b_confirmed = json.loads(create_draft_booking(
-        sender_name="Phạm Văn E", sender_phone="0912345678", sender_address="Hồ Chí Minh",
-        receiver_name="Đặng Thị F", receiver_phone="0987654321", receiver_address="Cần Thơ",
-        weight_grams=1200,
-    ))
+    b_confirmed = json.loads(
+        create_draft_booking(
+            sender_name="Phạm Văn E",
+            sender_phone="0912345678",
+            sender_address="Hồ Chí Minh",
+            receiver_name="Đặng Thị F",
+            receiver_phone="0987654321",
+            receiver_address="Cần Thơ",
+            weight_grams=1200,
+        )
+    )
     draft_id_2 = b_confirmed["draft_id"]
     confirm_data = json.loads(confirm_booking(draft_id_2))
     assert confirm_data["status"] == "confirmed"
     item_code = confirm_data["item_code"]
 
-    res_cancel_confirmed = json.loads(cancel_booking(item_code, reason="Khách tự mang ra bưu cục gửi"))
+    res_cancel_confirmed = json.loads(
+        cancel_booking(item_code, reason="Khách tự mang ra bưu cục gửi")
+    )
     assert res_cancel_confirmed["status"] == "cancelled"
     assert res_cancel_confirmed["cancellation_type"] == "confirmed_order"
     assert res_cancel_confirmed["item_code"] == item_code
@@ -674,15 +792,24 @@ def test_cancel_booking_suite():
 
 def test_cross_session_phone_identity_verification():
     """Kiểm tra lớp bảo mật đối chiếu số điện thoại khi hủy đơn xuyên session (Cross-Session Identity Matching)."""
-    from app.agents.postal_actions import _set_current_session_context, _reset_current_session_context
+    from app.agents.postal_actions import (
+        _reset_current_session_context,
+        _set_current_session_context,
+    )
 
     # Session 1: Người gửi tạo đơn ở phiên A
     t1 = _set_current_session_context("vnpost", "session-device-alice-1", "req-1")
-    b = json.loads(create_draft_booking(
-        sender_name="Nguyễn Văn An", sender_phone="0901234567", sender_address="Hà Nội",
-        receiver_name="Trần Thị Bình", receiver_phone="0987654321", receiver_address="Hải Phòng",
-        weight_grams=500,
-    ))
+    b = json.loads(
+        create_draft_booking(
+            sender_name="Nguyễn Văn An",
+            sender_phone="0901234567",
+            sender_address="Hà Nội",
+            receiver_name="Trần Thị Bình",
+            receiver_phone="0987654321",
+            receiver_address="Hải Phòng",
+            weight_grams=500,
+        )
+    )
     draft_id = b["draft_id"]
 
     # Session 2: Yêu cầu hủy ở phiên B (khác session_id)
@@ -707,13 +834,17 @@ def test_cross_session_phone_identity_verification():
     _reset_current_session_context()
 
 
-
 def test_cancel_complaint_suite():
     """Kiểm tra chức năng hủy phiếu khiếu nại: hủy phiếu nháp và rút phiếu đã nộp."""
-    c_draft = json.loads(create_draft_complaint(
-        item_code="EB888999111VN", customer_name="Vũ Hoàng", customer_phone="0901234567",
-        complaint_type="Phát chậm", description="Chậm 2 ngày so với cam kết",
-    ))
+    c_draft = json.loads(
+        create_draft_complaint(
+            item_code="EB888999111VN",
+            customer_name="Vũ Hoàng",
+            customer_phone="0901234567",
+            complaint_type="Phát chậm",
+            description="Chậm 2 ngày so với cam kết",
+        )
+    )
     draft_ticket_id = c_draft["draft_ticket_id"]
 
     # Hủy phiếu khiếu nại nháp
@@ -722,16 +853,23 @@ def test_cancel_complaint_suite():
     assert res_cancel_c["cancellation_type"] == "draft"
 
     # Nộp phiếu khiếu nại rồi rút
-    c_submitted = json.loads(create_draft_complaint(
-        item_code="EB888999222VN", customer_name="Ngô Thanh", customer_phone="0907654321",
-        complaint_type="Hư hỏng", description="Vỡ hộp hàng",
-    ))
+    c_submitted = json.loads(
+        create_draft_complaint(
+            item_code="EB888999222VN",
+            customer_name="Ngô Thanh",
+            customer_phone="0907654321",
+            complaint_type="Hư hỏng",
+            description="Vỡ hộp hàng",
+        )
+    )
     draft_t2 = c_submitted["draft_ticket_id"]
     conf_c = json.loads(confirm_complaint(draft_t2))
     assert conf_c["status"] == "submitted"
     ticket_num = conf_c["ticket_number"]
 
-    res_cancel_submitted = json.loads(cancel_complaint(ticket_num, reason="Người nhận đã thỏa thuận xong với người gửi"))
+    res_cancel_submitted = json.loads(
+        cancel_complaint(ticket_num, reason="Người nhận đã thỏa thuận xong với người gửi")
+    )
     assert res_cancel_submitted["status"] == "cancelled"
     assert res_cancel_submitted["cancellation_type"] == "submitted_ticket"
 
@@ -740,21 +878,37 @@ def test_list_my_orders_in_session():
     """Kiểm tra chức năng tra cứu danh sách đơn hàng và khiếu nại trong phiên (list_my_orders)."""
     from app.core.context import RunContext, current_run
 
-    ctx = RunContext(tenant="tenant-orders", request_id="req-orders-1", max_parallel=2, max_tasks=5, session_id="sess-orders-99")
+    ctx = RunContext(
+        tenant="tenant-orders",
+        request_id="req-orders-1",
+        max_parallel=2,
+        max_tasks=5,
+        session_id="sess-orders-99",
+    )
     tok = current_run.set(ctx)
     try:
         # Tạo 1 đơn nháp
         create_draft_booking(
-            sender_name="Người Gửi A", sender_phone="091", sender_address="Hà Nội",
-            receiver_name="Người Nhận B", receiver_phone="092", receiver_address="Hải Phòng",
+            sender_name="Người Gửi A",
+            sender_phone="091",
+            sender_address="Hà Nội",
+            receiver_name="Người Nhận B",
+            receiver_phone="092",
+            receiver_address="Hải Phòng",
             weight_grams=300,
         )
         # Tạo 1 đơn đã xác nhận (ở lượt phản hồi tiếp theo của khách)
-        d2 = json.loads(create_draft_booking(
-            sender_name="Người Gửi C", sender_phone="093", sender_address="Đà Nẵng",
-            receiver_name="Người Nhận D", receiver_phone="094", receiver_address="Huế",
-            weight_grams=600,
-        ))
+        d2 = json.loads(
+            create_draft_booking(
+                sender_name="Người Gửi C",
+                sender_phone="093",
+                sender_address="Đà Nẵng",
+                receiver_name="Người Nhận D",
+                receiver_phone="094",
+                receiver_address="Huế",
+                weight_grams=600,
+            )
+        )
         ctx.created_draft_ids.clear()
         ctx.user_message = "Tôi xác nhận tạo đơn hàng này"
         conf = json.loads(confirm_booking(d2["draft_id"]))
@@ -776,17 +930,27 @@ def test_multi_layer_hitl_confirmation_guard():
     from app.core.context import RunContext, current_run
 
     ctx = RunContext(
-        tenant="default", request_id="req-guard-1", max_parallel=2, max_tasks=5,
-        session_id="sess-guard-1", user_message="Tạo giúp tôi đơn gửi hàng từ HN vào SG",
+        tenant="default",
+        request_id="req-guard-1",
+        max_parallel=2,
+        max_tasks=5,
+        session_id="sess-guard-1",
+        user_message="Tạo giúp tôi đơn gửi hàng từ HN vào SG",
     )
     tok = current_run.set(ctx)
     try:
         # 1. Tạo đơn nháp trong lượt hội thoại này
-        b_res = json.loads(create_draft_booking(
-            sender_name="Hoàng Nam", sender_phone="0912000111", sender_address="Hà Nội",
-            receiver_name="Minh Tú", receiver_phone="0987000222", receiver_address="Hồ Chí Minh",
-            weight_grams=1000,
-        ))
+        b_res = json.loads(
+            create_draft_booking(
+                sender_name="Hoàng Nam",
+                sender_phone="0912000111",
+                sender_address="Hà Nội",
+                receiver_name="Minh Tú",
+                receiver_phone="0987000222",
+                receiver_address="Hồ Chí Minh",
+                weight_grams=1000,
+            )
+        )
         draft_id = b_res["draft_id"]
         assert draft_id in ctx.created_draft_ids
 
@@ -799,8 +963,12 @@ def test_multi_layer_hitl_confirmation_guard():
 
     # 3. Lượt tiếp theo: Khách nhắn có ý định hủy/chỉnh sửa -> Bị chốt chặn Intent Guard từ chối
     ctx2 = RunContext(
-        tenant="default", request_id="req-guard-2", max_parallel=2, max_tasks=5,
-        session_id="sess-guard-1", user_message="Khoan đã, tôi muốn hủy đơn hoặc sửa địa chỉ",
+        tenant="default",
+        request_id="req-guard-2",
+        max_parallel=2,
+        max_tasks=5,
+        session_id="sess-guard-1",
+        user_message="Khoan đã, tôi muốn hủy đơn hoặc sửa địa chỉ",
     )
     tok2 = current_run.set(ctx2)
     try:
@@ -812,8 +980,12 @@ def test_multi_layer_hitl_confirmation_guard():
 
     # 4. Lượt tiếp theo: Khách đồng ý xác nhận -> Xác nhận thành công
     ctx3 = RunContext(
-        tenant="default", request_id="req-guard-3", max_parallel=2, max_tasks=5,
-        session_id="sess-guard-1", user_message="Tôi xác nhận đồng ý tạo đơn hàng",
+        tenant="default",
+        request_id="req-guard-3",
+        max_parallel=2,
+        max_tasks=5,
+        session_id="sess-guard-1",
+        user_message="Tôi xác nhận đồng ý tạo đơn hàng",
     )
     tok3 = current_run.set(ctx3)
     try:
@@ -827,28 +999,67 @@ def test_multi_layer_hitl_confirmation_guard():
 def test_action_api_endpoints():
     """Kiểm tra các endpoint RESTful /api/actions/orders, confirm, cancel qua FastAPI TestClient."""
     from fastapi.testclient import TestClient
+
     from app.api.main import create_app
     from app.core.config import Settings
 
     settings = Settings(checkpointer_enabled=False)
     with TestClient(create_app(settings)) as client:
         # 1. Tạo trước 1 đơn nháp
-        d = json.loads(create_draft_booking(
-            sender_name="API Sender", sender_phone="0911", sender_address="Hà Nội",
-            receiver_name="API Recv", receiver_phone="0922", receiver_address="Đà Nẵng",
-            weight_grams=400,
-        ))
+        d = json.loads(
+            create_draft_booking(
+                sender_name="API Sender",
+                sender_phone="0911",
+                sender_address="Hà Nội",
+                receiver_name="API Recv",
+                receiver_phone="0922",
+                receiver_address="Đà Nẵng",
+                weight_grams=400,
+            )
+        )
         draft_id = d["draft_id"]
 
         # 2. Xác nhận qua POST /api/actions/confirm
-        res_conf = client.post("/api/actions/confirm", json={"action_type": "booking", "draft_id": draft_id})
+        res_conf = client.post(
+            "/api/actions/confirm", json={"action_type": "booking", "draft_id": draft_id}
+        )
         assert res_conf.status_code == 200
         conf_data = res_conf.json()
         assert conf_data["status"] == "confirmed"
         item_code = conf_data["item_code"]
 
-        # 3. Hủy đơn qua POST /api/actions/cancel
-        res_cancel = client.post("/api/actions/cancel", json={"action_type": "booking", "target_id": item_code, "reason": "Hủy qua UI"})
+        # 3. Hủy đơn qua POST /api/actions/cancel (yêu cầu xác thực SĐT chính chủ khi qua REST)
+        # 3a. Thử hủy không có SĐT xác thực -> Bị từ chối với 400
+        res_unverified = client.post(
+            "/api/actions/cancel",
+            json={"action_type": "booking", "target_id": item_code, "reason": "Hủy không SĐT"},
+        )
+        assert res_unverified.status_code == 400
+        assert "BẢO VỆ CHÍNH CHỦ" in res_unverified.text
+
+        # 3b. Thử hủy với SĐT sai -> Bị từ chối với 400
+        res_wrong = client.post(
+            "/api/actions/cancel",
+            json={
+                "action_type": "booking",
+                "target_id": item_code,
+                "reason": "Hủy sai SĐT",
+                "verification_phone": "9999",
+            },
+        )
+        assert res_wrong.status_code == 400
+        assert "XÁC THỰC THẤT BẠI" in res_wrong.text
+
+        # 3c. Hủy với đúng SĐT người gửi (0911) -> Thành công 200
+        res_cancel = client.post(
+            "/api/actions/cancel",
+            json={
+                "action_type": "booking",
+                "target_id": item_code,
+                "reason": "Hủy qua UI",
+                "verification_phone": "0911",
+            },
+        )
         assert res_cancel.status_code == 200
         cancel_data = res_cancel.json()
         assert cancel_data["status"] == "cancelled"
@@ -859,6 +1070,3 @@ def test_action_api_endpoints():
         orders_data = res_orders.json()
         assert "bookings" in orders_data
         assert "complaints" in orders_data
-
-
-

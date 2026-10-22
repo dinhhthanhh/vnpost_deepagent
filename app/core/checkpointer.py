@@ -3,6 +3,7 @@
 Provides lazy-connecting, thread-safe asynchronous checkpoint persistence
 without requiring an active asyncio event loop at instantiation time.
 """
+
 from __future__ import annotations
 
 import asyncio

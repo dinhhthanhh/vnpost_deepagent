@@ -6,6 +6,7 @@ Provides:
 3. PersistentPostgresCheckpointer for LangGraph and Deep Agents (lazy async init).
 4. Synchronous & asynchronous persistence helpers for transactional drafts.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,7 +14,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -46,6 +47,7 @@ def _resolve_postgres_url(postgres_url: str | None = None) -> str:
         return env_url
     try:
         from app.core.config import Settings
+
         return Settings().postgres_url.strip()
     except Exception:
         return ""
@@ -53,7 +55,7 @@ def _resolve_postgres_url(postgres_url: str | None = None) -> str:
 
 def _get_vn_now() -> datetime:
     """Trả về thời gian hiện tại theo múi giờ Việt Nam (UTC+7)."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 SCHEMA_SQL = """
@@ -124,7 +126,9 @@ async def get_async_pool(
                     )
                     await pool.open()
                     _ASYNC_POOL = pool
-                    logger.info("Đã mở PostgreSQL AsyncConnectionPool thành công: %s", url.split("@")[-1])
+                    logger.info(
+                        "Đã mở PostgreSQL AsyncConnectionPool thành công: %s", url.split("@")[-1]
+                    )
                 except Exception as exc:
                     logger.warning("Không thể mở PostgreSQL AsyncConnectionPool: %s", exc)
                     return None
@@ -201,6 +205,7 @@ async def close_postgres_pools() -> None:
 # PERSISTENT POSTGRES CHECKPOINTER CHO LANGGRAPH & DEEP AGENTS
 # ============================================================================
 
+
 class PersistentPostgresCheckpointer(BaseCheckpointSaver):
     """Checkpointer lưu vết hội thoại bền vững trên PostgreSQL.
 
@@ -240,7 +245,9 @@ class PersistentPostgresCheckpointer(BaseCheckpointSaver):
 
                     self._saver = AsyncPostgresSaver(self._pool)
                     await self._saver.setup()
-                    logger.info("LangGraph AsyncPostgresSaver đã thiết lập bảng checkpoints thành công.")
+                    logger.info(
+                        "LangGraph AsyncPostgresSaver đã thiết lập bảng checkpoints thành công."
+                    )
         return self._saver
 
     async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
@@ -289,7 +296,10 @@ class PersistentPostgresCheckpointer(BaseCheckpointSaver):
 # PERSISTENCE HELPERS CHO ĐƠN HÀNG VÀ KHIẾU NẠI (HITL DRAFTS)
 # ============================================================================
 
-def persist_draft_booking_to_postgres(draft_record: dict[str, Any], postgres_url: str | None = None) -> bool:
+
+def persist_draft_booking_to_postgres(
+    draft_record: dict[str, Any], postgres_url: str | None = None
+) -> bool:
     """Lưu hoặc cập nhật bản nháp đơn hàng vào PostgreSQL."""
     pool = get_sync_pool(postgres_url)
     if not pool:
@@ -302,9 +312,9 @@ def persist_draft_booking_to_postgres(draft_record: dict[str, Any], postgres_url
         status = draft_record.get("status", "WAITING_CONFIRMATION")
         sender = draft_record.get("sender", {})
         receiver = draft_record.get("receiver", {})
-        created_at = draft_record.get("created_at") or datetime.now(timezone.utc).isoformat()
-        expires_at = draft_record.get("expires_at") or datetime.now(timezone.utc).isoformat()
-        updated_at = datetime.now(timezone.utc).isoformat()
+        created_at = draft_record.get("created_at") or datetime.now(UTC).isoformat()
+        expires_at = draft_record.get("expires_at") or datetime.now(UTC).isoformat()
+        updated_at = datetime.now(UTC).isoformat()
 
         sql = """
         INSERT INTO draft_bookings (
@@ -322,27 +332,48 @@ def persist_draft_booking_to_postgres(draft_record: dict[str, Any], postgres_url
             updated_at = EXCLUDED.updated_at;
         """
         with pool.connection() as conn:
-            conn.execute(sql, (
-                draft_id, tenant, session_id, request_id, status,
-                sender.get("name"), sender.get("phone"),
-                receiver.get("name"), receiver.get("phone"),
-                Jsonb(draft_record), created_at, expires_at, updated_at,
-            ))
+            conn.execute(
+                sql,
+                (
+                    draft_id,
+                    tenant,
+                    session_id,
+                    request_id,
+                    status,
+                    sender.get("name"),
+                    sender.get("phone"),
+                    receiver.get("name"),
+                    receiver.get("phone"),
+                    Jsonb(draft_record),
+                    created_at,
+                    expires_at,
+                    updated_at,
+                ),
+            )
         return True
     except Exception as exc:
         logger.debug("Lỗi persist draft booking tới PostgreSQL: %s", exc)
         return False
 
 
-def fetch_draft_booking_from_postgres(draft_id: str, postgres_url: str | None = None) -> dict[str, Any] | None:
-    """Đọc bản nháp đơn hàng từ PostgreSQL."""
+def fetch_draft_booking_from_postgres(
+    draft_id: str,
+    tenant: str | None = None,
+    postgres_url: str | None = None,
+) -> dict[str, Any] | None:
+    """Đọc bản nháp đơn hàng từ PostgreSQL (có lọc tenant chống IDOR)."""
     pool = get_sync_pool(postgres_url)
     if not pool:
         return None
     try:
-        sql = "SELECT detail FROM draft_bookings WHERE draft_id = %s LIMIT 1;"
+        if tenant:
+            sql = "SELECT detail FROM draft_bookings WHERE draft_id = %s AND tenant = %s LIMIT 1;"
+            params = (draft_id.strip(), tenant.strip())
+        else:
+            sql = "SELECT detail FROM draft_bookings WHERE draft_id = %s LIMIT 1;"
+            params = (draft_id.strip(),)
         with pool.connection() as conn:
-            cur = conn.execute(sql, (draft_id.strip(),))
+            cur = conn.execute(sql, params)
             row = cur.fetchone()
             if row and "detail" in row:
                 return row["detail"]
@@ -351,7 +382,9 @@ def fetch_draft_booking_from_postgres(draft_id: str, postgres_url: str | None = 
     return None
 
 
-def persist_draft_complaint_to_postgres(claim_record: dict[str, Any], postgres_url: str | None = None) -> bool:
+def persist_draft_complaint_to_postgres(
+    claim_record: dict[str, Any], postgres_url: str | None = None
+) -> bool:
     """Lưu hoặc cập nhật bản nháp khiếu nại vào PostgreSQL."""
     pool = get_sync_pool(postgres_url)
     if not pool:
@@ -365,9 +398,9 @@ def persist_draft_complaint_to_postgres(claim_record: dict[str, Any], postgres_u
         customer = claim_record.get("customer", {})
         item_code = claim_record.get("item_code")
         claim_type = claim_record.get("claim_type")
-        created_at = claim_record.get("created_at") or datetime.now(timezone.utc).isoformat()
-        expires_at = claim_record.get("expires_at") or datetime.now(timezone.utc).isoformat()
-        updated_at = datetime.now(timezone.utc).isoformat()
+        created_at = claim_record.get("created_at") or datetime.now(UTC).isoformat()
+        expires_at = claim_record.get("expires_at") or datetime.now(UTC).isoformat()
+        updated_at = datetime.now(UTC).isoformat()
 
         sql = """
         INSERT INTO draft_complaints (
@@ -385,27 +418,48 @@ def persist_draft_complaint_to_postgres(claim_record: dict[str, Any], postgres_u
             updated_at = EXCLUDED.updated_at;
         """
         with pool.connection() as conn:
-            conn.execute(sql, (
-                draft_ticket_id, tenant, session_id, request_id, status,
-                customer.get("name"), customer.get("phone"),
-                item_code, claim_type,
-                Jsonb(claim_record), created_at, expires_at, updated_at,
-            ))
+            conn.execute(
+                sql,
+                (
+                    draft_ticket_id,
+                    tenant,
+                    session_id,
+                    request_id,
+                    status,
+                    customer.get("name"),
+                    customer.get("phone"),
+                    item_code,
+                    claim_type,
+                    Jsonb(claim_record),
+                    created_at,
+                    expires_at,
+                    updated_at,
+                ),
+            )
         return True
     except Exception as exc:
         logger.debug("Lỗi persist draft complaint tới PostgreSQL: %s", exc)
         return False
 
 
-def fetch_draft_complaint_from_postgres(draft_ticket_id: str, postgres_url: str | None = None) -> dict[str, Any] | None:
-    """Đọc bản nháp khiếu nại từ PostgreSQL."""
+def fetch_draft_complaint_from_postgres(
+    draft_ticket_id: str,
+    tenant: str | None = None,
+    postgres_url: str | None = None,
+) -> dict[str, Any] | None:
+    """Đọc bản nháp khiếu nại từ PostgreSQL (có lọc tenant chống IDOR)."""
     pool = get_sync_pool(postgres_url)
     if not pool:
         return None
     try:
-        sql = "SELECT detail FROM draft_complaints WHERE draft_ticket_id = %s LIMIT 1;"
+        if tenant:
+            sql = "SELECT detail FROM draft_complaints WHERE draft_ticket_id = %s AND tenant = %s LIMIT 1;"
+            params = (draft_ticket_id.strip(), tenant.strip())
+        else:
+            sql = "SELECT detail FROM draft_complaints WHERE draft_ticket_id = %s LIMIT 1;"
+            params = (draft_ticket_id.strip(),)
         with pool.connection() as conn:
-            cur = conn.execute(sql, (draft_ticket_id.strip(),))
+            cur = conn.execute(sql, params)
             row = cur.fetchone()
             if row and "detail" in row:
                 return row["detail"]

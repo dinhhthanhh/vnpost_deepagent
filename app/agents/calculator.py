@@ -6,15 +6,21 @@ import operator
 import re
 import unicodedata
 
-OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
-       ast.Div: operator.truediv, ast.Pow: operator.pow, ast.Mod: operator.mod}
+OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.Mod: operator.mod,
+}
 
 
 def _vn_numbers(expr: str) -> str:
     # 125.000 -> 125000, 1.500.000 -> 1500000 (bảo tồn số thập phân 0.xxx vì bắt đầu bằng [1-9])
     while re.search(r"\b([1-9]\d*)\.(\d{3}(?!\d))", expr):
         expr = re.sub(r"\b([1-9]\d*)\.(\d{3}(?!\d))", r"\1\2", expr)
-    return re.sub(r"(?<=\d),(?=\d)", ".", expr)             # 2,5 -> 2.5
+    return re.sub(r"(?<=\d),(?=\d)", ".", expr)  # 2,5 -> 2.5
 
 
 def safe_calculate(expression: str) -> float | int:
@@ -57,13 +63,39 @@ def safe_calculate(expression: str) -> float | int:
 
 _WEEKDAYS_VN = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
 _WEEKDAY_MAP = {
-    "thứ hai": 0, "thứ 2": 0, "thu hai": 0, "thu 2": 0, "t2": 0,
-    "thứ ba": 1, "thứ 3": 1, "thu ba": 1, "thu 3": 1, "t3": 1,
-    "thứ tư": 2, "thứ 4": 2, "thu tư": 2, "thu 4": 2, "t4": 2,
-    "thứ năm": 3, "thứ 5": 3, "thu năm": 3, "thu 5": 3, "t5": 3,
-    "thứ sáu": 4, "thứ 6": 4, "thu sáu": 4, "thu 6": 4, "t6": 4,
-    "thứ bảy": 5, "thứ 7": 5, "thu bảy": 5, "thu 7": 5, "t7": 5,
-    "chủ nhật": 6, "chu nhat": 6, "cn": 6,
+    "thứ hai": 0,
+    "thứ 2": 0,
+    "thu hai": 0,
+    "thu 2": 0,
+    "t2": 0,
+    "thứ ba": 1,
+    "thứ 3": 1,
+    "thu ba": 1,
+    "thu 3": 1,
+    "t3": 1,
+    "thứ tư": 2,
+    "thứ 4": 2,
+    "thu tư": 2,
+    "thu 4": 2,
+    "t4": 2,
+    "thứ năm": 3,
+    "thứ 5": 3,
+    "thu năm": 3,
+    "thu 5": 3,
+    "t5": 3,
+    "thứ sáu": 4,
+    "thứ 6": 4,
+    "thu sáu": 4,
+    "thu 6": 4,
+    "t6": 4,
+    "thứ bảy": 5,
+    "thứ 7": 5,
+    "thu bảy": 5,
+    "thu 7": 5,
+    "t7": 5,
+    "chủ nhật": 6,
+    "chu nhat": 6,
+    "cn": 6,
 }
 
 
@@ -200,7 +232,9 @@ def safe_date_calculate(query: str, now: datetime.datetime | None = None) -> dic
 
     # 5. Nhận diện 'ngày X tháng sau/tới/trước' hoặc 'X tháng sau/tới/trước' (X là ngày 1..31 trong tháng)
     # Ví dụ: '21 tháng sau là ngày thứ mấy', 'ngày 15 tháng tới', '20 tháng trước'
-    day_rel_month = re.search(r"(?:ngày\s+)?\b([1-9]|[12]\d|3[01])\s+tháng\s+(sau|tới|tiếp\s+theo|trước|này)\b", q)
+    day_rel_month = re.search(
+        r"(?:ngày\s+)?\b([1-9]|[12]\d|3[01])\s+tháng\s+(sau|tới|tiếp\s+theo|trước|này)\b", q
+    )
     if day_rel_month:
         day = int(day_rel_month.group(1))
         rel = day_rel_month.group(2)
@@ -218,7 +252,11 @@ def safe_date_calculate(query: str, now: datetime.datetime | None = None) -> dic
         wd = _WEEKDAYS_VN[target_date.weekday()]
 
         d_str = target_date.strftime("%d/%m/%Y")
-        rel_text = "tháng sau" if rel in ("sau", "tới", "tiếp theo") else ("tháng trước" if rel == "trước" else "tháng này")
+        rel_text = (
+            "tháng sau"
+            if rel in ("sau", "tới", "tiếp theo")
+            else ("tháng trước" if rel == "trước" else "tháng này")
+        )
         return {
             "type": "day_of_relative_month",
             "target_date": d_str,
@@ -227,10 +265,16 @@ def safe_date_calculate(query: str, now: datetime.datetime | None = None) -> dic
         }
 
     # Hoặc người dùng chỉnh sửa: 'tháng sau chứ không phải năm sau'
-    if "tháng sau" in q and ("không phải năm sau" in q or "chứ không phải" in q or "không phải năm" in q):
+    if "tháng sau" in q and (
+        "không phải năm sau" in q or "chứ không phải" in q or "không phải năm" in q
+    ):
         target_year = today.year + (1 if today.month == 12 else 0)
         target_month = 1 if today.month == 12 else today.month + 1
-        target_date = datetime.date(target_year, target_month, min(today.day, calendar.monthrange(target_year, target_month)[1]))
+        target_date = datetime.date(
+            target_year,
+            target_month,
+            min(today.day, calendar.monthrange(target_year, target_month)[1]),
+        )
         wd = _WEEKDAYS_VN[target_date.weekday()]
         return {
             "type": "clarification_next_month",

@@ -4,6 +4,7 @@ Kế thừa và chuẩn hóa từ agent.template của VNPost:
 1. Tự động nhận diện từ viết tắt nghiệp vụ trong câu hỏi và bổ sung gợi ý vào prompt lúc runtime.
 2. Hậu xử lý văn bản (postprocess_func) chuẩn hóa định dạng số/tiền tệ Việt Nam và công thức LaTeX sang Markdown.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,9 +36,7 @@ DEFAULT_TERMINOLOGY: dict[str, str] = {
 def normalize_for_match(text: str) -> str:
     """Chuẩn hóa văn bản: lowercase, đ->d, bỏ dấu tiếng Việt (NFD decomposition)."""
     text = text.lower().replace("đ", "d")
-    return "".join(
-        c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn"
-    )
+    return "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn")
 
 
 def load_terminology(file_path: str = "terminology.json") -> dict[str, str]:
@@ -72,7 +71,9 @@ def find_matched_terminology(
 
     if isinstance(text, list):
         text_str = " ".join(
-            m.get("content", "") or "" for m in text if isinstance(m, dict) and isinstance(m.get("content"), str)
+            m.get("content", "") or ""
+            for m in text
+            if isinstance(m, dict) and isinstance(m.get("content"), str)
         )
     else:
         text_str = str(text or "")

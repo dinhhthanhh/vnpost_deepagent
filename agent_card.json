@@ -4,6 +4,13 @@
   "version": "1.1.0",
   "defaultInputModes": ["text", "voice"],
   "defaultOutputModes": ["text", "audio"],
+  "supportedInterfaces": [
+    {
+      "url": "http://127.0.0.1:8000/a2a",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    }
+  ],
   "capabilities": {
     "streaming": true,
     "hitl_confirmation": true,

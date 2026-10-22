@@ -6,6 +6,7 @@ hoặc xã giao không cần truy xuất (Tầng 0).
 
 Hoàn toàn loại bỏ LLM Semantic Router ở chế độ mặc định: Phân loại chỉ tốn < 1-5 mili-giây!
 """
+
 from __future__ import annotations
 
 import json
@@ -254,10 +255,12 @@ async def _semantic_route(
         http_client=clients.sync if clients else None,
         http_async_client=clients.async_ if clients else None,
     )
-    response = await model.ainvoke([
-        SystemMessage(content=SEMANTIC_ROUTER_SYSTEM_PROMPT),
-        HumanMessage(content=message[:settings.router_max_characters]),
-    ])
+    response = await model.ainvoke(
+        [
+            SystemMessage(content=SEMANTIC_ROUTER_SYSTEM_PROMPT),
+            HumanMessage(content=message[: settings.router_max_characters]),
+        ]
+    )
     return _parse_semantic_response(message_text(response))
 
 
@@ -269,7 +272,7 @@ async def classify_query_adaptive(
 ) -> RouterDecision:
     """Định tuyến thích ứng 0-LLM mặc định."""
     decision = rule_based_decision(message, image, max_characters=settings.router_max_characters)
-    
+
     # Chỉ gọi LLM router khi người dùng chủ động cấu hình opt-in llm_router_enabled
     if getattr(settings, "llm_router_enabled", False):
         try:

@@ -58,7 +58,9 @@ class CrossEncoderReranker:
                 ranked.append({**candidate, "reranker_score": round(score, 6)})
             return sorted(ranked, key=lambda item: item["reranker_score"], reverse=True)
         except Exception as exc:
-            logger.warning("Remote rerank API call failed (%s): %s; retaining original order", url, exc)
+            logger.warning(
+                "Remote rerank API call failed (%s): %s; retaining original order", url, exc
+            )
             return candidates
 
     def rerank(self, query: str, candidates: list[dict]) -> list[dict]:
@@ -67,5 +69,7 @@ class CrossEncoderReranker:
             return candidates
         if self.provider == "api":
             return self._rerank_api(query, candidates)
-        logger.warning("Reranker provider '%s' is not supported; remote 'api' is required.", self.provider)
+        logger.warning(
+            "Reranker provider '%s' is not supported; remote 'api' is required.", self.provider
+        )
         return candidates

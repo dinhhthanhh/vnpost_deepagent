@@ -4,30 +4,61 @@ from app.agents.calculator import _vn_numbers
 from app.router.fastpath import local_answer
 
 
-@pytest.mark.parametrize("q,expect", [
-    ("1+1=?", "= **2**"), ("1+1=", "= **2**"), ("3002x2", "= **6004**"), ("3002 x 2 = ?", "= **6004**"),
-    ("1+4", "= **5**"), ("Tính giúp tôi 125000 + 35000 đồng và nêu cách tính.", "= **160000**"),
-    ("125.000 + 35.000", "= **160000**"), ("1.500 + 500", "= **2000**"), ("1.500.000 + 500.000", "= **2000000**"),
-    ("10/4", "= **2,5**"), ("2,5 + 1", "= **3,5**"), ("3.14 + 1", "= **4,14**"),
-    ("2^10", "= **1024**"), ("(2+3)*4 bằng bao nhiêu", "= **20**"), ("3002×2", "= **6004**"), ("10:4", "= **2,5**"),
-])
+@pytest.mark.parametrize(
+    "q,expect",
+    [
+        ("1+1=?", "= **2**"),
+        ("1+1=", "= **2**"),
+        ("3002x2", "= **6004**"),
+        ("3002 x 2 = ?", "= **6004**"),
+        ("1+4", "= **5**"),
+        ("Tính giúp tôi 125000 + 35000 đồng và nêu cách tính.", "= **160000**"),
+        ("125.000 + 35.000", "= **160000**"),
+        ("1.500 + 500", "= **2000**"),
+        ("1.500.000 + 500.000", "= **2000000**"),
+        ("10/4", "= **2,5**"),
+        ("2,5 + 1", "= **3,5**"),
+        ("3.14 + 1", "= **4,14**"),
+        ("2^10", "= **1024**"),
+        ("(2+3)*4 bằng bao nhiêu", "= **20**"),
+        ("3002×2", "= **6004**"),
+        ("10:4", "= **2,5**"),
+    ],
+)
 def test_calc(q, expect):
     a = local_answer(q)
     assert a and a.kind == "calc" and expect in a.text, (q, a)
 
-@pytest.mark.parametrize("q", [
-    "1+!", "12/10/2025", "12/2024", "12/2024/NĐ-CP", "Nghị định 45/2020", "thông tư 12/2024",
-    "quy trình nghỉ phép", "cước EMS 2kg + phụ phí là bao nhiêu",
-    "so sánh 1+1 và 2+2", "tính phí chuyển phát", "số điện thoại 0912345678", "5", "1+1 theo quy định số 12",
-    "1/0", "9**99",
-])
+
+@pytest.mark.parametrize(
+    "q",
+    [
+        "1+!",
+        "12/10/2025",
+        "12/2024",
+        "12/2024/NĐ-CP",
+        "Nghị định 45/2020",
+        "thông tư 12/2024",
+        "quy trình nghỉ phép",
+        "cước EMS 2kg + phụ phí là bao nhiêu",
+        "so sánh 1+1 và 2+2",
+        "tính phí chuyển phát",
+        "số điện thoại 0912345678",
+        "5",
+        "1+1 theo quy định số 12",
+        "1/0",
+        "9**99",
+    ],
+)
 def test_not_calc(q):
     assert local_answer(q) is None, q
+
 
 def test_chitchat():
     assert "Mipo" in local_answer("xin chào", chitchat=True).text
     assert "Không có gì" in local_answer("ok cảm ơn", chitchat=True).text
     assert "Tạm biệt" in local_answer("tạm biệt", chitchat=True).text
+
 
 def test_vn_numbers_edge_cases():
     # 3.141 có 3 chữ số sau dấu chấm, theo quy ước số Việt Nam _vn_numbers hiểu là 3141

@@ -2,18 +2,25 @@
 
 Chỉ dùng để LEO THANG hoặc bỏ qua truy xuất; không dùng để chọn 'fast' (mặc định đã là fast).
 """
+
 import re
 from dataclasses import asdict, dataclass
 
 from app.core.text import norm
 
-_CW = (r"(?:xin chào|chào|hello|hi|hey|alo|cảm ơn|cám ơn|thanks|thank you|tạm biệt|bye|ok|oke|okay|vâng|dạ|được rồi"
-       r"|bạn là ai|ban la ai|bạn tên gì|ban ten gi|mipo là ai|mipo la ai"
-       r"|bạn|mipo|nhé|nha|ạ|anh|chị|em|rất nhiều|nhiều|chao|xin chao|chao ban|cam on|tam biet)")
+_CW = (
+    r"(?:xin chào|chào|hello|hi|hey|alo|cảm ơn|cám ơn|thanks|thank you|tạm biệt|bye|ok|oke|okay|vâng|dạ|được rồi"
+    r"|bạn là ai|ban la ai|bạn tên gì|ban ten gi|mipo là ai|mipo la ai"
+    r"|bạn|mipo|nhé|nha|ạ|anh|chị|em|rất nhiều|nhiều|chao|xin chao|chao ban|cam on|tam biet)"
+)
 _CHITCHAT = re.compile(rf"{_CW}(?: {_CW})*")
-_COMPARE = re.compile(r"so sánh|đối chiếu|khác nhau|khác gì|khác biệt|giống nhau|phân biệt|ưu nhược|hơn kém")
+_COMPARE = re.compile(
+    r"so sánh|đối chiếu|khác nhau|khác gì|khác biệt|giống nhau|phân biệt|ưu nhược|hơn kém"
+)
 # Chỉ các cách nói "hãy tính cho tôi" và biểu thức số. KHÔNG gồm "tính phí/cước ... như thế nào" (đó là câu tra cứu).
-_CALC = re.compile(r"tính (toán|giúp|hộ|cho tôi|cho mình|tổng)|tổng cộng|cộng lại|\d\s*[x×*+]\s*\d|\d\s*/\s*\d")
+_CALC = re.compile(
+    r"tính (toán|giúp|hộ|cho tôi|cho mình|tổng)|tổng cộng|cộng lại|\d\s*[x×*+]\s*\d|\d\s*/\s*\d"
+)
 _DATE = re.compile(r"\b\d{1,2}\s*/\s*\d{1,2}(?:\s*/\s*\d{2,4})?\b")
 _MULTISTEP = re.compile(
     r"(?:sau đó|tiếp theo)\s+(?:tính|so sánh|lập|soạn|tổng hợp|gửi|làm bước)|đồng thời|rồi (?:tính|so sánh|lập|soạn|tổng hợp|gửi)|và (?:so sánh|tính|lập|soạn|tổng hợp)"

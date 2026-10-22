@@ -15,11 +15,19 @@ def test_router_classification_heuristics():
     assert classify_query("Thời hạn hoàn cước là bao lâu?")[0] == "fast"
     assert classify_query("Nghỉ phép năm được mấy ngày?")[0] == "fast"
     assert classify_query("Tóm tắt quy định gửi hàng chuyển phát tiêu chuẩn")[0] == "fast"
-    assert classify_query("Bưu phẩm này gửi được không?", image="data:image/png;base64,abc")[0] == "deep"
+    assert (
+        classify_query("Bưu phẩm này gửi được không?", image="data:image/png;base64,abc")[0]
+        == "deep"
+    )
     assert classify_query("Hãy so sánh dịch vụ EMS và bưu phẩm thường")[0] == "deep"
     assert classify_query("Tính giúp tôi cước phí gửi 5kg đi Đà Nẵng")[0] == "deep"
     assert classify_query("Thời gian gửi là bao lâu? Cước phí hết bao nhiêu?")[0] == "deep"
-    assert classify_query("Tôi cần giấy tờ gì khi chuyển tiền, và cách tra cứu giao dịch như thế nào?")[0] == "deep"
+    assert (
+        classify_query(
+            "Tôi cần giấy tờ gì khi chuyển tiền, và cách tra cứu giao dịch như thế nào?"
+        )[0]
+        == "deep"
+    )
 
 
 def test_router_normalizes_vietnamese_unicode_and_defaults_to_retrieval_first():
@@ -35,7 +43,10 @@ def test_router_normalizes_vietnamese_unicode_and_defaults_to_retrieval_first():
 
 def test_semantic_router_response_parser_rejects_free_text_and_bad_confidence():
     assert _parse_semantic_response('{"route":"fast","confidence":0.91}') == ("fast", 0.91)
-    assert _parse_semantic_response('```json\n{"confidence":0.91,"route":"fast"}\n```') == ("fast", 0.91)
+    assert _parse_semantic_response('```json\n{"confidence":0.91,"route":"fast"}\n```') == (
+        "fast",
+        0.91,
+    )
     assert _parse_semantic_response("route: fast") is None
     assert _parse_semantic_response('{"route":"fast","confidence":1.2}') is None
 
@@ -45,7 +56,9 @@ async def test_adaptive_router_does_not_call_llm_by_default(settings, monkeypatc
         raise AssertionError("LLM router must stay off by default")
 
     monkeypatch.setattr(router, "_semantic_route", forbidden)
-    decision = await classify_query_adaptive(settings, None, "Tôi muốn hỏi về việc nhận bưu gửi của mình.")
+    decision = await classify_query_adaptive(
+        settings, None, "Tôi muốn hỏi về việc nhận bưu gửi của mình."
+    )
     assert decision.route == "fast"
     assert decision.strategy == "retrieval_first"
 
@@ -56,7 +69,9 @@ async def test_experimental_semantic_router_is_opt_in(settings, monkeypatch):
 
     monkeypatch.setattr(router, "_semantic_route", semantic_deep)
     settings = settings.model_copy(update={"llm_router_enabled": True})
-    decision = await classify_query_adaptive(settings, None, "Tôi muốn hỏi về việc nhận bưu gửi của mình.")
+    decision = await classify_query_adaptive(
+        settings, None, "Tôi muốn hỏi về việc nhận bưu gửi của mình."
+    )
     assert decision.route == "deep"
     assert decision.strategy == "semantic"
 
@@ -67,7 +82,9 @@ async def test_semantic_router_failure_keeps_fast_path(settings, monkeypatch):
 
     monkeypatch.setattr(router, "_semantic_route", broken_router)
     settings = settings.model_copy(update={"llm_router_enabled": True})
-    decision = await classify_query_adaptive(settings, None, "Tôi muốn hỏi về việc nhận bưu gửi của mình.")
+    decision = await classify_query_adaptive(
+        settings, None, "Tôi muốn hỏi về việc nhận bưu gửi của mình."
+    )
     assert decision.route == "fast"
     assert decision.strategy == "retrieval_first"
 
@@ -94,7 +111,9 @@ async def test_fast_rag_execution_in_service(settings):
     svc = ChatService(settings)
     svc.knowledge.for_tenant("a").ingest("rule.txt", "Thời gian khiếu nại là 30 ngày.".encode())
     try:
-        result = await svc.chat("a", ChatRequest(message="Thời gian khiếu nại là bao lâu?", mode="fast"))
+        result = await svc.chat(
+            "a", ChatRequest(message="Thời gian khiếu nại là bao lâu?", mode="fast")
+        )
         assert result.route == "fast"
         assert result.grounding_status == "cited"
         assert len(result.sources) >= 1
@@ -127,6 +146,7 @@ def test_router_temporal_calculation():
     decision2 = rule_based_decision("thứ 4 tuần sau nữa nữa là ngày thứ mấy")
     assert decision2.route == "deep"
     assert decision2.tier == 2
+
 
 def test_router_postal_operations_use_specialist_route():
     for question in (

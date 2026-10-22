@@ -1,24 +1,14 @@
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from app.agents.postal_actions import (
     create_draft_booking,
-    create_draft_complaint,
     get_draft_booking,
-    get_draft_complaint,
-    get_session_drafts,
 )
 from app.core.config import Settings
 from app.core.postgres import (
     PersistentPostgresCheckpointer,
     fetch_draft_booking_from_postgres,
-    fetch_draft_complaint_from_postgres,
-    fetch_session_drafts_from_postgres,
-    get_async_pool,
-    get_sync_pool,
     persist_draft_booking_to_postgres,
-    persist_draft_complaint_to_postgres,
 )
 
 
@@ -56,13 +46,17 @@ def test_persist_draft_booking_graceful_offline():
         "status": "WAITING_CONFIRMATION",
     }
     # Khi không có kết nối tới server thật, hàm trả về False một cách an toàn và không raise Exception
-    res = persist_draft_booking_to_postgres(dummy_draft, postgres_url="postgresql://invalid:invalid@localhost:5432/invalid")
+    res = persist_draft_booking_to_postgres(
+        dummy_draft, postgres_url="postgresql://invalid:invalid@localhost:5432/invalid"
+    )
     assert res is False
 
 
 def test_fetch_draft_booking_graceful_offline():
     """Kiểm tra fetch draft booking an toàn khi PostgreSQL offline."""
-    res = fetch_draft_booking_from_postgres("BK-DRAFT-NONEXISTENT", postgres_url="postgresql://invalid:invalid@localhost:5432/invalid")
+    res = fetch_draft_booking_from_postgres(
+        "BK-DRAFT-NONEXISTENT", postgres_url="postgresql://invalid:invalid@localhost:5432/invalid"
+    )
     assert res is None
 
 

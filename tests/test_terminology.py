@@ -59,7 +59,10 @@ def test_postprocess_func_numbers_and_math():
 
     # 4. Bảo vệ số điện thoại / hotline không bị đổi dấu cách thành dấu chấm tiền tệ
     hotline_text = "Liên hệ hotline 1900 545 481 hoặc tổng đài 024 3768 4969 để được giải đáp."
-    assert postprocess_func(hotline_text) == "Liên hệ hotline 1900 545 481 hoặc tổng đài 024 3768 4969 để được giải đáp."
+    assert (
+        postprocess_func(hotline_text)
+        == "Liên hệ hotline 1900 545 481 hoặc tổng đài 024 3768 4969 để được giải đáp."
+    )
 
 
 def test_load_terminology():

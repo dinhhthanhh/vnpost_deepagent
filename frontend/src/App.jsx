@@ -196,9 +196,13 @@ function FormattedAnswer({ text }) {
       /\[(S\d+)\]/g,
       '<span class="citation-badge">[$1]</span>'
     );
+    // Chuyển đổi mọi link Google Maps thành đúng 1 nút 'Google Maps' duy nhất trong box
     rawHtml = rawHtml.replace(
-      /<a\s+(?:[^>]*?\s+)?href="([^"]*(?:google\.com\/maps|maps\.google\.com)[^"]*)"([^>]*)>(.*?)<\/a>/gi,
-      '<a href="$1" target="_blank" rel="noopener noreferrer" class="maps-direction-link"$2><span class="map-pin-svg-icon"></span>$3</a>'
+      /([Cc]hỉ đường(?:\s+(?:trên|qua))?(?:\s+Google Maps)?\s*:\s*)?<a\s+(?:[^>]*?\s+)?href="([^"]*(?:google\.com\/maps|maps\.google\.com)[^"]*)"[^>]*>.*?<\/a>/gi,
+      (match, prefix, href) => {
+        const cleanPrefix = prefix ? "Chỉ đường: " : "";
+        return `${cleanPrefix}<a href="${href}" target="_blank" rel="noopener noreferrer" class="maps-direction-link"><span class="map-pin-svg-icon"></span>Google Maps</a>`;
+      }
     );
     // Sanitize HTML strictly before injecting into DOM to prevent XSS
     const cleanHtml = DOMPurify.sanitize(rawHtml, {
@@ -406,7 +410,9 @@ export default function App() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showBotDropdown, setShowBotDropdown] = useState(false);
   const [showToolsDropdown, setShowToolsDropdown] = useState(false);
+  const [showModeDropdown, setShowModeDropdown] = useState(false);
   const [streamingAudio, setStreamingAudio] = useState(false);
+  const [playingMessageId, setPlayingMessageId] = useState(null);
   const [attachedImage, setAttachedImage] = useState(null);
   const [likedMap, setLikedMap] = useState({});
   const [dislikedMap, setDislikedMap] = useState({});
@@ -476,6 +482,7 @@ export default function App() {
   const stream = useRef(null);
   const botDropdownRef = useRef();
   const toolsDropdownRef = useRef();
+  const modeDropdownRef = useRef();
 
   const releaseBlobs = () => {
     blobs.current.forEach(URL.revokeObjectURL);
@@ -491,6 +498,7 @@ export default function App() {
       audio.current.currentTime = 0;
     }
     setStreamingAudio(false);
+    setPlayingMessageId(null);
   };
 
   const handleToggleVoice = () => {
@@ -622,6 +630,9 @@ export default function App() {
       }
       if (toolsDropdownRef.current && !toolsDropdownRef.current.contains(event.target)) {
         setShowToolsDropdown(false);
+      }
+      if (modeDropdownRef.current && !modeDropdownRef.current.contains(event.target)) {
+        setShowModeDropdown(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -768,34 +779,88 @@ export default function App() {
     setSessionDocs([]);
   }
 
-  function handleImageSelect(e) {
+  async function compressImageFile(file, maxWidth = 1600, maxHeight = 1600, quality = 0.82) {
+    return new Promise((resolve) => {
+      if (file.type === "image/svg+xml" || file.type === "image/gif") {
+        const reader = new FileReader();
+        reader.onload = (ev) => resolve(ev.target.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(file);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxWidth || height > maxHeight) {
+            const ratio = Math.min(maxWidth / width, maxHeight / height);
+            width = Math.round(width * ratio);
+            height = Math.round(height * ratio);
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(ev.target.result);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL("image/jpeg", quality);
+          resolve(dataUrl);
+        };
+        img.onerror = () => resolve(ev.target.result);
+        img.src = ev.target.result;
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleImageSelect(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       setNotice("Chỉ hỗ trợ tệp định dạng hình ảnh (PNG, JPG, WebP...).");
       return;
     }
-    if (file.size > 8 * 1024 * 1024) {
-      setNotice("Kích thước ảnh tối đa là 8MB.");
+    if (file.size > 15 * 1024 * 1024) {
+      setNotice("Kích thước ảnh tối đa là 15MB.");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = (ev) => setAttachedImage(ev.target.result);
-    reader.readAsDataURL(file);
-    e.target.value = "";
+    setNotice("Đang tối ưu hóa dung lượng ảnh...");
+    try {
+      const compressed = await compressImageFile(file);
+      if (compressed) {
+        setAttachedImage(compressed);
+        setNotice("Đã nén tối ưu ảnh thành công.");
+        setTimeout(() => setNotice(""), 2500);
+      } else {
+        setNotice("Không thể xử lý hình ảnh này.");
+      }
+    } catch {
+      setNotice("Lỗi khi xử lý hình ảnh.");
+    } finally {
+      e.target.value = "";
+    }
   }
 
-  function handlePaste(e) {
+  async function handlePaste(e) {
     const items = e.clipboardData?.items;
     if (!items) return;
     for (const item of items) {
       if (item.type.startsWith("image/")) {
         const file = item.getAsFile();
         if (file) {
-          const reader = new FileReader();
-          reader.onload = (ev) => setAttachedImage(ev.target.result);
-          reader.readAsDataURL(file);
           e.preventDefault();
+          setNotice("Đang tối ưu hóa ảnh từ clipboard...");
+          const compressed = await compressImageFile(file);
+          if (compressed) {
+            setAttachedImage(compressed);
+            setNotice("Đã đính kèm ảnh từ clipboard.");
+            setTimeout(() => setNotice(""), 2500);
+          }
           break;
         }
       }
@@ -853,6 +918,18 @@ export default function App() {
       audioEl.pause();
       audioEl.src = blob;
       audioEl.currentTime = 0;
+      audioEl.onplay = () => {
+        setStreamingAudio(true);
+        setPlayingMessageId(id);
+      };
+      audioEl.onended = () => {
+        setStreamingAudio(false);
+        setPlayingMessageId(null);
+      };
+      audioEl.onpause = () => {
+        setStreamingAudio(false);
+        setPlayingMessageId(null);
+      };
       audioEl.play().catch((err) => {
         console.warn("Autoplay notice:", err);
         setNotice("Âm thanh đã sẵn sàng. Bấm nút loa ở câu trả lời để nghe.");
@@ -862,7 +939,7 @@ export default function App() {
     }
   }
 
-  function createStreamingSpeech() {
+  function createStreamingSpeech(targetMessageId) {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return null;
 
@@ -873,6 +950,7 @@ export default function App() {
     stream.current = current;
     // Called in the Send handler, so browsers can authorize Web Audio playback.
     context.resume().catch(() => { });
+    if (targetMessageId) setPlayingMessageId(targetMessageId);
 
     let pending = "";
     let queue = Promise.resolve();
@@ -895,7 +973,10 @@ export default function App() {
         });
         await playWavStream(response, context, {
           signal: controller.signal,
-          onFirstAudio: () => setStreamingAudio(true),
+          onFirstAudio: () => {
+            setStreamingAudio(true);
+            if (targetMessageId) setPlayingMessageId(targetMessageId);
+          },
         });
       }).catch((error) => {
         if (error.name !== "AbortError") setNotice(error.message);
@@ -915,7 +996,10 @@ export default function App() {
         });
         await playWavStream(response, context, {
           signal: controller.signal,
-          onFirstAudio: () => setStreamingAudio(true),
+          onFirstAudio: () => {
+            setStreamingAudio(true);
+            if (targetMessageId) setPlayingMessageId(targetMessageId);
+          },
         });
       }).catch((error) => {
         if (error.name !== "AbortError") setNotice(error.message);
@@ -929,7 +1013,10 @@ export default function App() {
       finish: () => {
         enqueue("", true);
         queue.finally(() => {
-          if (stream.current === current) setStreamingAudio(false);
+          if (stream.current === current) {
+            setStreamingAudio(false);
+            setPlayingMessageId(null);
+          }
         });
       },
     };
@@ -951,7 +1038,9 @@ export default function App() {
     if ((!text && !attachedImage) || busy) return;
     if (!text && attachedImage) text = "Hãy phân tích hình ảnh này.";
 
-    const speech = voice ? createStreamingSpeech() : null;
+    const nowStr = getCurrentTimeString();
+    const assistantMsgId = crypto.randomUUID();
+    const speech = voice ? createStreamingSpeech(assistantMsgId) : null;
     if (voice && !speech) {
       try {
         if (!audio.current) {
@@ -962,8 +1051,6 @@ export default function App() {
       } catch { }
     }
 
-    const nowStr = getCurrentTimeString();
-    const assistantMsgId = crypto.randomUUID();
     setInput("");
     setBusy(true);
     setNotice("");
@@ -1090,6 +1177,10 @@ export default function App() {
   }
 
   async function readAnswer(message) {
+    if (playingMessageId === message.id) {
+      stopAudio();
+      return;
+    }
     stopAudio();
     const text = message.answer || message.text;
     if (!text) return;
@@ -1103,6 +1194,7 @@ export default function App() {
     stream.current = { controller, context };
     context.resume().catch(() => { });
     setStreamingAudio(true);
+    setPlayingMessageId(message.id);
 
     try {
       const response = await request("/api/tts/stream", key, {
@@ -1113,13 +1205,17 @@ export default function App() {
       });
       await playWavStream(response, context, {
         signal: controller.signal,
-        onFirstAudio: () => setStreamingAudio(true),
+        onFirstAudio: () => {
+          setStreamingAudio(true);
+          setPlayingMessageId(message.id);
+        },
       });
     } catch (e) {
       if (e.name !== "AbortError") setNotice(e.message);
     } finally {
       if (stream.current?.controller === controller) {
         setStreamingAudio(false);
+        setPlayingMessageId(null);
       }
     }
   }
@@ -1331,48 +1427,8 @@ export default function App() {
         {/* KHUNG CHAT CHÍNH (MAIN CHAT AREA) */}
         <main className="mipo-chat-area">
           {/* Menu trỏ xuống chọn Chatbot ĐKCL / Chatbot mvno */}
-          {/* Thanh điều khiển góc trên: Chọn chế độ xử lý (Auto / Fast / Deep) & Menu Chatbot */}
+          {/* Thanh điều khiển góc trên: Menu Chatbot */}
           <div className="chat-top-control">
-            {/* Bộ chọn Chế độ: Tự động (Auto) / Nhanh (Fast RAG) / Chuyên sâu (Deep Agent) */}
-            <div className="route-mode-segmented" title="Chọn chế độ xử lý">
-              <button
-                type="button"
-                className={`route-mode-btn ${routeMode === "auto" ? "active mode-auto" : ""}`}
-                onClick={() => {
-                  setRouteMode("auto");
-                  setNotice("Chế độ Tự động: Hệ thống sẽ tự phân tích câu hỏi để chọn Fast RAG hoặc Deep Agent.");
-                }}
-                title="Tự động (Auto): Hệ thống tự phân loại route phù hợp theo độ phức tạp của câu hỏi"
-              >
-                <FontAwesomeIcon icon={faWandMagicSparkles} style={{ marginRight: 5, fontSize: 11 }} />
-                <span>Tự động</span>
-              </button>
-              <button
-                type="button"
-                className={`route-mode-btn ${routeMode === "fast" ? "active mode-fast" : ""}`}
-                onClick={() => {
-                  setRouteMode("fast");
-                  setNotice("Chế độ Nhanh (Fast RAG): Tra cứu trực tiếp tài liệu 1 bước, tối ưu tốc độ.");
-                }}
-                title="Nhanh (Fast RAG): Trực tiếp tra cứu tài liệu nhanh 1 bước"
-              >
-                <FontAwesomeIcon icon={faBolt} style={{ marginRight: 5, fontSize: 11 }} />
-                <span>Nhanh</span>
-              </button>
-              <button
-                type="button"
-                className={`route-mode-btn ${routeMode === "deep" ? "active mode-deep" : ""}`}
-                onClick={() => {
-                  setRouteMode("deep");
-                  setNotice("Chế độ Chuyên sâu (Deep Agent): Kích hoạt hệ thống đa tác tử (Supervisor + RAG + Analyst + Writer).");
-                }}
-                title="Chuyên sâu (Deep Agent): Đa tác tử phân tích, so sánh, tính toán chuyên sâu"
-              >
-                <FontAwesomeIcon icon={faBrain} style={{ marginRight: 5, fontSize: 11 }} />
-                <span>Chuyên sâu</span>
-              </button>
-            </div>
-
             <div className="bot-dropdown-wrapper" ref={botDropdownRef}>
               <button
                 className="bot-pill-selector-btn"
@@ -1479,11 +1535,19 @@ export default function App() {
                             )}
                           </button>
                           <button
-                            className="quick-action-btn"
-                            title="Nghe giọng đọc"
+                            className={`quick-action-btn ${playingMessageId === message.id ? "tts-playing" : ""}`}
+                            title={
+                              playingMessageId === message.id
+                                ? "Đang phát giọng đọc — Bấm để dừng nói"
+                                : "Nghe giọng đọc (TTS)"
+                            }
                             onClick={() => readAnswer(message)}
                           >
-                            <Volume2 size={14} />
+                            {playingMessageId === message.id ? (
+                              <Square size={12} fill="currentColor" />
+                            ) : (
+                              <Volume2 size={14} />
+                            )}
                           </button>
                         </div>
                       )}
@@ -1713,6 +1777,15 @@ export default function App() {
               </div>
             )}
 
+            {/* Hiển thị chỉ báo khi đang phát âm thanh TTS */}
+            {streamingAudio && (
+              <div className="audio-playing-badge" onClick={stopAudio} title="Bấm để dừng nói">
+                <span className="audio-playing-dot" />
+                <span>Mipo đang đọc câu trả lời... (Bấm để dừng nói)</span>
+                <Square size={11} fill="currentColor" className="audio-stop-btn-badge" />
+              </div>
+            )}
+
             {/* Khung nhập hình viên thuốc tròn đúng ảnh mẫu */}
             <form className="mipo-input-box" onSubmit={handleFormSubmit}>
               {/* Nút đính kèm ẩn */}
@@ -1773,10 +1846,95 @@ export default function App() {
               />
 
               <div className="input-right-actions">
+                {/* Dải ô chọn chế độ xử lý mở lên trên: Tự động / Nhanh / Chuyên sâu (đặt bên phải cùng cụm action) */}
+                <div className="input-mode-dropdown-wrapper" ref={modeDropdownRef}>
+                  <button
+                    type="button"
+                    className={`input-mode-pill mode-${routeMode} ${showModeDropdown ? "active" : ""}`}
+                    onClick={() => setShowModeDropdown(!showModeDropdown)}
+                    title="Chọn chế độ xử lý (Tự động / Nhanh / Chuyên sâu)"
+                  >
+                    {routeMode === "auto" && <FontAwesomeIcon icon={faWandMagicSparkles} className="mode-pill-icon icon-auto" />}
+                    {routeMode === "fast" && <FontAwesomeIcon icon={faBolt} className="mode-pill-icon icon-fast" />}
+                    {routeMode === "deep" && <FontAwesomeIcon icon={faBrain} className="mode-pill-icon icon-deep" />}
+                    <span className="mode-pill-label">
+                      {routeMode === "auto" ? "Tự động" : routeMode === "fast" ? "Nhanh" : "Chuyên sâu"}
+                    </span>
+                    <ChevronDown size={12} className={`mode-pill-chevron ${showModeDropdown ? "rotate" : ""}`} />
+                  </button>
+
+                  {showModeDropdown && (
+                    <div className="mode-popover-card">
+                      <div className="mode-popover-header">Chế độ xử lý</div>
+                      <button
+                        type="button"
+                        className={`mode-popover-option ${routeMode === "auto" ? "selected" : ""}`}
+                        onClick={() => {
+                          setRouteMode("auto");
+                          setShowModeDropdown(false);
+                          setNotice("Chế độ Tự động: Hệ thống sẽ tự phân tích câu hỏi để chọn Fast RAG hoặc Deep Agent.");
+                        }}
+                      >
+                        <div className="mode-option-icon icon-auto">
+                          <FontAwesomeIcon icon={faWandMagicSparkles} />
+                        </div>
+                        <div className="mode-option-content">
+                          <div className="mode-option-title">
+                            <span>Tự động (Auto)</span>
+                            {routeMode === "auto" && <Check size={14} className="mode-option-check" />}
+                          </div>
+                          <div className="mode-option-desc">Tự phân loại tuyến xử lý phù hợp theo độ phức tạp câu hỏi</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`mode-popover-option ${routeMode === "fast" ? "selected" : ""}`}
+                        onClick={() => {
+                          setRouteMode("fast");
+                          setShowModeDropdown(false);
+                          setNotice("Chế độ Nhanh: Tra cứu tài liệu 1 bước, tối ưu tốc độ.");
+                        }}
+                      >
+                        <div className="mode-option-icon icon-fast">
+                          <FontAwesomeIcon icon={faBolt} />
+                        </div>
+                        <div className="mode-option-content">
+                          <div className="mode-option-title">
+                            <span>Nhanh (Fast RAG)</span>
+                            {routeMode === "fast" && <Check size={14} className="mode-option-check" />}
+                          </div>
+                          <div className="mode-option-desc">Tra cứu nhanh tài liệu bưu chính 1 bước, độ trễ thấp</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`mode-popover-option ${routeMode === "deep" ? "selected" : ""}`}
+                        onClick={() => {
+                          setRouteMode("deep");
+                          setShowModeDropdown(false);
+                          setNotice("Chế độ Chuyên sâu: Kích hoạt hệ thống đa tác tử Deep Agent.");
+                        }}
+                      >
+                        <div className="mode-option-icon icon-deep">
+                          <FontAwesomeIcon icon={faBrain} />
+                        </div>
+                        <div className="mode-option-content">
+                          <div className="mode-option-title">
+                            <span>Chuyên sâu (Deep Agent)</span>
+                            {routeMode === "deep" && <Check size={14} className="mode-option-check" />}
+                          </div>
+                          <div className="mode-option-desc">Đa tác tử phân tích, lập luận, so sánh và tính cước</div>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+                </div>
                 {/* Nút Microphone: Nhận diện giọng nói STT */}
                 <button
                   type="button"
-                  className={`input-action-btn ${isRecording ? "recording-active animate-pulse" : ""} ${voice ? "voice-active" : ""}`}
+                  className={`input-action-btn ${isRecording ? "recording-active animate-pulse" : ""}`}
                   title={
                     isRecording
                       ? "Dừng ghi âm (Đang lắng nghe...)"
@@ -1784,7 +1942,33 @@ export default function App() {
                   }
                   onClick={handleMicClick}
                 >
-                  <Mic size={18} color={isRecording ? "#dc2626" : (voice ? "#2563eb" : "#64748b")} />
+                  <Mic size={18} color={isRecording ? "#dc2626" : "#64748b"} />
+                </button>
+
+                {/* Nút TTS: Đọc to giọng nói */}
+                <button
+                  type="button"
+                  className={`input-action-btn ${streamingAudio ? "tts-playing" : voice ? "voice-active" : ""}`}
+                  title={
+                    streamingAudio
+                      ? "Đang phát giọng đọc — Bấm để dừng nói"
+                      : voice
+                      ? "Đọc to giọng nói (TTS): Đang BẬT — Bấm để tắt"
+                      : "Bật chế độ đọc to giọng nói (TTS)"
+                  }
+                  onClick={() => {
+                    if (streamingAudio) {
+                      stopAudio();
+                    } else {
+                      handleToggleVoice();
+                    }
+                  }}
+                >
+                  {streamingAudio ? (
+                    <Square size={14} fill="currentColor" color="#2563eb" />
+                  ) : (
+                    <Volume2 size={18} color={voice ? "#2563eb" : "#64748b"} />
+                  )}
                 </button>
 
                 {/* Nút Gửi câu hỏi */}

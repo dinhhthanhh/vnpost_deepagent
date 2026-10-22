@@ -41,7 +41,9 @@ def validate_safe_url(
     parsed = urlparse(url)
     scheme = (parsed.scheme or "").lower()
     if scheme not in allowed_schemes:
-        raise ValueError(f"Giao thức URL không hợp lệ (chỉ chấp nhận {', '.join(sorted(allowed_schemes))})")
+        raise ValueError(
+            f"Giao thức URL không hợp lệ (chỉ chấp nhận {', '.join(sorted(allowed_schemes))})"
+        )
 
     host = (parsed.hostname or "").lower()
     if not host:
@@ -53,7 +55,9 @@ def validate_safe_url(
     if allowed_domains:
         domain_match = any(host == d or host.endswith("." + d) for d in allowed_domains)
         if not domain_match:
-            raise ValueError(f"Tên miền '{host}' không nằm trong danh sách cho phép ({', '.join(sorted(allowed_domains))})")
+            raise ValueError(
+                f"Tên miền '{host}' không nằm trong danh sách cho phép ({', '.join(sorted(allowed_domains))})"
+            )
 
     # 1. Kiểm tra trực tiếp nếu host là chuỗi biểu diễn IP
     parsed_ip = None
@@ -129,7 +133,6 @@ class ChatRequest(BaseModel):
         raise ValueError("Ảnh phải là định dạng data URL (data:image/...) hoặc liên kết http(s)")
 
 
-
 class Source(BaseModel):
     citation_id: str
     document_id: str
@@ -139,7 +142,9 @@ class Source(BaseModel):
     excerpt: str
     retrieval_score: float
     is_global: bool = True
-    authority: Literal["vnpost_internal", "official_public", "user_upload", "legacy_unverified"] = "legacy_unverified"
+    authority: Literal["vnpost_internal", "official_public", "user_upload", "legacy_unverified"] = (
+        "legacy_unverified"
+    )
     source_url: str | None = None
     issuer: str | None = None
     session_id: str | None = None
@@ -173,7 +178,6 @@ class ChatResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-
 class SpeechRequest(BaseModel):
     text: str = Field(min_length=1, max_length=20000)
     voice: str | None = Field("maichi", pattern=r"^[a-zA-Z0-9_-]{1,64}$")
@@ -188,7 +192,9 @@ class SpeechRequest(BaseModel):
 
 
 class S3IngestRequest(BaseModel):
-    url: str | None = Field(None, description="S3 Presigned GET URL hoặc liên kết tải tài liệu trực tiếp")
+    url: str | None = Field(
+        None, description="S3 Presigned GET URL hoặc liên kết tải tài liệu trực tiếp"
+    )
     bucket: str | None = Field(None, description="Tên S3 Bucket nếu dùng kết nối trực tiếp")
     key: str | None = Field(None, description="S3 Object Key/Path nếu dùng kết nối trực tiếp")
     filename: str | None = Field(None, description="Tên file hiển thị (ví dụ: bang_cuoc_2025.pdf)")
@@ -211,13 +217,27 @@ class S3IngestRequest(BaseModel):
 
 
 class ActionConfirmRequest(BaseModel):
-    action_type: Literal["booking", "complaint"] = Field(..., description="Loại hành động: booking hoặc complaint")
-    draft_id: str = Field(..., description="Mã bản nháp đơn hàng hoặc phiếu khiếu nại (ví dụ: BK-DRAFT-... hoặc KN-DRAFT-...)")
+    action_type: Literal["booking", "complaint"] = Field(
+        ..., description="Loại hành động: booking hoặc complaint"
+    )
+    draft_id: str = Field(
+        ...,
+        description="Mã bản nháp đơn hàng hoặc phiếu khiếu nại (ví dụ: BK-DRAFT-... hoặc KN-DRAFT-...)",
+    )
 
 
 class ActionCancelRequest(BaseModel):
-    action_type: Literal["booking", "complaint"] = Field("booking", description="Loại hành động: booking hoặc complaint")
-    target_id: str = Field("", description="Mã vận đơn, mã đơn nháp hoặc mã phiếu khiếu nại cần hủy")
+    action_type: Literal["booking", "complaint"] = Field(
+        "booking", description="Loại hành động: booking hoặc complaint"
+    )
+    target_id: str = Field(
+        "", description="Mã vận đơn, mã đơn nháp hoặc mã phiếu khiếu nại cần hủy"
+    )
     reason: str = Field("", description="Lý do hủy")
-    verification_phone: str = Field("", description="4 số cuối hoặc số điện thoại người gửi để xác minh quyền sở hữu khi hủy từ session khác")
-
+    session_id: str | None = Field(
+        None, description="Mã phiên hội thoại yêu cầu hủy (dùng để xác minh quyền chính chủ)"
+    )
+    verification_phone: str = Field(
+        "",
+        description="4 số cuối hoặc số điện thoại người gửi để xác minh quyền sở hữu khi hủy từ session khác hoặc qua REST",
+    )

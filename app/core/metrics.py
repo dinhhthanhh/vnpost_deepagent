@@ -33,6 +33,8 @@ class RunMetricsCallback(BaseCallbackHandler):
 
     def on_llm_error(self, error, *, run_id: UUID, **kwargs):
         try:
-            current_run.get().event("llm_error", call_id=str(run_id), error_type=type(error).__name__)
+            current_run.get().event(
+                "llm_error", call_id=str(run_id), error_type=type(error).__name__
+            )
         except LookupError:
             pass

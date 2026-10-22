@@ -42,10 +42,13 @@ class ProviderClients:
 
     This also keeps transport tests independent of SDK changes to default clients.
     """
+
     def __init__(self, settings: Settings):
         limit = settings.max_active_requests * (settings.max_parallel_subagents + 1) + 2
-        options = {"timeout": settings.llm_timeout_seconds,
-                   "limits": httpx.Limits(max_connections=limit, max_keepalive_connections=limit)}
+        options = {
+            "timeout": settings.llm_timeout_seconds,
+            "limits": httpx.Limits(max_connections=limit, max_keepalive_connections=limit),
+        }
         self.sync = httpx.Client(**options, event_hooks={"request": [_patch_request_sync]})
         self.async_ = httpx.AsyncClient(**options, event_hooks={"request": [_patch_request_async]})
 

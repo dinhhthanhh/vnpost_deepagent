@@ -2,6 +2,7 @@
 
 Provides per-agent prompts, configurations, and tuning parameters.
 """
+
 from __future__ import annotations
 
 import pathlib

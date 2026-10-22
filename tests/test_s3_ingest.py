@@ -21,14 +21,19 @@ def test_s3_ingest_presigned_url_success(settings):
     target_url = "https://s3.amazonaws.com/vnpost-bucket/quy_trinh.txt?AWSAccessKeyId=test"
     with respx.mock(assert_all_called=False) as router:
         router.get(target_url).mock(
-            return_value=httpx.Response(200, content=b"# Quy trinh chuyen phat\nNoi dung huong dan chuyen phat nhanh")
+            return_value=httpx.Response(
+                200, content=b"# Quy trinh chuyen phat\nNoi dung huong dan chuyen phat nhanh"
+            )
         )
         with TestClient(create_app(settings)) as client:
-            resp = client.post("/api/documents/s3", json={
-                "url": target_url,
-                "authority": "official_public",
-                "source_url": "https://vietnampost.vn/quy-trinh"
-            })
+            resp = client.post(
+                "/api/documents/s3",
+                json={
+                    "url": target_url,
+                    "authority": "official_public",
+                    "source_url": "https://vietnampost.vn/quy-trinh",
+                },
+            )
             assert resp.status_code == 201
             data = resp.json()
             assert data["filename"] == "quy_trinh.txt"

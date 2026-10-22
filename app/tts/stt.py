@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 class STTError(Exception):
     """Exception raised when speech-to-text transcription fails."""
+
     pass
 
 
@@ -45,13 +46,21 @@ class SpeechTranscriber:
         # 1. Kiểm tra cấu hình STT endpoint hoặc OpenAI Whisper endpoint
         stt_url = getattr(self.settings, "stt_base_url", "")
         api_key_secret = getattr(self.settings, "stt_api_key", SecretStr(""))
-        api_key = api_key_secret.get_secret_value() if hasattr(api_key_secret, "get_secret_value") else str(api_key_secret)
+        api_key = (
+            api_key_secret.get_secret_value()
+            if hasattr(api_key_secret, "get_secret_value")
+            else str(api_key_secret)
+        )
         if not api_key:
             api_key = self.settings.llm_api_key.get_secret_value()
 
         target_url = None
         if stt_url:
-            target_url = stt_url.rstrip("/") + "/audio/transcriptions" if not stt_url.endswith("/audio/transcriptions") else stt_url
+            target_url = (
+                stt_url.rstrip("/") + "/audio/transcriptions"
+                if not stt_url.endswith("/audio/transcriptions")
+                else stt_url
+            )
         elif "openai.com" in self.settings.llm_base_url:
             target_url = self.settings.llm_base_url.rstrip("/") + "/audio/transcriptions"
 
@@ -80,20 +89,29 @@ class SpeechTranscriber:
                 logger.warning("Upstream STT request failed: %s", exc)
 
         # 2. Thử nghiệm trích xuất qua Gemini Vision/Multimodal nếu dùng Gemini API key
-        if api_key and "googleapis.com" in self.settings.llm_base_url and self.settings.demo_mode is False:
+        if (
+            api_key
+            and "googleapis.com" in self.settings.llm_base_url
+            and self.settings.demo_mode is False
+        ):
             try:
                 import base64
+
                 b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
                 mime = content_type or "audio/wav"
                 gemini_model = "gemini-2.5-flash"
                 gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={api_key}"
                 payload = {
-                    "contents": [{
-                        "parts": [
-                            {"inline_data": {"mime_type": mime, "data": b64_audio}},
-                            {"text": "Chép chính xác lời nói tiếng Việt trong đoạn âm thanh này thành văn bản thuần túy không kèm lời dẫn nào khác."}
-                        ]
-                    }]
+                    "contents": [
+                        {
+                            "parts": [
+                                {"inline_data": {"mime_type": mime, "data": b64_audio}},
+                                {
+                                    "text": "Chép chính xác lời nói tiếng Việt trong đoạn âm thanh này thành văn bản thuần túy không kèm lời dẫn nào khác."
+                                },
+                            ]
+                        }
+                    ]
                 }
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.post(gemini_url, json=payload)

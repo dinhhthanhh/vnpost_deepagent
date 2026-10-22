@@ -40,7 +40,12 @@ async def test_direct_answer_math_no_orphan_aimessage(settings):
         ans = await executor.execute("tenant_test", "15000 + 35000", [], True, prepared=prep)
         assert ans == prep.direct_answer
 
-        streamed = [delta async for delta in executor.stream("tenant_test", "15000 + 35000", [], True, prepared=prep)]
+        streamed = [
+            delta
+            async for delta in executor.stream(
+                "tenant_test", "15000 + 35000", [], True, prepared=prep
+            )
+        ]
         assert "".join(streamed) == prep.direct_answer
     finally:
         current_run.reset(token)
@@ -50,12 +55,13 @@ async def test_direct_answer_math_no_orphan_aimessage(settings):
 async def test_filter_relevant_hits_applied_in_both(settings):
     """Lỗi 2: Kiểm tra filter_relevant_hits lọc sạch hit lạc đề trong cả Fast RAG lẫn Deep Agent search_documents."""
     from app.service import ChatService
+
     svc = ChatService(settings)
     tenant = "tenant_filter_test"
     # Nạp văn bản về chuyển phát bưu phẩm
     svc.knowledge.for_tenant(tenant).ingest(
         "chuyen_phat.txt",
-        "Dịch vụ bưu phẩm chuyển phát nhanh nội tỉnh có thời gian tối đa 24 giờ.".encode()
+        "Dịch vụ bưu phẩm chuyển phát nhanh nội tỉnh có thời gian tối đa 24 giờ.".encode(),
     )
 
     scope = RunContext(tenant, "req-3", 3, 8)
@@ -72,6 +78,7 @@ async def test_filter_relevant_hits_applied_in_both(settings):
         # 2. Kiểm tra trong agents.search_documents
         agent_res = await svc.harness.search_documents.ainvoke({"query": irrelevant_query})
         import json
+
         data = json.loads(agent_res)
         assert len(data.get("sources", [])) == 0
     finally:

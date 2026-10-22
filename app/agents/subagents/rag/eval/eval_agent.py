@@ -1,11 +1,13 @@
 """Benchmark evaluation for RAG Agent."""
+
 import json
 import time
 from pathlib import Path
 
+
 def run_benchmark() -> dict:
     dataset_path = Path(__file__).parent / "dataset.json"
-    with open(dataset_path, "r", encoding="utf-8") as f:
+    with open(dataset_path, encoding="utf-8") as f:
         dataset = json.load(f)
     results = []
     start = time.perf_counter()
@@ -24,6 +26,7 @@ def run_benchmark() -> dict:
         "execution_time_seconds": round(duration, 4),
         "details": results,
     }
+
 
 if __name__ == "__main__":
     print(json.dumps(run_benchmark(), indent=2, ensure_ascii=False))

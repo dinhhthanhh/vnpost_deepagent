@@ -1,4 +1,5 @@
 """Cấu hình tinh chỉnh chuyên biệt cho tracking-agent."""
+
 ROLE = "tracking"
 NAME = "tracking-agent"
 DESCRIPTION = "Tra cứu định vị hành trình, trạng thái bưu gửi VNPost theo mã vận đơn (ItemCode)."

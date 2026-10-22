@@ -1,4 +1,5 @@
 """Cấu hình điều phối trung tâm cho vnpost-supervisor."""
+
 ROLE = "supervisor"
 NAME = "vnpost-supervisor"
 DESCRIPTION = "Bộ điều phối trung tâm hệ thống trợ lý bưu chính VNPost."

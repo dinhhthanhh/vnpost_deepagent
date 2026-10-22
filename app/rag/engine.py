@@ -42,6 +42,7 @@ def resolve_embedding_device(requested: str) -> str:
     """Resolve embedding device for fallback CPU/CUDA."""
     if requested == "auto":
         import importlib
+
         try:
             torch = importlib.import_module("torch")
             cuda = getattr(torch, "cuda", None)
@@ -67,7 +68,9 @@ def tokens(text: str, unique: bool = True) -> list[str]:
     return list(dict.fromkeys(words)) if unique else words
 
 
-def filter_relevant_hits(query: str, hits: list[dict], min_overlap: int | None = None) -> list[dict]:
+def filter_relevant_hits(
+    query: str, hits: list[dict], min_overlap: int | None = None
+) -> list[dict]:
     """Lọc các hit có từ khóa trùng khớp thực sự với câu hỏi (loại bỏ stopwords). Dùng chung cho cả Fast RAG và Deep Agent."""
     if not hits:
         return []
@@ -110,9 +113,26 @@ def resolve_search_query(message: str, history: list[dict] | None = None) -> str
     if not history or len(words) > 10:
         return clean
     referential_keywords = (
-        "tài liệu nào", "ở đâu", "bao nhiêu", "như thế nào", "thời gian", "khi nào",
-        "chi tiết", "cụ thể", "vùng", "cước", "phí", "nó", "dịch vụ này", "gói này",
-        "tại sao", "ai", "mã nào", "bảng giá", "bảng cước", "quy định ở đâu",
+        "tài liệu nào",
+        "ở đâu",
+        "bao nhiêu",
+        "như thế nào",
+        "thời gian",
+        "khi nào",
+        "chi tiết",
+        "cụ thể",
+        "vùng",
+        "cước",
+        "phí",
+        "nó",
+        "dịch vụ này",
+        "gói này",
+        "tại sao",
+        "ai",
+        "mã nào",
+        "bảng giá",
+        "bảng cước",
+        "quy định ở đâu",
     )
     is_referential = len(words) <= 5 or any(kw in clean.lower() for kw in referential_keywords)
     if not is_referential:
@@ -144,20 +164,24 @@ def structure_aware_nodes(documents: list[Document], settings: Settings) -> list
     nodes = []
     for document in documents:
         if len(embedding_units(document.text)) <= settings.chunk_size:
-            nodes.append(TextNode(
-                text=document.text,
-                metadata=document.metadata.copy(),
-                excluded_embed_metadata_keys=document.excluded_embed_metadata_keys,
-                excluded_llm_metadata_keys=document.excluded_llm_metadata_keys,
-            ))
+            nodes.append(
+                TextNode(
+                    text=document.text,
+                    metadata=document.metadata.copy(),
+                    excluded_embed_metadata_keys=document.excluded_embed_metadata_keys,
+                    excluded_llm_metadata_keys=document.excluded_llm_metadata_keys,
+                )
+            )
         else:
             # A section/page/row is exceptionally long. SentenceSplitter preserves paragraph
             # and sentence boundaries before using token-level fallback.
             nodes.extend(splitter.get_nodes_from_documents([document], show_progress=False))
     return nodes
 
+
 class DemoHashEmbedding(BaseEmbedding):
     """Deterministic token hashing, ONLY for offline plumbing tests; not semantic AI."""
+
     model_name: str = "demo-hash-v1"
     dimensions: int = 256
 
@@ -195,40 +219,62 @@ def make_embedding(settings: Settings, clients: ProviderClients | None = None) -
         # Its published SentenceTransformers configuration is 256 tokens / 768 dimensions.
         if settings.local_embedding_model.lower() == "bkai-foundation-models/vietnamese-bi-encoder":
             from app.rag.vietnamese_embedding import VietnameseBiEncoderEmbedding
-            return VietnameseBiEncoderEmbedding(model_name=settings.local_embedding_model,
-                                                device=device,
-                                                embed_batch_size=settings.embedding_batch_size,
-                                                max_length=settings.embedding_max_length)
+
+            return VietnameseBiEncoderEmbedding(
+                model_name=settings.local_embedding_model,
+                device=device,
+                embed_batch_size=settings.embedding_batch_size,
+                max_length=settings.embedding_max_length,
+            )
 
         import importlib
+
         try:
             mod = importlib.import_module("llama_index.embeddings.huggingface")
             HuggingFaceEmbedding = mod.HuggingFaceEmbedding
         except ImportError as exc:
             raise RuntimeError("HuggingFace embedding requires 'local-embedding' extras.") from exc
         is_e5 = "e5" in settings.local_embedding_model.lower()
-        return HuggingFaceEmbedding(model_name=settings.local_embedding_model,
-                                   query_instruction="query: " if is_e5 else "",
-                                   text_instruction="passage: " if is_e5 else "",
-                                   normalize=True, device=device,
-                                   embed_batch_size=settings.embedding_batch_size)
+        return HuggingFaceEmbedding(
+            model_name=settings.local_embedding_model,
+            query_instruction="query: " if is_e5 else "",
+            text_instruction="passage: " if is_e5 else "",
+            normalize=True,
+            device=device,
+            embed_batch_size=settings.embedding_batch_size,
+        )
     from llama_index.embeddings.openai import OpenAIEmbedding
+
     # model_name selects a custom engine on OpenAI-compatible embedding servers.
-    return OpenAIEmbedding(model_name=settings.embedding_model,
-                           api_key=settings.embedding_api_key.get_secret_value(),
-                           api_base=settings.embedding_base_url, max_retries=1,
-                           timeout=settings.llm_timeout_seconds, embed_batch_size=32,
-                           additional_kwargs={"encoding_format": "float"},
-                           http_client=clients.sync if clients else None,
-                           async_http_client=clients.async_ if clients else None)
+    return OpenAIEmbedding(
+        model_name=settings.embedding_model,
+        api_key=settings.embedding_api_key.get_secret_value(),
+        api_base=settings.embedding_base_url,
+        max_retries=1,
+        timeout=settings.llm_timeout_seconds,
+        embed_batch_size=32,
+        additional_kwargs={"encoding_format": "float"},
+        http_client=clients.sync if clients else None,
+        async_http_client=clients.async_ if clients else None,
+    )
 
 
-def read_document(filename: str, raw: bytes, document_id: str, settings: Settings, extra_metadata: dict | None = None) -> list[Document]:
+def read_document(
+    filename: str,
+    raw: bytes,
+    document_id: str,
+    settings: Settings,
+    extra_metadata: dict | None = None,
+) -> list[Document]:
     suffix = Path(filename).suffix.lower()
     is_global = extra_metadata.get("is_global", True) if extra_metadata else True
     session_id = extra_metadata.get("session_id") if extra_metadata else None
     user_id = extra_metadata.get("user_id") if extra_metadata else None
-    authority = extra_metadata.get("authority", "legacy_unverified") if extra_metadata else "legacy_unverified"
+    authority = (
+        extra_metadata.get("authority", "legacy_unverified")
+        if extra_metadata
+        else "legacy_unverified"
+    )
     source_url = extra_metadata.get("source_url") if extra_metadata else None
     issuer = extra_metadata.get("issuer") if extra_metadata else None
     metadata = {
@@ -242,11 +288,26 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
         "source_url": source_url or "",
         "issuer": issuer or "",
     }
-    excluded = ["filename", "document_id", "location", "is_global", "session_id", "user_id", "scope", "authority", "source_url", "issuer"]
+    excluded = [
+        "filename",
+        "document_id",
+        "location",
+        "is_global",
+        "session_id",
+        "user_id",
+        "scope",
+        "authority",
+        "source_url",
+        "issuer",
+    ]
 
     def doc(text, location):
-        return Document(text=text, metadata={**metadata, "location": location},
-                        excluded_embed_metadata_keys=excluded, excluded_llm_metadata_keys=excluded)
+        return Document(
+            text=text,
+            metadata={**metadata, "location": location},
+            excluded_embed_metadata_keys=excluded,
+            excluded_llm_metadata_keys=excluded,
+        )
 
     if suffix == ".txt":
         try:
@@ -278,8 +339,9 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
             nonlocal paragraph, paragraph_start
             content = "\n".join(paragraph).strip()
             if content:
-                documents.append(doc(contextualize(content),
-                                     f"{section}; dòng {paragraph_start}–{end_line}"))
+                documents.append(
+                    doc(contextualize(content), f"{section}; dòng {paragraph_start}–{end_line}")
+                )
             paragraph = []
 
         def is_source_preamble(line: str) -> bool:
@@ -297,8 +359,13 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
                 line_index += 1
                 continue
             is_numbered_heading = re.match(r"^(?:[IVXLCDM]+|\d+)\.\s+\S", line)
-            if (not paragraph and is_numbered_heading and len(line) <= 120
-                    and line_index + 1 < len(lines) and not lines[line_index + 1].strip()):
+            if (
+                not paragraph
+                and is_numbered_heading
+                and len(line) <= 120
+                and line_index + 1 < len(lines)
+                and not lines[line_index + 1].strip()
+            ):
                 section = line
                 paragraph_start = line_number + 1
                 line_index += 1
@@ -323,14 +390,29 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
                         if len(values) != len(headers) or not any(values):
                             continue
                         pairs = [f"{key}: {value}" for key, value in zip(headers, values) if value]
-                        row_text = (f"Bảng {table_number} — {section}\n"
-                                    + "; ".join(pairs) + "\n\n"
-                                    + table_lines[0] + "\n" + table_lines[1] + "\n" + table_row)
-                        documents.append(doc(contextualize(row_text),
-                                             f"{section}; bảng {table_number}, hàng {row_offset}"))
+                        row_text = (
+                            f"Bảng {table_number} — {section}\n"
+                            + "; ".join(pairs)
+                            + "\n\n"
+                            + table_lines[0]
+                            + "\n"
+                            + table_lines[1]
+                            + "\n"
+                            + table_row
+                        )
+                        documents.append(
+                            doc(
+                                contextualize(row_text),
+                                f"{section}; bảng {table_number}, hàng {row_offset}",
+                            )
+                        )
                 else:
-                    documents.append(doc(contextualize("\n".join(table_lines)),
-                                         f"{section}; dòng {table_start + 1}–{line_index}"))
+                    documents.append(
+                        doc(
+                            contextualize("\n".join(table_lines)),
+                            f"{section}; dòng {table_start + 1}–{line_index}",
+                        )
+                    )
                 paragraph_start = line_index + 1
                 continue
             if not line:
@@ -347,6 +429,7 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
         return documents
     if suffix == ".pdf":
         import pypdf
+
         try:
             reader = pypdf.PdfReader(io.BytesIO(raw))
             documents = []
@@ -363,11 +446,16 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
                 raise
             raise ValueError("Không đọc được PDF; file có thể hỏng hoặc bị mã hóa.") from exc
     if suffix != ".docx":
-        raise ValueError("Chỉ hỗ trợ .docx, .txt và .pdf; hãy chuyển đổi file sang các định dạng này.")
+        raise ValueError(
+            "Chỉ hỗ trợ .docx, .txt và .pdf; hãy chuyển đổi file sang các định dạng này."
+        )
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             entries = archive.infolist()
-            if len(entries) > 3000 or sum(e.file_size for e in entries) > settings.max_docx_expanded_bytes:
+            if (
+                len(entries) > 3000
+                or sum(e.file_size for e in entries) > settings.max_docx_expanded_bytes
+            ):
                 raise ValueError("DOCX quá lớn sau giải nén.")
             if "word/document.xml" not in archive.namelist():
                 raise ValueError("File không phải DOCX hợp lệ.")
@@ -410,7 +498,9 @@ def read_document(filename: str, raw: bytes, document_id: str, settings: Setting
                     markdown = " | ".join(headers) + "\n" + " | ".join("---" for _ in headers)
                     markdown += "\n" + " | ".join(values)
                     text = f"{table_title}\n" + "; ".join(pairs) + "\n\n" + markdown
-                    documents.append(doc(text, f"{section}; bảng {table_number}, hàng {row_number}"))
+                    documents.append(
+                        doc(text, f"{section}; bảng {table_number}, hàng {row_number}")
+                    )
     flush()
     if not documents:
         raise ValueError("DOCX không có văn bản; ảnh scan cần OCR trước khi nhập.")
@@ -427,12 +517,52 @@ class Snapshot:
     revision: str
 
 
+def decompose_query(query: str) -> list[str]:
+    """Phân rã câu hỏi ghép hoặc so sánh phức tạp thành các câu hỏi con (Sub-questions).
+    Lấy cảm hứng từ SubQuestionQueryEngine của LlamaIndex, giúp tra cứu đa diện không bị sót bằng chứng.
+    """
+    clean = (query or "").strip()
+    words = clean.split()
+    if len(words) <= 7:
+        return [clean]
+
+    sub_queries = [clean]
+    compare_match = re.search(
+        r"(?:so sánh|khác biệt giữa|phân biệt giữa)\s+(.+?)\s+(?:và|với)\s+(.+)",
+        clean,
+        re.IGNORECASE,
+    )
+    if compare_match:
+        p1, p2 = compare_match.group(1).strip(), compare_match.group(2).strip()
+        if p1 and p2:
+            sub_queries.extend([f"quy định và cước phí {p1}", f"quy định và cước phí {p2}"])
+    elif any(kw in clean.lower() for kw in [" đồng thời ", " còn về ", " ngoài ra "]):
+        parts = re.split(
+            r"(?:;\s*|\s+đồng thời\s+|\s+còn về\s+|\s+ngoài ra\s+)", clean, flags=re.IGNORECASE
+        )
+        for part in parts:
+            p_clean = part.strip()
+            if len(p_clean.split()) >= 3 and p_clean not in sub_queries:
+                sub_queries.append(p_clean)
+
+    return sub_queries[:3]
+
+
 class KnowledgeBase:
     """Immutable read snapshots, serialized writes; intended for a small/medium pilot."""
 
-    def __init__(self, root: Path, settings: Settings, embedding: BaseEmbedding, ignore_fingerprint: bool = False, clients: ProviderClients | None = None):
+    def __init__(
+        self,
+        root: Path,
+        settings: Settings,
+        embedding: BaseEmbedding,
+        ignore_fingerprint: bool = False,
+        clients: ProviderClients | None = None,
+    ):
         self.root, self.settings, self.embedding, self.clients = root, settings, embedding, clients
-        self.reranker = CrossEncoderReranker(settings, clients=clients) if settings.reranker_enabled else None
+        self.reranker = (
+            CrossEncoderReranker(settings, clients=clients) if settings.reranker_enabled else None
+        )
         self.lock = threading.RLock()
         self.root.mkdir(parents=True, exist_ok=True)
         self.raw_dir = self.root / "documents"
@@ -440,17 +570,27 @@ class KnowledgeBase:
         self.snapshot = self._load(ignore_fingerprint=ignore_fingerprint)
 
     def _fingerprint(self):
-        value = {"provider": self.settings.embedding_provider,
-                 "endpoint": self.settings.embedding_base_url,
-                 "revision": self.settings.embedding_revision,
-                 "model": self.embedding.model_name, "chunk_size": self.settings.chunk_size,
-                 "chunk_overlap": self.settings.chunk_overlap, "parser": "v3-structure-first"}
+        value = {
+            "provider": self.settings.embedding_provider,
+            "endpoint": self.settings.embedding_base_url,
+            "revision": self.settings.embedding_revision,
+            "model": self.embedding.model_name,
+            "chunk_size": self.settings.chunk_size,
+            "chunk_overlap": self.settings.chunk_overlap,
+            "parser": "v3-structure-first",
+        }
         return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
     def _snapshot(self, index, nodes, records, revision):
         term_lists = [tokenize_words(n.text) or ["__empty__"] for n in nodes]
-        return Snapshot(index, nodes, BM25Plus(term_lists) if nodes else None,
-                        [set(t) for t in term_lists], records, revision)
+        return Snapshot(
+            index,
+            nodes,
+            BM25Plus(term_lists) if nodes else None,
+            [set(t) for t in term_lists],
+            records,
+            revision,
+        )
 
     def _load(self, ignore_fingerprint: bool = False):
         pointer = self.root / "current.json"
@@ -458,12 +598,21 @@ class KnowledgeBase:
             return self._snapshot(None, [], [], "empty")
         manifest = json.loads(pointer.read_text(encoding="utf-8"))
         if not ignore_fingerprint and manifest.get("fingerprint") != self._fingerprint():
-            raise ValueError("Embedding/chunk config đã đổi; chạy scripts/reindex.py để dựng lại KB.")
+            raise ValueError(
+                "Embedding/chunk config đã đổi; chạy scripts/reindex.py để dựng lại KB."
+            )
         folder = self.root / "snapshots" / manifest["revision"]
         if not folder.exists() and ignore_fingerprint:
-            return self._snapshot(None, [], manifest.get("records", []), manifest.get("revision", "empty"))
-        index = load_index_from_storage(StorageContext.from_defaults(persist_dir=str(folder)),
-                                        embed_model=self.embedding) if manifest["records"] else None
+            return self._snapshot(
+                None, [], manifest.get("records", []), manifest.get("revision", "empty")
+            )
+        index = (
+            load_index_from_storage(
+                StorageContext.from_defaults(persist_dir=str(folder)), embed_model=self.embedding
+            )
+            if manifest["records"]
+            else None
+        )
         nodes = list(index.docstore.docs.values()) if index else []
         if index and hasattr(index.vector_store, "_data"):
             for nid, meta in index.vector_store._data.metadata_dict.items():
@@ -508,26 +657,41 @@ class KnowledgeBase:
                 "source_url": record.get("source_url"),
                 "issuer": record.get("issuer"),
             }
-            documents.extend(loaded if loaded is not None else read_document(
-                record["filename"], (self.raw_dir / record["stored_name"]).read_bytes(),
-                record["id"], self.settings, extra_metadata=extra_meta))
+            documents.extend(
+                loaded
+                if loaded is not None
+                else read_document(
+                    record["filename"],
+                    (self.raw_dir / record["stored_name"]).read_bytes(),
+                    record["id"],
+                    self.settings,
+                    extra_metadata=extra_meta,
+                )
+            )
         if sum(len(d.text) for d in documents) > self.settings.max_corpus_characters:
             raise ValueError("Kho tài liệu vượt MAX_CORPUS_CHARACTERS.")
         nodes = structure_aware_nodes(documents, self.settings)
         for ordinal, node in enumerate(nodes):
-            # Text can legitimately repeat within one source (for example a repeated
-            # tariff row or FAQ answer). Include the structural ordinal so the vector
-            # store never overwrites a distinct chunk that happens to have the same text.
-            identity = f"{node.metadata['document_id']}|{node.metadata['location']}|{ordinal}|{node.text}"
+            identity = (
+                f"{node.metadata['document_id']}|{node.metadata['location']}|{ordinal}|{node.text}"
+            )
             node.id_ = hashlib.sha256(identity.encode()).hexdigest()
         revision = uuid.uuid4().hex
         folder = self.root / "snapshots" / revision
         folder.mkdir(parents=True)
         try:
-            index = VectorStoreIndex(nodes, embed_model=self.embedding, show_progress=False) if nodes else None
+            index = (
+                VectorStoreIndex(nodes, embed_model=self.embedding, show_progress=False)
+                if nodes
+                else None
+            )
             if index:
                 index.storage_context.persist(persist_dir=str(folder))
-            manifest = {"revision": revision, "fingerprint": self._fingerprint(), "records": records}
+            manifest = {
+                "revision": revision,
+                "fingerprint": self._fingerprint(),
+                "records": records,
+            }
             staged = self.root / "current.tmp"
             staged.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
             os.replace(staged, self.root / "current.json")
@@ -535,15 +699,22 @@ class KnowledgeBase:
         except Exception:
             shutil.rmtree(folder, ignore_errors=True)
             raise
-        # In-flight readers have immutable in-memory references to the previous snapshot.
         for old in folder.parent.iterdir():
             if old != folder and old.is_dir():
                 shutil.rmtree(old, ignore_errors=True)
 
-    def ingest(self, filename: str, raw: bytes, is_global: bool | None = None,
-               session_id: str | None = None, user_id: str | None = None, *,
-               authority: str = "user_upload", source_url: str | None = None, issuer: str | None = None) -> dict:
-        # Client filenames are display metadata; storage names are generated IDs.
+    def ingest(
+        self,
+        filename: str,
+        raw: bytes,
+        is_global: bool | None = None,
+        session_id: str | None = None,
+        user_id: str | None = None,
+        *,
+        authority: str = "user_upload",
+        source_url: str | None = None,
+        issuer: str | None = None,
+    ) -> dict:
         filename = Path(filename.replace("\\", "/")).name[:180]
         if len(raw) > self.settings.max_upload_bytes:
             raise ValueError("File vượt giới hạn upload.")
@@ -576,15 +747,21 @@ class KnowledgeBase:
                 "source_url": source_url,
                 "issuer": issuer,
             }
-            loaded = read_document(filename, raw, document_id, self.settings, extra_metadata=extra_meta)
-            record = {"id": document_id, "filename": filename,
+            loaded = read_document(
+                filename, raw, document_id, self.settings, extra_metadata=extra_meta
+            )
+            record = {
+                "id": document_id,
+                "filename": filename,
                 "authority": authority,
                 "source_url": source_url,
                 "issuer": issuer,
-                      "stored_name": document_id + Path(filename).suffix.lower(), "bytes": len(raw),
-                      "is_global": is_global,
-                      "session_id": str(session_id) if session_id else None,
-                      "user_id": str(user_id) if user_id else None}
+                "stored_name": document_id + Path(filename).suffix.lower(),
+                "bytes": len(raw),
+                "is_global": is_global,
+                "session_id": str(session_id) if session_id else None,
+                "user_id": str(user_id) if user_id else None,
+            }
             path = self.raw_dir / record["stored_name"]
             path.write_bytes(raw)
             try:
@@ -606,7 +783,9 @@ class KnowledgeBase:
     def remove_session(self, session_id: str) -> int:
         """Xóa toàn bộ tài liệu đính kèm riêng của session này khi xóa session."""
         with self.lock:
-            matched = [r for r in self.snapshot.records if str(r.get("session_id", "")) == str(session_id)]
+            matched = [
+                r for r in self.snapshot.records if str(r.get("session_id", "")) == str(session_id)
+            ]
             if not matched:
                 return 0
             matched_ids = {r["id"] for r in matched}
@@ -615,8 +794,13 @@ class KnowledgeBase:
                 (self.raw_dir / r["stored_name"]).unlink(missing_ok=True)
             return len(matched)
 
-    def retrieve(self, query: str, top_k: int | None = None,
-                 session_id: str | None = None, user_id: str | None = None) -> list[dict]:
+    def retrieve(
+        self,
+        query: str,
+        top_k: int | None = None,
+        session_id: str | None = None,
+        user_id: str | None = None,
+    ) -> list[dict]:
         snapshot = self.snapshot
         if not snapshot.nodes:
             return []
@@ -638,53 +822,85 @@ class KnowledgeBase:
                 return True
             return False
 
-
-        # LlamaIndex MetadataFilters: is_global == 'true' OR session_id == current_session
         filter_list = [MetadataFilter(key="is_global", value="true", operator=FilterOperator.EQ)]
         if session_id:
-            filter_list.append(MetadataFilter(key="session_id", value=str(session_id), operator=FilterOperator.EQ))
+            filter_list.append(
+                MetadataFilter(key="session_id", value=str(session_id), operator=FilterOperator.EQ)
+            )
         if user_id:
-            filter_list.append(MetadataFilter(key="user_id", value=str(user_id), operator=FilterOperator.EQ))
+            filter_list.append(
+                MetadataFilter(key="user_id", value=str(user_id), operator=FilterOperator.EQ)
+            )
         filters = MetadataFilters(filters=filter_list, condition=FilterCondition.OR)
 
-        # LlamaIndex is responsible for actual embedding/vector retrieval with metadata filters
-        vector = snapshot.index.as_retriever(similarity_top_k=candidate_k, filters=filters).retrieve(query)
-        vector_hits_map = {hit.node.node_id: float(hit.score or 0.0) for hit in vector}
-
-        scores = snapshot.bm25.get_scores(list(query_terms))
-        min_overlap = 1 if len(query_terms) <= 1 else 2
-        lexical = sorted((i for i, terms in enumerate(snapshot.token_sets)
-                          if len(terms & query_terms) >= min_overlap and scores[i] > 0
-                          and matches_scope(snapshot.nodes[i].metadata)),
-                         key=lambda i: scores[i], reverse=True)[:candidate_k]
+        # LlamaIndex Sub-Question / Multi-Query Decomposition
+        sub_queries = decompose_query(query)
 
         fused, by_id = {}, {n.node_id: n for n in snapshot.nodes}
-        for rank, i in enumerate(lexical, 1):
-            node_id = snapshot.nodes[i].node_id
-            fused[node_id] = fused.get(node_id, 0.0) + 1 / (60 + rank)
+        vector_hits_map = {}
 
-        valid_vector_hits = [
-            hit for hit in vector
-            if (hit.score or 0) >= self.settings.vector_min_similarity
-            and matches_scope(hit.node.metadata)
-        ]
-        for rank, hit in enumerate(valid_vector_hits, 1):
-            fused[hit.node.node_id] = fused.get(hit.node.node_id, 0.0) + 1 / (60 + rank)
+        for sq in sub_queries:
+            sq_terms = set(tokens(sq))
+            # 1. LlamaIndex Vector Retrieval
+            vector = snapshot.index.as_retriever(
+                similarity_top_k=candidate_k, filters=filters
+            ).retrieve(sq)
+            for hit in vector:
+                nid = hit.node.node_id
+                sc = float(hit.score or 0.0)
+                if nid not in vector_hits_map or sc > vector_hits_map[nid]:
+                    vector_hits_map[nid] = sc
+
+            # 2. BM25 Lexical Retrieval
+            scores = snapshot.bm25.get_scores(list(sq_terms)) if sq_terms else []
+            min_overlap = 1 if len(sq_terms) <= 1 else 2
+            lexical = sorted(
+                (
+                    i
+                    for i, terms in enumerate(snapshot.token_sets)
+                    if len(terms & sq_terms) >= min_overlap
+                    and scores[i] > 0
+                    and matches_scope(snapshot.nodes[i].metadata)
+                ),
+                key=lambda i: scores[i],
+                reverse=True,
+            )[:candidate_k]
+
+            # 3. Reciprocal Rank Fusion
+            for rank, i in enumerate(lexical, 1):
+                nid = snapshot.nodes[i].node_id
+                fused[nid] = fused.get(nid, 0.0) + 1 / (60 + rank)
+
+            valid_vector_hits = [
+                hit
+                for hit in vector
+                if (hit.score or 0) >= self.settings.vector_min_similarity
+                and matches_scope(hit.node.metadata)
+            ]
+            for rank, hit in enumerate(valid_vector_hits, 1):
+                nid = hit.node.node_id
+                fused[nid] = fused.get(nid, 0.0) + 1 / (60 + rank)
         candidates = []
         for node_id in sorted(fused, key=fused.get, reverse=True)[:candidate_k]:
             node = by_id[node_id]
             if not matches_scope(node.metadata):
                 continue
-            candidates.append({"document_id": node.metadata["document_id"],
-                               "filename": node.metadata["filename"], "location": node.metadata["location"],
-                               "chunk_id": node_id, "excerpt": node.get_content(metadata_mode=MetadataMode.NONE),
-                               "retrieval_score": round(fused[node_id], 6),
-                               "vector_score": round(vector_hits_map.get(node_id, 0.0), 4),
-                               "is_global": node.metadata.get("is_global") in (True, "true"),
-                                "session_id": node.metadata.get("session_id") or None,
-                                "authority": node.metadata.get("authority", "legacy_unverified"),
-                                "source_url": node.metadata.get("source_url") or None,
-                                "issuer": node.metadata.get("issuer") or None})
+            candidates.append(
+                {
+                    "document_id": node.metadata["document_id"],
+                    "filename": node.metadata["filename"],
+                    "location": node.metadata["location"],
+                    "chunk_id": node_id,
+                    "excerpt": node.get_content(metadata_mode=MetadataMode.NONE),
+                    "retrieval_score": round(fused[node_id], 6),
+                    "vector_score": round(vector_hits_map.get(node_id, 0.0), 4),
+                    "is_global": node.metadata.get("is_global") in (True, "true"),
+                    "session_id": node.metadata.get("session_id") or None,
+                    "authority": node.metadata.get("authority", "legacy_unverified"),
+                    "source_url": node.metadata.get("source_url") or None,
+                    "issuer": node.metadata.get("issuer") or None,
+                }
+            )
         if self.reranker:
             candidates = self.reranker.rerank(query, candidates)
         return candidates[:k]
@@ -694,18 +910,30 @@ class KnowledgeBases:
     def __init__(self, settings: Settings, clients: ProviderClients | None = None):
         self.settings = settings
         self.clients = clients
-        is_pyvi = (settings.embedding_provider == "huggingface" and
-                   "vietnamese-bi-encoder" in settings.local_embedding_model.lower())
-        namespace = (f"{settings.embedding_provider}|{settings.embedding_base_url}|"
-                     f"{settings.embedding_model}|{settings.local_embedding_model}|"
-                     f"{settings.embedding_revision}|pyvi={is_pyvi}")
-        self.embedding = CachedEmbedding(make_embedding(settings, clients), settings.data_dir.resolve() / "embedding-cache.sqlite3", namespace)
+        is_pyvi = (
+            settings.embedding_provider == "huggingface"
+            and "vietnamese-bi-encoder" in settings.local_embedding_model.lower()
+        )
+        namespace = (
+            f"{settings.embedding_provider}|{settings.embedding_base_url}|"
+            f"{settings.embedding_model}|{settings.local_embedding_model}|"
+            f"{settings.embedding_revision}|pyvi={is_pyvi}"
+        )
+        self.embedding = CachedEmbedding(
+            make_embedding(settings, clients),
+            settings.data_dir.resolve() / "embedding-cache.sqlite3",
+            namespace,
+        )
         self.items: dict[str, KnowledgeBase] = {}
         self.lock = threading.Lock()
 
     def for_tenant(self, tenant: str) -> KnowledgeBase:
         with self.lock:
             if tenant not in self.items:
-                self.items[tenant] = KnowledgeBase(self.settings.data_dir.resolve() / "kb" / tenant,
-                                                 self.settings, self.embedding, clients=self.clients)
+                self.items[tenant] = KnowledgeBase(
+                    self.settings.data_dir.resolve() / "kb" / tenant,
+                    self.settings,
+                    self.embedding,
+                    clients=self.clients,
+                )
             return self.items[tenant]

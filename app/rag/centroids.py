@@ -2,6 +2,7 @@
 
 Hỗ trợ nạp từ file JSON (data/centroids.json) hoặc tính toán động từ embeddings.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,9 @@ def kmeans(x: np.ndarray, k: int, seed: int = 0, iters: int = 20) -> np.ndarray:
     cent = x[rng.choice(len(x), size=k, replace=False)]
     for _ in range(iters):
         assign = np.argmax(x @ cent.T, axis=1)
-        new = np.stack([x[assign == i].mean(axis=0) if np.any(assign == i) else cent[i] for i in range(k)])
+        new = np.stack(
+            [x[assign == i].mean(axis=0) if np.any(assign == i) else cent[i] for i in range(k)]
+        )
         new = _unit(new)
         if np.allclose(new, cent, atol=1e-6):
             break
@@ -53,7 +56,9 @@ class CentroidStore:
                     with open(self.path, encoding="utf-8") as f:
                         raw = json.load(f)
                     domains = raw.get("domains", {})
-                    self._data = {d: _unit(np.array(v, dtype=np.float64)) for d, v in domains.items()}
+                    self._data = {
+                        d: _unit(np.array(v, dtype=np.float64)) for d, v in domains.items()
+                    }
                     self._mtime = m
                     self.error = ""
             except Exception as e:
@@ -66,7 +71,12 @@ class CentroidStore:
         try:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
             with open(self.path, "w", encoding="utf-8") as f:
-                json.dump({"built_at": int(time.time()), "domains": domain_vectors}, f, ensure_ascii=False, indent=2)
+                json.dump(
+                    {"built_at": int(time.time()), "domains": domain_vectors},
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
             self._mtime = os.path.getmtime(self.path)
         except Exception:
             pass

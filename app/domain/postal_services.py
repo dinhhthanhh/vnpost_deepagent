@@ -48,6 +48,7 @@ def track_postal_item(item_code: str) -> dict:
     # Tạo mốc thời gian thực chuẩn Việt Nam (UTC+7)
     try:
         from zoneinfo import ZoneInfo
+
         tz = ZoneInfo("Asia/Ho_Chi_Minh")
     except Exception:
         tz = timezone(timedelta(hours=7))
@@ -413,7 +414,10 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
     delta_lambda = math.radians(lon2 - lon1)
-    a = math.sin(delta_phi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0) ** 2
+    a = (
+        math.sin(delta_phi / 2.0) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0) ** 2
+    )
     c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
     return round(r_earth * c, 2)
 
@@ -425,7 +429,9 @@ def reverse_geocode(lat: float, lon: float) -> str | None:
 
     url = f"https://nominatim.openstreetmap.org/reverse?lat={lat:.6f}&lon={lon:.6f}&format=json&accept-language=vi"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "VNPostChatbot/1.0 (contact: info@vnpost.vn)"})
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "VNPostChatbot/1.0 (contact: info@vnpost.vn)"}
+        )
         with urllib.request.urlopen(req, timeout=3.0) as resp:
             if resp.status == 200:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -435,7 +441,9 @@ def reverse_geocode(lat: float, lon: float) -> str | None:
     return None
 
 
-def search_osm_post_offices(query: str, lat: float | None = None, lon: float | None = None, limit: int = 3) -> list[dict]:
+def search_osm_post_offices(
+    query: str, lat: float | None = None, lon: float | None = None, limit: int = 3
+) -> list[dict]:
     """Tra cứu bưu điện trực tuyến trên bản đồ OpenStreetMap khi khu vực nằm ngoài danh bạ có sẵn."""
     import json
     import urllib.parse
@@ -446,9 +454,11 @@ def search_osm_post_offices(query: str, lat: float | None = None, lon: float | N
     encoded = urllib.parse.quote(q_param)
     url = f"https://nominatim.openstreetmap.org/search?q={encoded}&format=json&limit={limit}&accept-language=vi"
     if lat is not None and lon is not None:
-        url += f"&viewbox={lon-0.5:.4f},{lat+0.5:.4f},{lon+0.5:.4f},{lat-0.5:.4f}"
+        url += f"&viewbox={lon - 0.5:.4f},{lat + 0.5:.4f},{lon + 0.5:.4f},{lat - 0.5:.4f}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "VNPostChatbot/1.0 (contact: info@vnpost.vn)"})
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "VNPostChatbot/1.0 (contact: info@vnpost.vn)"}
+        )
         with urllib.request.urlopen(req, timeout=3.0) as resp:
             if resp.status == 200:
                 items = json.loads(resp.read().decode("utf-8"))
@@ -456,16 +466,22 @@ def search_osm_post_offices(query: str, lat: float | None = None, lon: float | N
                 for item in items:
                     item_lat = float(item["lat"])
                     item_lon = float(item["lon"])
-                    dist = haversine_distance(lat, lon, item_lat, item_lon) if (lat is not None and lon is not None) else None
-                    results.append({
-                        "name": item.get("display_name", "").split(",")[0],
-                        "address": item.get("display_name", ""),
-                        "latitude": item_lat,
-                        "longitude": item_lon,
-                        "distance_km": dist,
-                        "distance_formatted": f"{dist:.1f} km" if dist is not None else None,
-                        "google_maps_url": f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(item.get('display_name', ''))}",
-                    })
+                    dist = (
+                        haversine_distance(lat, lon, item_lat, item_lon)
+                        if (lat is not None and lon is not None)
+                        else None
+                    )
+                    results.append(
+                        {
+                            "name": item.get("display_name", "").split(",")[0],
+                            "address": item.get("display_name", ""),
+                            "latitude": item_lat,
+                            "longitude": item_lon,
+                            "distance_km": dist,
+                            "distance_formatted": f"{dist:.1f} km" if dist is not None else None,
+                            "google_maps_url": f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(item.get('display_name', ''))}",
+                        }
+                    )
                 return results
     except Exception:
         pass
@@ -487,20 +503,24 @@ def find_nearest_post_offices(lat: float, lon: float, limit: int = 3) -> dict:
         dir_url = f"https://www.google.com/maps/dir/?api=1&origin={lat:.6f},{lon:.6f}&destination={p_lat:.6f},{p_lon:.6f}"
         gsearch_url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(po['name'] + ' ' + po['address'])}"
         formatted = f"{int(dist * 1000)} m" if dist < 1.0 else f"{dist:.1f} km"
-        scored.append({
-            **po,
-            "distance_km": dist,
-            "distance_formatted": formatted,
-            "direction_url": dir_url,
-            "google_maps_url": gsearch_url,
-        })
+        scored.append(
+            {
+                **po,
+                "distance_km": dist,
+                "distance_formatted": formatted,
+                "direction_url": dir_url,
+                "google_maps_url": gsearch_url,
+            }
+        )
 
     scored.sort(key=lambda x: x["distance_km"])
     closest = scored[:limit]
 
     online_branches = []
     if not closest or closest[0]["distance_km"] > 50.0:
-        online_branches = search_osm_post_offices(user_address or "Việt Nam", lat=lat, lon=lon, limit=limit)
+        online_branches = search_osm_post_offices(
+            user_address or "Việt Nam", lat=lat, lon=lon, limit=limit
+        )
 
     live_gmaps_url = f"https://www.google.com/maps/search/Bưu+điện+VNPost/@{lat:.6f},{lon:.6f},15z"
 
@@ -551,13 +571,21 @@ def lookup_postal_office(query: str, province: str = "", district: str = "") -> 
         score = 0
         if clean_q and (clean_q in searchable_text or fold_q in folded_text):
             score += 3
-        if clean_prov and (clean_prov in po["province"].lower() or fold_prov in _fold_vn(po["province"])):
+        if clean_prov and (
+            clean_prov in po["province"].lower() or fold_prov in _fold_vn(po["province"])
+        ):
             score += 2
-        if clean_dist and (clean_dist in po["district"].lower() or fold_dist in _fold_vn(po["district"])):
+        if clean_dist and (
+            clean_dist in po["district"].lower() or fold_dist in _fold_vn(po["district"])
+        ):
             score += 3
 
         # Tìm kiếm theo từng từ đơn lẻ (cả có dấu và không dấu)
-        q_tokens = [t for t in fold_q.split() if len(t) > 1 and t not in {"buu", "dien", "cuc", "tim", "o", "dau"}]
+        q_tokens = [
+            t
+            for t in fold_q.split()
+            if len(t) > 1 and t not in {"buu", "dien", "cuc", "tim", "o", "dau"}
+        ]
         for token in q_tokens:
             if token in folded_text:
                 score += 1
@@ -584,4 +612,3 @@ def lookup_postal_office(query: str, province: str = "", district: str = "") -> 
         "total": len(results),
         "post_offices": results,
     }
-
