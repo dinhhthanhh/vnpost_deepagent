@@ -1,5 +1,5 @@
 ---
-name: uoc_tinh_cuoc_phi
+name: uoc-tinh-cuoc-phi
 description: Kỹ năng tính toán cước phí chuyển phát EMS và Bưu kiện dựa trên khối lượng tính cước và 3 vùng địa lý của VNPost.
 version: 1.0.0
 author: Ban Kinh Doanh & Dịch Vụ VNPost

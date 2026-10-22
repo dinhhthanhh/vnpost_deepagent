@@ -12,5 +12,5 @@
 4. **writer-agent:** `read_file`
 
 ## Các Kỹ năng (Skills) Tích hợp:
-- `skills/ma_buu_chinh_vpostcode/SKILL.md`
-- `skills/boi_thuong_khieu_nai/SKILL.md`
+- `skills/ma-buu-chinh-vpostcode/SKILL.md`
+- `skills/boi-thuong-khieu-nai/SKILL.md`

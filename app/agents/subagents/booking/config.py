@@ -6,4 +6,4 @@ DESCRIPTION = "Tạo đơn gửi hàng, tính cước theo vùng và thể tích
 TEMPERATURE = 0.0
 MAX_TOKENS = 2500
 MODE = "isolated"
-SKILLS = ["/skills/quy_chuan_dong_goi/", "/skills/uoc_tinh_cuoc_phi/"]
+SKILLS = ["/skills/quy-chuan-dong-goi/", "/skills/uoc-tinh-cuoc-phi/"]

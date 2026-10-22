@@ -11,6 +11,6 @@
 3. **analyst-agent:** `calculate`, `calculate_date`
 
 ## Các Kỹ năng (Skills) Tích hợp:
-- `skills/tra_cuu_buu_gui/SKILL.md`
-- `skills/uoc_tinh_cuoc_phi/SKILL.md`
-- `skills/quy_chuan_dong_goi/SKILL.md`
+- `skills/tra-cuu-buu-gui/SKILL.md`
+- `skills/uoc-tinh-cuoc-phi/SKILL.md`
+- `skills/quy-chuan-dong-goi/SKILL.md`

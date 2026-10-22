@@ -1,5 +1,5 @@
 ---
-name: ma_buu_chinh_vpostcode
+name: ma-buu-chinh-vpostcode
 description: Quy định cấu trúc mã bưu chính quốc gia 5 chữ số Vpostcode và cơ chế định vị địa chỉ bưu chính của VNPost.
 version: 1.0.0
 author: Trung tâm Công nghệ Thông tin VNPost

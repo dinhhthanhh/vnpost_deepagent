@@ -38,9 +38,9 @@ def test_enterprise_skills_loading():
     assert len(skills) > 0
     # Kiểm tra sự tồn tại của các kỹ năng cốt lõi
     keys = list(skills.keys())
-    assert any("tra_cuu_buu_gui" in k for k in keys)
-    assert any("uoc_tinh_cuoc_phi" in k for k in keys)
-    assert any("quy_chuan_dong_goi" in k for k in keys)
+    assert any("tra_cuu_buu_gui" in k or "tra-cuu-buu-gui" in k for k in keys)
+    assert any("uoc_tinh_cuoc_phi" in k or "uoc-tinh-cuoc-phi" in k for k in keys)
+    assert any("quy_chuan_dong_goi" in k or "quy-chuan-dong-goi" in k for k in keys)
 
 
 def test_fastmcp_server_tools_and_resources():

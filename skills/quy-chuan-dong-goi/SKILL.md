@@ -1,5 +1,5 @@
 ---
-name: quy_chuan_dong_goi
+name: quy-chuan-dong-goi
 description: Hướng dẫn kỹ thuật đóng gói hàng hóa cồng kềnh, hàng dễ vỡ và chất lỏng theo chuẩn an toàn vận chuyển VNPost.
 version: 1.0.0
 author: Ban Khai Thác & Vận Chuyển VNPost

@@ -129,7 +129,7 @@ def _is_draft_expired(record: dict[str, Any], now: datetime | None = None) -> bo
         return False
 
 
-# Danh mục tỉnh/thành phố theo 3 miền địa lý (căn cứ theo /skills/bang_ma_buu_chinh_vung_cuoc/SKILL.md)
+# Danh mục tỉnh/thành phố theo 3 miền địa lý (căn cứ theo /skills/bang-ma-buu-chinh-vung-cuoc/SKILL.md)
 _PROVINCES_NORTH = [
     "hà giang",
     "cao bằng",
@@ -668,7 +668,7 @@ def create_draft_complaint(
     )
     limit_months = 12 if is_intl else 6
 
-    # 1. Kiểm tra thời hiệu khiếu nại theo /skills/quy_trinh_khieu_nai_boi_thuong/SKILL.md
+    # 1. Kiểm tra thời hiệu khiếu nại theo /skills/quy-trinh-khieu-nai-boi-thuong/SKILL.md
     if sent_date and sent_date.strip():
         sent_dt = None
         for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):

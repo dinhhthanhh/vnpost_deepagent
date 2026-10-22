@@ -124,7 +124,7 @@ def test_embedding_cache_reuses_vectors_and_separates_query_from_document(tmp_pa
 def test_live_mode_rejects_demo_embedding_and_missing_keys(tmp_path):
     with pytest.raises(ValueError):
         Settings(_env_file=None, demo_mode=False, data_dir=tmp_path)
-    with pytest.raises(ValueError, match="demo-only"):
+    with pytest.raises(ValueError, match="Hash embeddings are not allowed"):
         Settings(
             _env_file=None,
             demo_mode=False,

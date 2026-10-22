@@ -6,4 +6,4 @@ DESCRIPTION = "Tiếp nhận khiếu nại, đối chiếu thời hiệu 06/12 t
 TEMPERATURE = 0.0
 MAX_TOKENS = 2500
 MODE = "isolated"
-SKILLS = ["/skills/boi_thuong_khieu_nai/"]
+SKILLS = ["/skills/boi-thuong-khieu-nai/"]

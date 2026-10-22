@@ -6,4 +6,4 @@ DESCRIPTION = "Tra cứu định vị hành trình, trạng thái bưu gửi VNP
 TEMPERATURE = 0.0
 MAX_TOKENS = 1500
 MODE = "isolated"
-SKILLS = ["/skills/tra_cuu_buu_gui/"]
+SKILLS = ["/skills/tra-cuu-buu-gui/"]

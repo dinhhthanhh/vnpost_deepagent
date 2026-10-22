@@ -52,8 +52,12 @@ def _load_enterprise_skills() -> dict[str, Any]:
                     for prefix in ["data/skills/", "skills/"]:
                         if rel.startswith(prefix):
                             sub = rel[len(prefix) :]
-                            files[f"/skills/{sub}"] = {"content": content, "encoding": "utf-8"}
-                            files[f"skills/{sub}"] = {"content": content, "encoding": "utf-8"}
+                            sub_hyphen = sub.replace("_", "-")
+                            # Under /skills/ and skills/, register strictly kebab-case for Agent Skills spec compliance
+                            files[f"/skills/{sub_hyphen}"] = {"content": content, "encoding": "utf-8"}
+                            files[f"skills/{sub_hyphen}"] = {"content": content, "encoding": "utf-8"}
+                            files[f"/data/skills/{sub_hyphen}"] = {"content": content, "encoding": "utf-8"}
+                            files[f"data/skills/{sub_hyphen}"] = {"content": content, "encoding": "utf-8"}
                 except Exception:
                     pass
     return files
@@ -64,20 +68,35 @@ def _resolve_skill_content(skill_path: str, enterprise_skills: dict[str, Any]) -
     clean = skill_path.strip()
     if clean in enterprise_skills:
         return enterprise_skills[clean].get("content", "")
-    slug = clean.strip("/").removeprefix("skills/").strip("/")
-    candidates = [
-        f"/skills/{slug}/SKILL.md",
-        f"skills/{slug}/SKILL.md",
-        f"/data/skills/{slug}/SKILL.md",
-        f"data/skills/{slug}/SKILL.md",
-        f"/{slug}/SKILL.md",
-        f"{slug}/SKILL.md",
-    ]
+    slug = (
+        clean.strip("/")
+        .removeprefix("data/skills/")
+        .removeprefix("skills/")
+        .strip("/")
+    )
+    slug_hyphen = slug.replace("_", "-")
+    slug_underscore = slug.replace("-", "_")
+    candidates = []
+    for s in (slug, slug_hyphen, slug_underscore):
+        candidates.extend([
+            f"/skills/{s}/SKILL.md",
+            f"skills/{s}/SKILL.md",
+            f"/data/skills/{s}/SKILL.md",
+            f"data/skills/{s}/SKILL.md",
+            f"/{s}/SKILL.md",
+            f"{s}/SKILL.md",
+            f"/skills/{s}",
+            f"skills/{s}",
+            f"/data/skills/{s}",
+            f"data/skills/{s}",
+            f"/{s}",
+            s,
+        ])
     for c in candidates:
         if c in enterprise_skills:
             return enterprise_skills[c].get("content", "")
     for k, v in enterprise_skills.items():
-        if slug and slug in k and k.endswith(".md"):
+        if slug and (slug in k or slug_hyphen in k or slug_underscore in k) and k.endswith(".md"):
             return v.get("content", "")
     return ""
 
@@ -476,7 +495,14 @@ class AgentHarness:
                         .strip("/")
                         .split("/")[0]
                     )
-                    is_allowed = any(slug in s.strip("/") for s in allowed_skills)
+                    slug_hyphen = slug.replace("_", "-")
+                    slug_underscore = slug.replace("-", "_")
+                    is_allowed = any(
+                        slug in s.strip("/")
+                        or slug_hyphen in s.strip("/").replace("_", "-")
+                        or slug_underscore in s.strip("/").replace("-", "_")
+                        for s in allowed_skills
+                    )
                     if not is_allowed:
                         return json.dumps(
                             {
@@ -486,6 +512,12 @@ class AgentHarness:
                         )
                 if clean_path in self.enterprise_skills:
                     return self.enterprise_skills[clean_path].get("content", "")
+                for alt_path in (
+                    clean_path.replace("_", "-"),
+                    clean_path.replace("-", "_"),
+                ):
+                    if alt_path in self.enterprise_skills:
+                        return self.enterprise_skills[alt_path].get("content", "")
                 try:
                     run = current_run.get()
                     if clean_path in {

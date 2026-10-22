@@ -8,4 +8,4 @@ DESCRIPTION = (
 TEMPERATURE = 0.0
 MAX_TOKENS = 1500
 MODE = "isolated"
-SKILLS = ["/skills/uoc_tinh_cuoc_phi/"]
+SKILLS = ["/skills/uoc-tinh-cuoc-phi/"]

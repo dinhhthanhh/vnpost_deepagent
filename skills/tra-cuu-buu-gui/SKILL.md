@@ -1,5 +1,5 @@
 ---
-name: tra_cuu_buu_gui
+name: tra-cuu-buu-gui
 description: Kỹ năng tra cứu hành trình, giải mã mã trạng thái vận đơn bưu chính và thời gian phát dự kiến của VNPost.
 version: 1.0.0
 author: Tổng công ty Bưu điện Việt Nam (VNPost)

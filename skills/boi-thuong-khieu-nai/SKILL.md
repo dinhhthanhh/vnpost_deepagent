@@ -1,5 +1,5 @@
 ---
-name: boi_thuong_khieu_nai
+name: boi-thuong-khieu-nai
 description: Quy trình tiếp nhận, thẩm định thời hiệu khiếu nại và khung tỷ lệ bồi thường thiệt hại dịch vụ bưu chính VNPost.
 version: 1.0.0
 author: Ban Chăm Sóc Khách Hàng VNPost

@@ -73,9 +73,9 @@ Mỗi request có `RunContext` riêng: tenant, session, registry nguồn, cache 
 
 - **Checkpointer SQLite:** `PersistentSqliteCheckpointer` lưu trạng thái đồ thị bất đồng bộ vào `checkpoints.sqlite3` với thread ID `{tenant}:{session}:{request}` phục vụ kiểm toán audit và tái hiện trạng thái phiên.
 - **Kỹ năng nghiệp vụ (`/skills/`):** Hàm `_load_enterprise_skills()` nạp các file `.md` trong `data/skills/` vào hệ thống tệp ảo `/skills/...` của `StateBackend`. Các Sub-agent (`rag-agent`, `analyst-agent`, `writer-agent`) truy xuất qua công cụ `read_file`. Hiện tại hệ thống có 3 bộ kỹ năng chuẩn hóa (đối chiếu 3 file `SKILL.md` thực tế):
-  1. `bang_ma_buu_chinh_vung_cuoc`: Phân định 3 vùng cước (Vùng 1: Nội tỉnh; Vùng 2: Nội miền; Vùng 3: Liên miền) và chuẩn mã bưu chính quốc gia Vpostcode 5 ký tự số.
-  2. `quy_dinh_hang_cong_kenh`: Quy tắc tính khối lượng quy đổi thể tích cho hàng cồng kềnh: $\text{Khối lượng quy đổi (kg)} = (\text{Dài} \times \text{Rộng} \times \text{Cao}) / 6000$ (cm). Khối lượng tính cước là giá trị lớn hơn giữa cân nặng thực tế và thể tích quy đổi (áp dụng chuẩn duy nhất hệ số **6000** toàn mạng lưới).
-  3. `quy_trinh_khieu_nai_boi_thuong`: Thời hiệu khiếu nại quy định **06 tháng** cho bưu gửi nội địa và **12 tháng** cho bưu gửi quốc tế kể từ ngày gửi; thời hạn giải quyết tối đa 20 ngày làm việc (nội địa), 30 ngày (quốc tế EMS); bồi thường 100% giá trị khai giá với bưu gửi có khai giá, hoàn cước cộng tối đa 04 lần cước với bưu gửi không khai giá, và hoàn cước khi phát chậm.
+  1. `bang-ma-buu-chinh-vung-cuoc`: Phân định 3 vùng cước (Vùng 1: Nội tỉnh; Vùng 2: Nội miền; Vùng 3: Liên miền) và chuẩn mã bưu chính quốc gia Vpostcode 5 ký tự số.
+  2. `quy-dinh-hang-cong-kenh`: Quy tắc tính khối lượng quy đổi thể tích cho hàng cồng kềnh: $\text{Khối lượng quy đổi (kg)} = (\text{Dài} \times \text{Rộng} \times \text{Cao}) / 6000$ (cm). Khối lượng tính cước là giá trị lớn hơn giữa cân nặng thực tế và thể tích quy đổi (áp dụng chuẩn duy nhất hệ số **6000** toàn mạng lưới).
+  3. `quy-trinh-khieu-nai-boi-thuong`: Thời hiệu khiếu nại quy định **06 tháng** cho bưu gửi nội địa và **12 tháng** cho bưu gửi quốc tế kể từ ngày gửi; thời hạn giải quyết tối đa 20 ngày làm việc (nội địa), 30 ngày (quốc tế EMS); bồi thường 100% giá trị khai giá với bưu gửi có khai giá, hoàn cước cộng tối đa 04 lần cước với bưu gửi không khai giá, và hoàn cước khi phát chậm.
 
 ## 4. Dữ liệu và RAG
 

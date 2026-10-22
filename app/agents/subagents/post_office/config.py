@@ -6,4 +6,4 @@ DESCRIPTION = "Tra cứu mạng lưới bưu cục, tìm bưu điện gần nh�
 TEMPERATURE = 0.0
 MAX_TOKENS = 1500
 MODE = "isolated"
-SKILLS = ["/skills/ma_buu_chinh_vpostcode/"]
+SKILLS = ["/skills/ma-buu-chinh-vpostcode/"]

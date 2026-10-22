@@ -183,15 +183,15 @@ vnpost_deepagent/
 │       ├── service.py                    # Kết nối 4 endpoint ZeroTTS VNPost, validate WAV
 │       └── stt.py                        # SpeechTranscriber (STT Whisper/Conformer)
 ├── data/skills/                          # Kho kỹ năng nghiệp vụ cục bộ nạp vào StateBackend
-│   ├── bang_ma_buu_chinh_vung_cuoc/      # Quy tắc Vùng 1, 2, 3 và mã Vpostcode
-│   ├── quy_dinh_hang_cong_kenh/          # Quy tắc tính khối lượng thể tích chuẩn chia 6000
-│   └── quy_trinh_khieu_nai_boi_thuong/   # Quy trình khiếu nại, thời hiệu 6/12 tháng, SLA 20/30 ngày
-├── skills/                               # Danh mục Kỹ năng Doanh nghiệp Chuẩn hóa (Enterprise Skills)
-│   ├── boi_thuong_khieu_nai/SKILL.md     # Thể lệ, hạn mức và quy trình thẩm định bồi thường
-│   ├── ma_buu_chinh_vpostcode/SKILL.md   # Cấu trúc mã địa chỉ số Vpostcode quốc gia
-│   ├── quy_chuan_dong_goi/SKILL.md       # Quy cách chèn lót, niêm phong và đóng gói an toàn
-│   ├── tra_cuu_buu_gui/SKILL.md          # Đặc tả định dạng UPU S10 và tra cứu trạng thái
-│   └── uoc_tinh_cuoc_phi/SKILL.md        # Biểu giá cước chuyển phát nhanh EMS và Bưu kiện
+│   ├── bang-ma-buu-chinh-vung-cuoc/      # Quy tắc Vùng 1, 2, 3 và mã Vpostcode
+│   ├── quy-dinh-hang-cong-kenh/          # Quy tắc tính khối lượng thể tích chuẩn chia 6000
+│   └── quy-trinh-khieu-nai-boi-thuong/   # Quy trình khiếu nại, thời hiệu 6/12 tháng, SLA 20/30 ngày
+├── skills/                               # Danh mục Kỹ năng Doanh nghiệp Chuẩn hóa (Enterprise Skills - Agent Skills Spec)
+│   ├── boi-thuong-khieu-nai/SKILL.md     # Thể lệ, hạn mức và quy trình thẩm định bồi thường
+│   ├── ma-buu-chinh-vpostcode/SKILL.md   # Cấu trúc mã địa chỉ số Vpostcode quốc gia
+│   ├── quy-chuan-dong-goi/SKILL.md       # Quy cách chèn lót, niêm phong và đóng gói an toàn
+│   ├── tra-cuu-buu-gui/SKILL.md          # Đặc tả định dạng UPU S10 và tra cứu trạng thái
+│   └── uoc-tinh-cuoc-phi/SKILL.md        # Biểu giá cước chuyển phát nhanh EMS và Bưu kiện
 ├── frontend/                             # Ứng dụng Giao diện Web (React 18 + Vite SPA)
 │   ├── src/
 │   │   ├── App.jsx                       # UI Single-Page, Audio Streaming, Voice STT, PostalActionCard HITL
@@ -1293,11 +1293,11 @@ Hệ thống Mipo VNPost Deep Agent đã hoàn tất chuyển đổi từ kiến
 ### 3. Hiện thực hóa Hệ thống Enterprise SKILL Tải động trên `StateBackend` (ĐÃ TRIỂN KHAI HOÀN TẤT)
 - **Vị trí mã nguồn:** Thư mục [skills/](file:///c:/Users/admin/Downloads/vnpost_deepagent/skills/) tại gốc dự án và [app/agents/orchestrator.py:41-54](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/orchestrator.py#L41-L54).
 - **Danh mục 5 Bộ Kỹ năng Chuẩn hóa:**
-  1. `skills/boi_thuong_khieu_nai/SKILL.md`: Quy trình khiếu nại, thời hiệu 6/12 tháng, SLA 20/30 ngày và hạn mức bồi thường.
-  2. `skills/ma_buu_chinh_vpostcode/SKILL.md`: Cấu trúc và nguyên tắc tra cứu mã địa chỉ số quốc gia Vpostcode.
-  3. `skills/quy_chuan_dong_goi/SKILL.md`: Quy cách đóng gói hàng cồng kềnh, hàng lỏng và hàng dễ vỡ.
-  4. `skills/tra_cuu_buu_gui/SKILL.md`: Định dạng mã UPU S10 (13 ký tự) và quy trình định vị bưu phẩm.
-  5. `skills/uoc_tinh_cuoc_phi/SKILL.md`: Bảng cước dịch vụ EMS hỏa tốc, chuyển phát nhanh và bưu kiện.
+  1. `skills/boi-thuong-khieu-nai/SKILL.md`: Quy trình khiếu nại, thời hiệu 6/12 tháng, SLA 20/30 ngày và hạn mức bồi thường.
+  2. `skills/ma-buu-chinh-vpostcode/SKILL.md`: Cấu trúc và nguyên tắc tra cứu mã địa chỉ số quốc gia Vpostcode.
+  3. `skills/quy-chuan-dong-goi/SKILL.md`: Quy cách đóng gói hàng cồng kềnh, hàng lỏng và hàng dễ vỡ.
+  4. `skills/tra-cuu-buu-gui/SKILL.md`: Định dạng mã UPU S10 (13 ký tự) và quy trình định vị bưu phẩm.
+  5. `skills/uoc-tinh-cuoc-phi/SKILL.md`: Bảng cước dịch vụ EMS hỏa tốc, chuyển phát nhanh và bưu kiện.
 - **Cơ chế nạp file ảo:** Toàn bộ nội dung kỹ năng được nạp tự động vào `StateBackend` tại đường dẫn `/skills/` phục vụ đọc nội dung chi tiết theo cơ chế Progressive Disclosure. Được kiểm chứng qua `test_modular_agents.py::test_enterprise_skills_loading`.
 
 ### 4. Mở Endpoint A2A, Xuất bản `agent_card.json` và Tích hợp Protobuf Client (ĐÃ TRIỂN KHAI HOÀN TẤT)
