@@ -1,18 +1,44 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vnpost_postgres
+    environment:
+      POSTGRES_USER: vnpost_user
+      POSTGRES_PASSWORD: vnpost_password
+      POSTGRES_DB: vnpost_db
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vnpost_user -d vnpost_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   chatbot:
     build: .
     env_file: .env
     environment:
       DATA_DIR: /data
+      HF_HOME: /data/cache/huggingface
+      POSTGRES_URL: postgresql://vnpost_user:vnpost_password@postgres:5432/vnpost_db
+      CHECKPOINTER_TYPE: postgres
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - chatbot_data:/data
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
+
 volumes:
   chatbot_data:
+  postgres_data:

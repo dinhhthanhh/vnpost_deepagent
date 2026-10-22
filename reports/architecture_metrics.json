@@ -1,0 +1,289 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-21T06:42:27.965178+00:00",
+  "measurement_mode": "demo",
+  "tenant": "vnpost",
+  "dataset": "evaluation\\architecture_benchmark.jsonl",
+  "configuration": {
+    "embedding_provider": "openai",
+    "embedding_model": "BAAI/bge-m3",
+    "retrieval_top_k": 5,
+    "fast_min_sources": 1,
+    "fast_min_retrieval_score": 0.0,
+    "llm_router_enabled": false,
+    "deep_timeout_seconds": 35.0,
+    "deep_max_agent_steps": 12,
+    "forced_mode": null
+  },
+  "knowledge_base": {
+    "available": true,
+    "revision": "0aa48b477f8447958c2be1f2f8f035f4",
+    "records": 106
+  },
+  "summary": {
+    "requested": 8,
+    "completed": 8,
+    "errors": 0,
+    "route_distribution": {
+      "local": 1,
+      "fast": 3,
+      "deep": 3,
+      "calculator": 1
+    },
+    "initial_tier_distribution": {
+      "0": 2,
+      "1": 3,
+      "2": 2,
+      "3": 1
+    },
+    "source_gate_distribution": {
+      "None": 5,
+      "pass": 3
+    },
+    "escalations": 0,
+    "deep_timeouts": 0,
+    "overall": {
+      "count": 8,
+      "p50_elapsed_ms": 343,
+      "p95_elapsed_ms": 22750,
+      "p50_ttft_ms": 312,
+      "p95_ttft_ms": 22719,
+      "mean_llm_calls": 2.25,
+      "mean_retrieval_calls": 0.75,
+      "mean_cache_hits": 0.38,
+      "mean_subagent_tasks": 0.75
+    },
+    "by_executed_route": {
+      "local": {
+        "count": 1,
+        "p50_elapsed_ms": 47,
+        "p95_elapsed_ms": 47,
+        "p50_ttft_ms": 15,
+        "p95_ttft_ms": 15,
+        "mean_llm_calls": 0,
+        "mean_retrieval_calls": 0,
+        "mean_cache_hits": 0,
+        "mean_subagent_tasks": 0
+      },
+      "fast": {
+        "count": 3,
+        "p50_elapsed_ms": 343,
+        "p95_elapsed_ms": 22750,
+        "p50_ttft_ms": 312,
+        "p95_ttft_ms": 22719,
+        "mean_llm_calls": 1,
+        "mean_retrieval_calls": 1,
+        "mean_cache_hits": 0,
+        "mean_subagent_tasks": 0
+      },
+      "deep": {
+        "count": 3,
+        "p50_elapsed_ms": 453,
+        "p95_elapsed_ms": 500,
+        "p50_ttft_ms": 406,
+        "p95_ttft_ms": 453,
+        "mean_llm_calls": 5,
+        "mean_retrieval_calls": 1,
+        "mean_cache_hits": 1,
+        "mean_subagent_tasks": 2
+      },
+      "calculator": {
+        "count": 1,
+        "p50_elapsed_ms": 46,
+        "p95_elapsed_ms": 46,
+        "p50_ttft_ms": 31,
+        "p95_ttft_ms": 31,
+        "mean_llm_calls": 0,
+        "mean_retrieval_calls": 0,
+        "mean_cache_hits": 0,
+        "mean_subagent_tasks": 0
+      }
+    }
+  },
+  "samples": [
+    {
+      "id": "greeting",
+      "expected_tier": 0,
+      "route": "local",
+      "grounding_status": "unverified",
+      "elapsed_ms": 47,
+      "wall_ms": 53.92,
+      "source_count": 0,
+      "answer_chars": 71,
+      "metrics": {
+        "initial_tier": 0,
+        "router_strategy": "rule",
+        "llm_calls": 0,
+        "max_parallel_llm_calls": 0,
+        "retrieval_calls": 0,
+        "retrieval_cache_hits": 0,
+        "subagent_tasks": 0,
+        "source_gate": null,
+        "ttft_ms": 15,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    },
+    {
+      "id": "lookup-service",
+      "expected_tier": 1,
+      "route": "fast",
+      "grounding_status": "cited",
+      "elapsed_ms": 22750,
+      "wall_ms": 22766.89,
+      "source_count": 2,
+      "answer_chars": 328,
+      "metrics": {
+        "initial_tier": 1,
+        "router_strategy": "retrieval_first",
+        "llm_calls": 1,
+        "max_parallel_llm_calls": 1,
+        "retrieval_calls": 1,
+        "retrieval_cache_hits": 0,
+        "subagent_tasks": 0,
+        "source_gate": "pass",
+        "ttft_ms": 22719,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    },
+    {
+      "id": "lookup-customs",
+      "expected_tier": 1,
+      "route": "deep",
+      "grounding_status": "cited",
+      "elapsed_ms": 500,
+      "wall_ms": 515.5,
+      "source_count": 3,
+      "answer_chars": 984,
+      "metrics": {
+        "initial_tier": 2,
+        "router_strategy": "rule",
+        "llm_calls": 5,
+        "max_parallel_llm_calls": 2,
+        "retrieval_calls": 1,
+        "retrieval_cache_hits": 1,
+        "subagent_tasks": 2,
+        "source_gate": null,
+        "ttft_ms": 453,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    },
+    {
+      "id": "summary",
+      "expected_tier": 1,
+      "route": "fast",
+      "grounding_status": "cited",
+      "elapsed_ms": 312,
+      "wall_ms": 325.49,
+      "source_count": 1,
+      "answer_chars": 240,
+      "metrics": {
+        "initial_tier": 1,
+        "router_strategy": "retrieval_first",
+        "llm_calls": 1,
+        "max_parallel_llm_calls": 1,
+        "retrieval_calls": 1,
+        "retrieval_cache_hits": 0,
+        "subagent_tasks": 0,
+        "source_gate": "pass",
+        "ttft_ms": 281,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    },
+    {
+      "id": "why",
+      "expected_tier": 1,
+      "route": "fast",
+      "grounding_status": "cited",
+      "elapsed_ms": 343,
+      "wall_ms": 360.12,
+      "source_count": 1,
+      "answer_chars": 193,
+      "metrics": {
+        "initial_tier": 1,
+        "router_strategy": "retrieval_first",
+        "llm_calls": 1,
+        "max_parallel_llm_calls": 1,
+        "retrieval_calls": 1,
+        "retrieval_cache_hits": 0,
+        "subagent_tasks": 0,
+        "source_gate": "pass",
+        "ttft_ms": 312,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    },
+    {
+      "id": "comparison",
+      "expected_tier": 2,
+      "route": "deep",
+      "grounding_status": "cited",
+      "elapsed_ms": 422,
+      "wall_ms": 448.94,
+      "source_count": 3,
+      "answer_chars": 666,
+      "metrics": {
+        "initial_tier": 2,
+        "router_strategy": "rule",
+        "llm_calls": 5,
+        "max_parallel_llm_calls": 3,
+        "retrieval_calls": 1,
+        "retrieval_cache_hits": 1,
+        "subagent_tasks": 2,
+        "source_gate": null,
+        "ttft_ms": 391,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    },
+    {
+      "id": "calculation",
+      "expected_tier": 2,
+      "route": "calculator",
+      "grounding_status": "computed",
+      "elapsed_ms": 46,
+      "wall_ms": 54.29,
+      "source_count": 0,
+      "answer_chars": 112,
+      "metrics": {
+        "initial_tier": 0,
+        "router_strategy": "rule",
+        "llm_calls": 0,
+        "max_parallel_llm_calls": 0,
+        "retrieval_calls": 0,
+        "retrieval_cache_hits": 0,
+        "subagent_tasks": 0,
+        "source_gate": null,
+        "ttft_ms": 31,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    },
+    {
+      "id": "multi-question",
+      "expected_tier": 2,
+      "route": "deep",
+      "grounding_status": "cited",
+      "elapsed_ms": 453,
+      "wall_ms": 471.0,
+      "source_count": 3,
+      "answer_chars": 2667,
+      "metrics": {
+        "initial_tier": 3,
+        "router_strategy": "rule",
+        "llm_calls": 5,
+        "max_parallel_llm_calls": 2,
+        "retrieval_calls": 1,
+        "retrieval_cache_hits": 1,
+        "subagent_tasks": 2,
+        "source_gate": null,
+        "ttft_ms": 406,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    }
+  ]
+}

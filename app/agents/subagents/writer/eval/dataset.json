@@ -1,0 +1,8 @@
+[
+  {
+    "id": "WRITER-001",
+    "query": "Tổng hợp kết quả tra cứu mã VN123456789VN và gửi phản hồi lịch sự cho khách",
+    "expected_keywords": ["kính gửi", "VNPost", "cảm ơn", "VN123456789VN"],
+    "description": "Biên tập câu trả lời chuẩn mực dịch vụ khách hàng"
+  }
+]

@@ -1,0 +1,9 @@
+[
+  {
+    "id": "COMP-001",
+    "query": "Bưu gửi của tôi bị vỡ hỏng khi nhận hàng, mã VN123456789VN",
+    "expected_action": "complaint_draft",
+    "expected_keywords": ["khiếu nại", "VN123456789VN", "vỡ hỏng", "bồi thường"],
+    "description": "Tiếp nhận khiếu nại vỡ hỏng bưu gửi"
+  }
+]

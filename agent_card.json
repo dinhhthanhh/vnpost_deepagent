@@ -1,0 +1,73 @@
+{
+  "name": "vnpost-mipo-agent",
+  "description": "Trợ lý Trí tuệ Nhân tạo Toàn năng Bưu điện Việt Nam (VNPost) - Hỗ trợ tra cứu hành trình bưu phẩm bưu kiện, tính cước chuyển phát, định vị bưu cục và tạo đơn thu gom bưu chính.",
+  "version": "1.1.0",
+  "defaultInputModes": ["text", "voice"],
+  "defaultOutputModes": ["text", "audio"],
+  "supportedInterfaces": [
+    {
+      "url": "http://127.0.0.1:8000/a2a",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "capabilities": {
+    "streaming": true,
+    "hitl_confirmation": true,
+    "tools": true
+  },
+  "skills": [
+    {
+      "id": "tra_cuu_buu_gui",
+      "name": "Tra cứu Hành trình Vận đơn BCCP",
+      "description": "Tra cứu chi tiết trạng thái, vị trí khai thác, bưu cục phát và thời gian phát dự kiến của bưu gửi VNPost qua mã vận đơn 13 ký tự UPU.",
+      "tags": ["tracking", "bccp", "ems"],
+      "examples": [
+        "Tra cứu bưu gửi EB123456789VN",
+        "Kiểm tra đơn hàng CP987654321VN đang ở đâu rồi?",
+        "Tình trạng bưu phẩm của tôi hiện tại như thế nào?"
+      ]
+    },
+    {
+      "id": "uoc_tinh_cuoc_phi",
+      "name": "Tính cước và Tư vấn Dịch vụ Chuyển phát",
+      "description": "Tính toán cước phí dịch vụ chuyển phát EMS, Bưu kiện nhanh dựa trên trọng lượng cân nặng và khối lượng quy đổi cồng kềnh chia 6000 theo 3 vùng cước.",
+      "tags": ["pricing", "rate_calculator", "bulky"],
+      "examples": [
+        "Gửi tài liệu 500g từ Hà Nội vào TP.HCM hết bao nhiêu tiền?",
+        "Tính cước kiện hàng 2kg kích thước 30x20x15cm gửi từ Đà Nẵng đi Cần Thơ"
+      ]
+    },
+    {
+      "id": "tim_buu_cuc_vpostcode",
+      "name": "Định vị Mạng lưới Bưu điện và Vpostcode",
+      "description": "Tìm kiếm bưu cục gần nhất theo tọa độ GPS, tra cứu giờ mở cửa, số điện thoại và mã bưu chính quốc gia Vpostcode 5 chữ số.",
+      "tags": ["post_office", "vpostcode", "maps"],
+      "examples": [
+        "Tìm bưu cục gần số 5 Phạm Hùng, Cầu Giấy, Hà Nội",
+        "Bưu điện gần nhất cách đây bao xa?",
+        "Mã bưu điện của quận 1 TP.HCM là gì?"
+      ]
+    },
+    {
+      "id": "tao_don_thu_gom_tan_noi",
+      "name": "Khởi tạo Đơn hàng Thu gom Tận nơi (HITL)",
+      "description": "Tiếp nhận thông tin người gửi, người nhận, tạo dự thảo đơn hàng thu gom tại nhà và xuất trình yêu cầu xác nhận trước khi phát hành mã vận đơn.",
+      "tags": ["booking", "pickup", "hitl"],
+      "examples": [
+        "Tôi muốn tạo đơn gửi bưu phẩm từ Hà Nội đi Hải Phòng, qua nhà lấy giúp tôi",
+        "Đặt lịch gửi kiện hàng 3kg ngày mai"
+      ]
+    },
+    {
+      "id": "khieu_nai_boi_thuong",
+      "name": "Tiếp nhận Khiếu nại và Bồi thường Thiệt hại",
+      "description": "Tiếp nhận phản ánh bưu gửi bị chậm, mất mát hoặc hư hỏng; đối chiếu thời hiệu 06/12 tháng và lập hồ sơ khiếu nại chính thức vào CRM CSKH.",
+      "tags": ["complaint", "claim", "compensation"],
+      "examples": [
+        "Bưu phẩm của tôi bị vỡ nát khi nhận, tôi muốn khiếu nại bồi thường",
+        "Đơn hàng gửi 1 tuần rồi chưa phát, khiếu nại thế nào?"
+      ]
+    }
+  ]
+}

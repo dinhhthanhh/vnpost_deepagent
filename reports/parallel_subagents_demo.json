@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-21T06:45:08.168467+00:00",
+  "measurement_mode": "demo",
+  "tenant": "vnpost",
+  "dataset": "evaluation\\parallel_subagents_benchmark.jsonl",
+  "configuration": {
+    "embedding_provider": "openai",
+    "embedding_model": "BAAI/bge-m3",
+    "retrieval_top_k": 5,
+    "fast_min_sources": 1,
+    "fast_min_retrieval_score": 0.0,
+    "llm_router_enabled": false,
+    "deep_timeout_seconds": 35.0,
+    "deep_max_agent_steps": 12,
+    "forced_mode": null
+  },
+  "knowledge_base": {
+    "available": true,
+    "revision": "0aa48b477f8447958c2be1f2f8f035f4",
+    "records": 106
+  },
+  "summary": {
+    "requested": 5,
+    "completed": 5,
+    "errors": 0,
+    "route_distribution": {
+      "deep": 5
+    },
+    "initial_tier_distribution": {
+      "2": 5
+    },
+    "source_gate_distribution": {
+      "None": 5
+    },
+    "escalations": 0,
+    "deep_timeouts": 0,
+    "overall": {
+      "count": 5,
+      "p50_elapsed_ms": 625,
+      "p95_elapsed_ms": 21875,
+      "p50_ttft_ms": 593,
+      "p95_ttft_ms": 21828,
+      "mean_llm_calls": 5.6,
+      "mean_retrieval_calls": 0.8,
+      "mean_cache_hits": 0,
+      "mean_subagent_tasks": 1.8
+    },
+    "by_executed_route": {
+      "deep": {
+        "count": 5,
+        "p50_elapsed_ms": 625,
+        "p95_elapsed_ms": 21875,
+        "p50_ttft_ms": 593,
+        "p95_ttft_ms": 21828,
+        "mean_llm_calls": 5.6,
+        "mean_retrieval_calls": 0.8,
+        "mean_cache_hits": 0,
+        "mean_subagent_tasks": 1.8
+      }
+    }
+  },
+  "samples": [
+    {
+      "id": "par-01-ops-analyst-rag",
+      "expected_tier": 3,
+      "route": "deep",
+      "grounding_status": "computed",
+      "elapsed_ms": 21875,
+      "wall_ms": 21887.91,
+      "source_count": 0,
+      "answer_chars": 3798,
+      "metrics": {
+        "initial_tier": 2,
+        "router_strategy": "rule",
+        "llm_calls": 6,
+        "max_parallel_llm_calls": 2,
+        "retrieval_calls": 1,
+        "retrieval_cache_hits": 0,
+        "subagent_tasks": 2,
+        "source_gate": null,
+        "ttft_ms": 21828,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    },
+    {
+      "id": "par-02-multi-rag-skills",
+      "expected_tier": 3,
+      "route": "deep",
+      "grounding_status": "computed",
+      "elapsed_ms": 656,
+      "wall_ms": 677.41,
+      "source_count": 0,
+      "answer_chars": 3956,
+      "metrics": {
+        "initial_tier": 2,
+        "router_strategy": "rule",
+        "llm_calls": 6,
+        "max_parallel_llm_calls": 2,
+        "retrieval_calls": 1,
+        "retrieval_cache_hits": 0,
+        "subagent_tasks": 2,
+        "source_gate": null,
+        "ttft_ms": 625,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    },
+    {
+      "id": "par-03-full-dispatch-writer",
+      "expected_tier": 3,
+      "route": "deep",
+      "grounding_status": "computed",
+      "elapsed_ms": 579,
+      "wall_ms": 603.36,
+      "source_count": 0,
+      "answer_chars": 909,
+      "metrics": {
+        "initial_tier": 2,
+        "router_strategy": "rule",
+        "llm_calls": 4,
+        "max_parallel_llm_calls": 1,
+        "retrieval_calls": 1,
+        "retrieval_cache_hits": 0,
+        "subagent_tasks": 1,
+        "source_gate": null,
+        "ttft_ms": 563,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    },
+    {
+      "id": "par-04-dual-tracking-po-date",
+      "expected_tier": 3,
+      "route": "deep",
+      "grounding_status": "computed",
+      "elapsed_ms": 219,
+      "wall_ms": 227.78,
+      "source_count": 0,
+      "answer_chars": 3533,
+      "metrics": {
+        "initial_tier": 2,
+        "router_strategy": "rule",
+        "llm_calls": 6,
+        "max_parallel_llm_calls": 2,
+        "retrieval_calls": 0,
+        "retrieval_cache_hits": 0,
+        "subagent_tasks": 2,
+        "source_gate": null,
+        "ttft_ms": 188,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    },
+    {
+      "id": "par-05-deep-policy-audit",
+      "expected_tier": 3,
+      "route": "deep",
+      "grounding_status": "computed",
+      "elapsed_ms": 625,
+      "wall_ms": 640.71,
+      "source_count": 0,
+      "answer_chars": 3790,
+      "metrics": {
+        "initial_tier": 2,
+        "router_strategy": "rule",
+        "llm_calls": 6,
+        "max_parallel_llm_calls": 2,
+        "retrieval_calls": 1,
+        "retrieval_cache_hits": 0,
+        "subagent_tasks": 2,
+        "source_gate": null,
+        "ttft_ms": 593,
+        "escalated": false,
+        "deep_timeout": false
+      }
+    }
+  ]
+}

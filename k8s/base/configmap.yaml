@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vnpost-agent-config
+  namespace: vnpost-production
+data:
+  APP_ENV: "production"
+  LOG_LEVEL: "INFO"
+  POSTGRES_HOST: "postgres-ha.vnpost-production.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "vnpost_agent"
+  POSTGRES_USER: "vnpost_admin"
+  POSTGRES_POOL_MIN_SIZE: "4"
+  POSTGRES_POOL_MAX_SIZE: "20"
+  QDRANT_HOST: "qdrant.vnpost-production.svc.cluster.local"
+  QDRANT_PORT: "6333"
+  MODEL_NAME: "gemini-2.5-flash"
+  ROUTER_ENABLED: "true"
+  RERANKER_ENABLED: "true"
+  ALLOW_ANONYMOUS: "false"

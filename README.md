@@ -1,87 +1,86 @@
-# Chatbot Deep Agent VNPost
+# VNPost Deep Agent
 
-Bộ mã nguồn chạy từ thư mục này, gồm backend FastAPI, Deep Agents điều phối sub-agent, RAG DOCX/TXT bằng LlamaIndex và giọng đọc ZeroTTS. Giao diện React đã được build sẵn trong bản ZIP, nên lần chạy đầu không cần Node.js.
+Trợ lý hội thoại cho nghiệp vụ bưu chính VNPost, kết hợp FastAPI, React, RAG có trích dẫn và Deep Agent điều phối các tác vụ cần công cụ chuyên biệt.
 
-**Bắt đầu bằng demo; chuyển sang LLM và embedding thật khi đã điền cấu hình.** Demo dùng chính thư viện Deep Agents/LlamaIndex với model kịch bản và embedding hash, để thử luồng chạy, giao nhiệm vụ và nguồn. Demo không phản ánh chất lượng suy luận của LLM thật. Dữ liệu trong `examples/` là giả lập.
+> Dự án không chứa API key, lịch sử chat, vector index hay dữ liệu crawl cục bộ. Sao chép `.env.example` thành `.env` và điền cấu hình của riêng bạn trước khi chạy.
 
-## Chạy nhanh trên Windows
+## Tính năng
 
-Cần Python 3.12. Mở PowerShell tại thư mục đã giải nén:
+- RAG cho TXT, DOCX và PDF; kết hợp vector search, BM25 và reranking tùy chọn.
+- Trích dẫn nguồn `[S1]`, kiểm tra citation và chặn trả lời thiếu bằng chứng khi bật grounded mode.
+- Router retrieval-first: câu hỏi đơn giản đi Fast RAG; câu phức tạp, tính ngày tháng, mã vận đơn và bưu cục đi Deep Agent.
+- Specialist tools cho tra cứu hành trình bưu gửi, bưu cục/mã bưu chính, tính toán và soạn thảo.
+- Lưu lịch sử theo tenant/session, SSE streaming và TTS ZeroTTS tùy chọn.
+- Xoá chat phản hồi ngay; quá trình dọn tài liệu/index riêng của session chạy nền.
+
+## Kiến trúc
+
+```text
+React UI → FastAPI → Router
+                    ├─ Fast RAG → evidence + citation
+                    └─ Deep Agent → specialist tools / sub-agents
+
+Knowledge base → hybrid retrieval → citation validation → response / TTS
+```
+
+## Yêu cầu
+
+- Python 3.12
+- Node.js 22+ (chỉ cần khi phát triển giao diện)
+- Một LLM tương thích OpenAI có hỗ trợ tool/function calling nếu không chạy demo
+
+## Chạy nhanh (demo/CPU)
 
 ```powershell
 py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 Copy-Item .env.example .env
 .venv\Scripts\python.exe scripts\seed_demo.py
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1 --no-proxy-headers
+.venv\Scripts\python.exe -m uvicorn app.api.main:app --host 127.0.0.1 --port 8080
 ```
 
-Mở [http://127.0.0.1:8080](http://127.0.0.1:8080). Hỏi “Thời hạn hoàn cước trong tài liệu mẫu là bao nhiêu ngày?”. Mở phần nguồn để đối chiếu. Hoặc tải lên DOCX/TXT của bạn và đặt câu hỏi tương ứng. Với phép tính thuần túy như `120 - 100`, bỏ chọn “Yêu cầu trích nguồn tài liệu”.
+Mở [http://127.0.0.1:8080](http://127.0.0.1:8080). Demo dùng model và embedding giả lập để kiểm tra luồng; không đại diện cho chất lượng của LLM thật.
 
-Những lần sau có thể chạy `start.ps1`, hoặc dùng lại câu lệnh Uvicorn. Không cần kích hoạt virtualenv hay thay đổi execution policy nếu dùng các câu lệnh đầy đủ ở trên. `seed_demo.py` chỉ nạp dữ liệu giả lập khi `DEMO_MODE=true`.
-
-## Linux và macOS
+Trên Linux/macOS:
 
 ```bash
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 cp .env.example .env
 .venv/bin/python scripts/seed_demo.py
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1 --no-proxy-headers
+.venv/bin/python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8080
 ```
 
-## Chuyển sang API thật
+## Cấu hình môi trường
 
-Dừng máy chủ, sửa `.env`:
-
-```dotenv
-DEMO_MODE=false
-DATA_DIR=./data-live
-LLM_BASE_URL=https://YOUR-LLM-HOST/v1
-LLM_API_KEY=YOUR-KEY
-LLM_MODEL=YOUR-TOOL-CALLING-MODEL-ID
-EMBEDDING_PROVIDER=openai
-EMBEDDING_BASE_URL=https://YOUR-EMBEDDING-HOST/v1
-EMBEDDING_API_KEY=YOUR-KEY
-EMBEDDING_MODEL=YOUR-EMBEDDING-MODEL-ID
-API_KEYS_JSON={"REPLACE-WITH-A-LONG-RANDOM-SECRET":"vnpost"}
-TTS_ENABLED=true
-TTS_BASE_URL=https://ai.vnpost.vn/zero-tts
-TTS_VOICE=maichi
-TTS_MODE=standard
+```bash
+cp .env.example .env
 ```
 
-`LLM_BASE_URL` và `EMBEDDING_BASE_URL` phải có đường dẫn `/v1` đúng theo máy chủ của bạn. LLM cần hỗ trợ **tool/function calling**; khả năng chat text thông thường chưa đủ. Với máy chủ nội bộ không kiểm tra khóa, điền chuỗi dummy vào biến khóa để SDK khởi tạo được. `SUBAGENT_MODEL` cho phép dùng model khác cho các chuyên viên; để trống thì dùng cùng model chính.
+Các biến quan trọng:
 
-Khởi động lại, nhập khóa chatbot vào phần “Khóa truy cập” của giao diện, rồi tải tài liệu thật lên. Khóa chatbot (`API_KEYS_JSON`) dùng giữa giao diện và backend; khóa LLM/embedding/TTS chỉ nằm trên máy chủ. Mỗi khóa được ánh xạ tới một tenant. Những người cùng tenant chia sẻ kho tài liệu và có quyền xem hội thoại của tenant đó.
+| Biến | Mục đích |
+|---|---|
+| `DEMO_MODE` | Dùng model giả lập khi `true`; production nên đặt `false`. |
+| `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | LLM chính tương thích OpenAI. |
+| `EMBEDDING_PROVIDER`, `EMBEDDING_*` | Embedding cục bộ hoặc qua API. |
+| `API_KEYS_JSON` | Khoá truy cập chatbot, ánh xạ theo tenant. |
+| `DATA_DIR` | Thư mục dữ liệu runtime; không commit. |
+| `TTS_*` | Cấu hình ZeroTTS tùy chọn. |
 
-Kiểm tra các dịch vụ bằng một câu thử ngắn, không gửi tài liệu trong KB:
+Chỉ dùng placeholder trong `.env.example`. Không đưa `.env`, API key, token, dữ liệu khách hàng hoặc index vào Git.
 
-```powershell
-.venv\Scripts\python.exe scripts\check_services.py --live --tts
+## Chạy với Docker
+
+```bash
+cp .env.example .env
+# Điền giá trị production vào .env
+docker compose up --build -d
 ```
 
-Lệnh này gọi API thật và có thể dùng quota. TTS có thể không cần khóa; nếu hệ thống yêu cầu Bearer token, cấu hình `TTS_API_KEY`.
+Dịch vụ mặc định chỉ bind `127.0.0.1:8080`. Dữ liệu runtime được lưu trong Docker volume `chatbot_data`.
 
-Không dùng lại index hash của demo cho model thật. Dùng `DATA_DIR` riêng như ví dụ, hoặc dừng máy chủ và chạy `scripts/reindex.py --tenant TENANT` sau khi đổi embedding. Khi trọng số của một model trên server đổi nhưng tên model giữ nguyên, tăng `EMBEDDING_REVISION` trước khi reindex để tránh tái sử dụng vector cũ.
-
-## Embedding chạy cục bộ
-
-```powershell
-.venv\Scripts\python.exe -m pip install -e ".[local-embedding]"
-```
-
-Đặt `EMBEDDING_PROVIDER=huggingface` và `LOCAL_EMBEDDING_MODEL` trong `.env`. Mặc định sử dụng `intfloat/multilingual-e5-small` với tiền tố `query:`/`passage:`. Lần đầu cần tải model hoặc trỏ tới thư mục model đã có. Đây là một cấu hình khởi điểm; chọn model cuối cùng theo bộ câu hỏi tiếng Việt của đơn vị.
-
-## Giao diện và âm thanh
-
-Giao diện có upload/xóa tài liệu, lịch sử theo phiên, xem nguồn, hủy yêu cầu, danh sách giọng, đọc WAV đầy đủ, streaming WAV và tải file âm thanh. Chat nhận tiến trình qua SSE; **câu trả lời chữ đã kiểm tra nguồn được gửi trước khi chờ TTS**. SSE hiện truyền tiến trình và câu trả lời hoàn chỉnh, không truyền từng token chưa kiểm tra.
-
-Ở chế độ có nguồn, backend chặn mã `[S...]` không tồn tại và không trả lời một nội dung tài liệu khi thiếu nguồn. Việc một nguồn tồn tại chưa chứng minh mọi câu trong đáp án đều được nguồn hỗ trợ; cần kiểm thử bằng dữ liệu nghiệp vụ thật.
-
-Streaming đọc cấu trúc RIFF/WAV theo chunk, giữ byte chưa đủ, nhận tần số thực từ `fmt`, và đo thời gian nhận PCM. Không cố định header 44 byte. WAV streaming cần PCM 16-bit mono/stereo. Trình duyệt có thể yêu cầu bấm Nghe vì chính sách autoplay. TTS là **đầu ra giọng nói**; bản này không bao gồm nhận dạng tiếng nói đầu vào.
-
-## Phát triển frontend
+## Phát triển giao diện
 
 ```bash
 cd frontend
@@ -89,19 +88,9 @@ npm ci
 npm run dev
 ```
 
-Vite chạy tại `http://127.0.0.1:5173`, proxy `/api` sang backend cổng 8080. Sau khi sửa, chạy `npm run build` rồi khởi động lại backend để dùng bản build mới. Frontend cùng origin với backend, nên không cần mở CORS tùy ý.
+Vite phục vụ tại `http://127.0.0.1:5173` và proxy `/api` tới backend cổng 8080. Khi đóng gói production, chạy `npm run build`.
 
-## Docker
-
-Sao chép `.env.example` thành `.env`, đặt một khóa ngẫu nhiên trong `API_KEYS_JSON`, rồi chạy:
-
-```bash
-docker compose up --build -d
-```
-
-Container có thể nhìn thấy client qua địa chỉ gateway Docker, nên cần nhập khóa ngay cả khi mở từ localhost. Cổng mặc định chỉ bind localhost. Dữ liệu được lưu trong volume `chatbot_data`. Image chạy dưới user không phải root. Đây là cấu hình một instance với `--workers 1`.
-
-## Kiểm thử và đánh giá
+## Kiểm thử
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
@@ -111,36 +100,31 @@ npm run test
 npm run build
 ```
 
-`docs/VALIDATION.md` mô tả phạm vi các kiểm tra đã thực hiện. Test contract chạy SDK LLM/embedding thật nhưng mock HTTP; không có test nào dùng khóa hay gọi máy chủ VNPost thật.
+## API và tài liệu
 
-Để đo retrieval, tạo JSONL theo `evaluation/questions.jsonl.example`, gán đáp án và đoạn nguồn đúng, rồi chạy:
-
-```powershell
-.venv\Scripts\python.exe scripts\evaluate_retrieval.py --tenant vnpost --dataset questions.jsonl --output retrieval_report.json
-```
-
-Báo cáo gồm Recall@K, MRR@K, kết quả câu không có đáp án và p50/p95 retrieval. Những chỉ số này không thay thế đánh giá tính đúng của câu trả lời cuối cùng. Hướng dẫn xây bộ đánh giá và chọn cấu hình nằm trong `docs/ARCHITECTURE.md`.
+- OpenAPI khi server chạy: `/docs`
+- Hợp đồng API: [docs/API.md](docs/API.md)
+- Kiến trúc và đánh giá retrieval: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Cấu trúc mã nguồn
 
-| Tệp | Trách nhiệm |
+| Đường dẫn | Vai trò |
 |---|---|
-| `app/agents.py` | Deep Agent, registry sub-agent, `task`, `parallel_tasks`, kiểm tra nguồn |
-| `app/rag.py` | DOCX/TXT, LlamaIndex, vector + BM25, RRF, snapshot index |
-| `app/embedding_cache.py` | Cache vector bền vững, tách truy vấn và đoạn tài liệu |
-| `app/prompts.py` | Vai trò và nguyên tắc bằng chứng của từng agent |
-| `app/service.py` | Timeout, quản lý phiên, gửi chữ trước âm thanh |
-| `app/tts.py` | Adapter ZeroTTS theo Postman |
-| `app/main.py` | API, xác thực tenant, SSE, phục vụ React |
-| `app/store.py` | SQLite lưu hội thoại, nguồn và âm thanh |
-| `frontend/src/wav-stream.js` | Parser WAV streaming không phụ thuộc ranh giới chunk |
-| `docs/ARCHITECTURE.md` | Kiến trúc, luồng chạy, lựa chọn kỹ thuật và mở rộng |
-| `docs/API.md` | Hợp đồng API chatbot và ví dụ gọi |
+| `app/main.py` | API FastAPI, auth tenant, SSE và endpoints. |
+| `app/service.py` | Điều phối request, session, timeout, TTS. |
+| `app/router.py`, `app/signals.py` | Phân tuyến Fast/Deep theo tín hiệu rẻ. |
+| `app/fast_rag.py`, `app/rag.py` | Retrieval và knowledge base. |
+| `app/agents.py` | Deep Agent, specialist tools và validation. |
+| `frontend/` | Giao diện React/Vite. |
+| `tests/` | Unit, integration và contract tests. |
 
-## Phạm vi triển khai
+## Bảo mật
 
-Phù hợp pilot một instance, kho tài liệu vừa phải. Giới hạn khởi điểm: 200 file, 10 triệu ký tự trích xuất mỗi tenant, 15 MB/file, 4 câu hỏi hoạt động và 3 sub-agent mỗi request. Đây là **giới hạn cấu hình**, không phải số lượng người dùng hoặc tốc độ đã được chứng minh.
+- Không commit `.env`, Postman environment, lịch sử, audio, index hay dữ liệu crawl.
+- Dùng khóa riêng cho từng tenant và HTTPS/VPN cho các upstream service.
+- Chỉ nạp nguồn public từ domain được allowlist hoặc tài liệu do người dùng cấp quyền.
+- Trước khi push, chạy `git status` và kiểm tra staged diff để tránh đưa secrets vào repository.
 
-Index đơn giản của LlamaIndex và BM25 nằm trong RAM; upload/xóa rebuild snapshot, tái dùng embedding cache. Khi kho lớn hoặc cần nhiều instance, chuyển sang vector database, PostgreSQL/Redis và worker ingestion riêng theo tài liệu kiến trúc. Hiện chưa có OCR, xử lý PDF, SSO/RBAC theo người dùng, hay phân quyền theo từng tài liệu.
+## Giấy phép
 
-Tài liệu kiến trúc nêu rõ các phần đã có trong code và các hạng mục mở rộng. LLM và ZeroTTS thật cần kiểm chứng với cấu hình mạng/model của đơn vị trước khi đánh giá chất lượng hoặc độ trễ.
+Chưa kèm giấy phép mã nguồn. Hãy bổ sung tệp `LICENSE` trước khi phân phối công khai.

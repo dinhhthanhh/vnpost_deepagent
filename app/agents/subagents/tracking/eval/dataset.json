@@ -1,0 +1,23 @@
+[
+  {
+    "id": "TRACK-001",
+    "query": "Tra cứu mã vận đơn VN123456789VN",
+    "expected_tracking_code": "VN123456789VN",
+    "expected_keywords": ["VN123456789VN", "trạng thái", "bưu gửi"],
+    "description": "Tra cứu mã bưu phẩm EMS hợp lệ"
+  },
+  {
+    "id": "TRACK-002",
+    "query": "Kiểm tra đơn hàng EE987654321VN xem đang ở đâu rồi",
+    "expected_tracking_code": "EE987654321VN",
+    "expected_keywords": ["EE987654321VN"],
+    "description": "Tra cứu mã chuyển phát quốc tế UPU"
+  },
+  {
+    "id": "TRACK-003",
+    "query": "Đơn hàng của tôi gửi từ hôm qua, mã là VN999999999VN",
+    "expected_tracking_code": "VN999999999VN",
+    "expected_keywords": ["VN999999999VN"],
+    "description": "Mã vận đơn mới tạo chưa có sự kiện"
+  }
+]

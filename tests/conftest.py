@@ -1,6 +1,6 @@
 import pytest
 
-from app.config import Settings
+from app.core.config import Settings
 
 
 @pytest.fixture

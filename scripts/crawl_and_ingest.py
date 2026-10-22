@@ -1,11 +1,11 @@
-import io
-import json
-import re
 import urllib.request
+
 from bs4 import BeautifulSoup
-from app.config import Settings
+
+from app.core.config import Settings
+from app.core.providers import ProviderClients
 from app.rag import KnowledgeBases
-from app.providers import ProviderClients
+
 
 def fetch_web_page(url: str, title: str) -> bytes:
     print(f"Fetching web page: {url}...")

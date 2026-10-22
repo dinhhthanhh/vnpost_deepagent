@@ -1,6 +1,8 @@
+# Secrets and local runtime data
 .env
 .venv/
 data/
+data-live/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -10,3 +12,26 @@ frontend/node_modules/
 frontend/dist/
 test-results/
 *.log
+*.tmp
+
+# Generated datasets, reports, and local API clients
+datasets/
+evaluation/
+reports/*
+!reports/*.json
+!reports/README.md
+postman/
+scripts/compare_architectures.py
+scripts/finalize_understand_graph.py
+scripts/generate_understand_batches.py
+
+# Local reference docs and workspace metadata
+Hướng dẫn cài đặt và chạy*.md
+Mipo*.md
+!Mipo báo cáo kỹ thuật Deep Agent, RAG LlamaIndex và TTS.md
+agent.template/
+.postman/
+reference/
+.agents/
+.ua/
+.understand-anything/

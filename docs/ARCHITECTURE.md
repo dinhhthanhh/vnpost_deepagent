@@ -1,147 +1,126 @@
-# Kiến trúc chatbot Deep Agent với RAG và ZeroTTS
+# Kiến trúc chatbot Deep Agent + RAG + ZeroTTS
 
-Phiên bản 1.0.0. Thiết kế dành cho nhóm phát triển triển khai một chatbot tra cứu tài liệu tiếng Việt, có phân công nhiều agent và đầu ra giọng nói. Hệ thống dùng Deep Agents làm harness điều phối, LlamaIndex làm lớp tài liệu/vector và ZeroTTS làm dịch vụ âm thanh.
+Phiên bản 1.1. Tài liệu này mô tả ứng dụng đang chạy ở thư mục gốc: FastAPI trong `app/`, giao diện React trong `frontend/` và các dịch vụ LLM/embedding/ZeroTTS bên ngoài. Nó không mô tả một hệ thống Kubernetes, A2A hay MCP riêng.
 
-Thiết kế ưu tiên một luồng có thể kiểm tra: truy vấn → bằng chứng → phân tích khi cần → câu trả lời có nguồn → giọng đọc. Số agent được chọn theo yêu cầu; không chạy tất cả chuyên viên cho một câu hỏi đơn giản. Chọn model cuối cùng dựa trên dữ liệu và hạ tầng thật, thay vì mặc định thêm model lớn ở mọi bước.
+Mục tiêu là chọn đường xử lý nhỏ nhất nhưng vẫn có bằng chứng: câu đơn giản trả lời cục bộ hoặc Direct RAG; chỉ yêu cầu nhiều bước, so sánh, tính toán hoặc mơ hồ mới đi qua Deep Agent. Với câu hỏi nghiệp vụ có bật `grounded`, câu trả lời chỉ được trả khi có nguồn hợp lệ.
 
-## 1 Thành phần đã triển khai
+## 1. Thành phần đang triển khai
 
 ```mermaid
 flowchart TD
-    U["Người dùng"] --> API["FastAPI và xác thực tenant"]
-    API --> H["Deep Agent điều phối"]
-    H --> R["RAG agent"]
-    H --> A["Analyst agent"]
-    H --> W["Writer agent"]
-    R --> KB["LlamaIndex vector và BM25"]
-    KB --> D["DOCX và TXT"]
-    R --> H
-    A --> H
-    W --> H
-    H --> G["Kiểm tra nguồn"]
-    G --> T["Trả lời chữ qua SSE"]
-    G --> S["ZeroTTS"]
-    S --> V["WAV hoặc streaming"]
+    U[Người dùng / React UI] --> API[FastAPI API]
+    API --> AUTH[X-API-Key to tenant]
+    AUTH --> FP[Đường tắt cục bộ]
+    AUTH --> RT[Router rule + retrieval-first]
+    FP --> OUT[Đáp án]
+    RT -->|Một ý rõ ràng| FAST[Fast RAG]
+    RT -->|Nhiều bước, so sánh, mơ hồ| DEEP[Deep Agent supervisor]
+    FAST --> KB
+    DEEP --> PREFETCH[RAG bắt buộc khi grounded]
+    PREFETCH --> KB
+    DEEP --> RAG[RAG agent]
+    DEEP --> ANA[Analyst agent]
+    DEEP --> WR[Writer agent]
+    DEEP --> TRK[Tracking agent]
+    DEEP --> PO[Post office agent]
+    RAG --> KB[KnowledgeBase: LlamaIndex + BM25]
+    TRK --> POSTAL[Postal Services API]
+    PO --> POSTAL
+    KB --> DOC[TXT / DOCX / PDF có text]
+    FAST --> CHECK[Kiểm tra nguồn S1...]
+    DEEP --> CHECK
+    CHECK --> SSE[JSON hoặc SSE]
+    SSE --> TTS[ZeroTTS adapter, tùy chọn]
+    TTS --> AUDIO[WAV theo tenant + TTL]
 ```
 
-Mỗi request có context riêng gồm tenant, nguồn, budget task và sự kiện tiến trình. Sub-agent có context nhiệm vụ độc lập; supervisor nhận kết quả gọn. Các công cụ của Deep Agent chỉ chạm vào filesystem ảo của StateBackend. File DOCX/TXT thật do lớp RAG đọc trong phạm vi tenant đã xác thực, không được mở bởi lệnh tùy ý từ LLM.
+| Thành phần | Trách nhiệm thực tế |
+|---|---|
+| FastAPI | `/api/chat`, `/api/chat/stream`, quản lý tài liệu, phiên, TTS và audio; frontend được phục vụ cùng origin khi đã build. |
+| Router | Rule/retrieval-first mặc định, không gọi LLM. LLM router là thử nghiệm, chỉ chạy khi `LLM_ROUTER_ENABLED=true`. |
+| Fast path | Trả lời chào hỏi, phép tính hoặc ngày tháng đủ chắc chắn mà không gọi LLM/RAG. |
+| Fast RAG | Một lần retrieval rồi một lượt LLM streaming/không streaming cho câu một ý. Thiếu bằng chứng có thể leo thang Deep Agent. |
+| Deep Agent | `create_deep_agent` điều phối `rag-agent`, `analyst-agent`, `writer-agent`, `tracking-agent`, `post-office-agent`; có giới hạn bước, timeout và ngân sách task. |
+| RAG | Đọc TXT, DOCX (gồm bảng) và PDF có text layer; hybrid vector + BM25, RRF và reranker tùy chọn. |
+| TTS | Gọi ZeroTTS; gửi đáp án chữ trước, âm thanh lỗi không làm mất đáp án chữ. |
 
-| Thành phần | Đầu vào | Đầu ra | Công cụ hoặc cơ chế |
-|---|---|---|---|
-| Supervisor | Yêu cầu và hội thoại ngắn | Kế hoạch nhỏ, tổng hợp kết quả | `create_deep_agent`, `task`, `parallel_tasks` |
-| RAG agent | Nhiệm vụ tra cứu | Bằng chứng, vị trí và `[S...]` | `search_documents`, LlamaIndex |
-| Analyst agent | Bằng chứng và số liệu đã có | So sánh, nhận xét, phép tính | Calculator AST giới hạn |
-| Writer agent | Bằng chứng/yêu cầu đã cho | Bản soạn hoặc tóm tắt | Model, không thêm công cụ tài liệu |
-| Kiểm tra nguồn | Đáp án và registry nguồn | Đáp án hoặc thông báo thiếu nguồn | Kiểm tra ID, lựa chọn đúng nguồn đã trích |
-| ZeroTTS adapter | Văn bản cuối cùng | WAV hoặc stream | API từ Postman, timeout và giới hạn byte |
+## 2. Luồng định tuyến và trả lời
 
-Trong registry, `general-purpose` được thay bằng writer có giới hạn chung, để lời gọi `task` chuẩn không tạo một chuyên viên ngoài budget. Analyst và writer là graph LangChain đã compile; RAG là agent LangChain dùng tool LlamaIndex. Đây là cách tích hợp `CompiledSubAgent` vào Deep Agents, không phải framework agent tự viết thay thế Deep Agents.
+1. API xác thực `X-API-Key` và ánh xạ khóa sang tenant. Browser không truyền tenant vào body hoặc tool.
+2. Nếu nhận diện được chào hỏi, phép tính hoặc ngày tháng đơn giản, `fastpath` trả lời tại chỗ.
+3. Với `mode=fast` hoặc một yêu cầu một ý trong `mode=auto`, Fast RAG lấy nguồn trước. Cổng bằng chứng kiểm tra số nguồn và ngưỡng điểm; không đủ thì chuyển sang Deep Agent.
+4. Với `mode=deep`, yêu cầu dài, nhiều câu hỏi, so sánh, hình ảnh hoặc suy luận thời gian, hệ thống gọi Deep Agent. Khi `grounded=true`, backend bắt buộc retrieval trước supervisor và nạp excerpt có mã `[S...]` vào lượt hiện tại.
+5. Kết quả đi qua kiểm tra citation: mã nguồn phải tồn tại và excerpt phải có đủ từ khóa hỗ trợ; citation không đạt bị loại. Nếu thiếu bằng chứng nghiệp vụ, hệ thống trả mẫu `[[NO_EVIDENCE]]` đã chuẩn hóa. Với các tác vụ thời gian thực từ `tracking-agent` hoặc `post-office-agent`, kết quả được gán trạng thái `grounding_status="computed"` đảm bảo tính xác thực mà không đòi hỏi trích đoạn tài liệu tĩnh.
+6. API lưu câu trả lời/nguồn theo tenant và phiên. Với SSE, event `answer` được gửi trước synthesis; sau đó là `speech_ready` hoặc `speech_error`, rồi `done`.
 
-## 2 Phân công và chạy đồng thời
+`router_enabled` không làm LLM router thành mặc định: LLM router là opt-in và tắt mặc định.
 
-Supervisor có thể phát nhiều lời gọi `task` trong cùng lượt. Ngoài ra, `parallel_tasks` nhận danh sách `TaskSpec`, chạy các graph qua `asyncio.gather`, trả kết quả theo thứ tự đầu vào. Semaphore giới hạn tối đa ba chuyên viên đang chạy trong một request và budget mặc định tám lần giao nhiệm vụ. Timeout và giới hạn bước dừng vòng agent kéo dài.
+## 3. Deep Agent và chạy đồng thời
 
-Ví dụ “So sánh điều kiện hoàn cước của dịch vụ A và B, rồi viết câu trả lời cho khách hàng” được xử lý thành các đợt:
-
-1. Hai RAG task tìm điều kiện A và B cùng lúc.
-2. Khi đủ hai bằng chứng, analyst so sánh, giữ mã nguồn và đơn vị số liệu.
-3. Supervisor trả lời trực tiếp hoặc giao writer nếu có yêu cầu văn phong cụ thể.
-4. Kiểm tra nguồn, gửi chữ, rồi gọi TTS nếu người dùng bật voice.
-
-Chạy analyst trước khi có số liệu hoặc chạy writer trước khi có bằng chứng làm tăng nguy cơ đoán sai. Những phụ thuộc này được nêu trong prompt; runtime giới hạn concurrency/budget nhưng không tự chứng minh kế hoạch LLM là tối ưu. Test riêng xác nhận lời gọi native `task` và dispatcher bổ sung thực sự có các khoảng thời gian chạy chồng nhau.
-
-Một sub-agent lỗi sẽ trả trạng thái lỗi có kiểm soát. Các kết quả khác vẫn được giữ để supervisor sử dụng. Trace chỉ gồm nhiệm vụ, trạng thái, thời gian và số nguồn; không phát chain-of-thought hay khóa API ra giao diện.
-
-## 3 Dữ liệu và RAG
-
-TXT được đọc UTF-8, chia theo phạm vi dòng. DOCX được đọc theo thứ tự đoạn và bảng, giữ tên mục, số đoạn, số bảng và hàng. Dòng dữ liệu bảng mang cả tên cột để tránh mất ý nghĩa số liệu. Không suy đoán số trang DOCX vì số trang phụ thuộc layout và trình dựng Word.
-
-LlamaIndex `SentenceSplitter` tạo các node với kích thước khởi điểm 512 token đếm theo tokenizer regex và overlap 64. Đây là đơn vị đếm nội bộ để chia đoạn, không phải số token tính phí của LLM. Node giữ `document_id`, `filename`, `location`; ID chunk được hash từ nội dung và vị trí. Metadata dùng để trích nguồn được loại khỏi chuỗi embedding để tên file không lấn át nội dung.
-
-Sau khi nhập tài liệu, `VectorStoreIndex` tạo/lưu vector. Khi truy vấn, retriever LlamaIndex lấy ứng viên semantic và BM25Plus lấy ứng viên từ khóa đã chuẩn hóa dấu tiếng Việt. Reciprocal Rank Fusion kết hợp thứ hạng với hằng số 60; trả tối đa năm chunk mặc định. Threshold vector 0,35 là giá trị khởi điểm cần hiệu chỉnh, không phải xác suất đúng hay tiêu chuẩn chung cho mọi model.
-
-BM25 hỗ trợ mã dịch vụ và cụm từ chính xác; vector hỗ trợ cách diễn đạt khác. Việc bỏ dấu và tách từ ở bản pilot là cách đơn giản, có thể nhầm các cụm nhiều nghĩa. Kiểm thử câu paraphrase, mã bưu gửi và chính sách gần tên nhau trước khi quyết định thêm tokenizer tiếng Việt hoặc reranker.
-
-Cache embedding SQLite lưu hash và vector, tách khóa truy vấn/đoạn tài liệu và namespace model/endpoint/revision. Upload mới có thể tái dùng vector của các chunk không đổi. Index được rebuild trong snapshot riêng rồi chuyển con trỏ nguyên tử; truy vấn đọc snapshot cũ trong lúc nhập file. Nếu embedding lỗi, tài liệu mới không được công bố vào KB và file vừa ghi bị gỡ.
-
-## 4 Nguồn và độ chính xác
-
-Mỗi lần retrieval đăng ký nguồn tại context của request và nhận mã `[S1]`, `[S2]`. Supervisor chỉ được trích các ID thực có trong registry. Kết quả chỉ gửi những nguồn đã xuất hiện trong đáp án. Khi người dùng chọn chế độ tài liệu mà đáp án thiếu nguồn, backend trả thông báo chưa đủ bằng chứng.
-
-Các kiểm tra trên phát hiện nguồn giả và thiếu nguồn. Chúng không kiểm tra entailment của mọi câu với tài liệu, cũng không giải quyết tự động tài liệu lỗi thời hoặc xung đột. Cần đánh giá thủ công câu trả lời trên bộ câu hỏi nghiệp vụ, gồm câu có đáp án, không có đáp án, nguồn mâu thuẫn và tài liệu có chỉ dẫn độc hại. LLM được hướng dẫn coi chỉ dẫn trong tài liệu là dữ liệu; không nên coi prompt là bảo đảm tuyệt đối chống mọi dạng injection.
-
-Tính toán dùng AST với toán tử được phép, không dùng `eval`/`exec`, giới hạn độ dài biểu thức, số node, số mũ và kết quả. Điều này tránh sai số học do LLM tự tính; lựa chọn đúng số liệu và đơn vị vẫn là trách nhiệm của agent và bộ đánh giá nghiệp vụ.
-
-## 5 TTS và thời gian đáp ứng
-
-API trong Postman có URL gốc `https://ai.vnpost.vn/zero-tts`. Adapter giữ tiền tố này khi gọi `/tts`, `/tts/stream`, `/v1/audio/speech` và `/voices`. Payload OpenAI speech dùng đúng `model: ZeroTTS`, `input`, `voice`, `response_format: wav` và `speed: 1.0`.
-
-Văn bản được gửi qua event `answer` trước khi bắt đầu chờ synthesis. Sau đó gửi `speech_ready` hoặc `speech_error`, rồi `done`. Lỗi TTS không làm mất đáp án chữ. REST `/api/chat` trả khi hoàn tất cả bước được yêu cầu; nên dùng SSE khi quan tâm thời gian thấy chữ.
-
-Giao diện mặc định đọc WAV đầy đủ để dễ kiểm tra file; người dùng cũng có thể chọn streaming. Parser RIFF nhận header qua nhiều chunk, đọc `fmt`, bỏ qua các chunk metadata và giữ byte lẻ. Sample rate được lấy từ WAV. Thời gian nhận PCM đầu tiên được đo thực trên client; chưa đo độ trễ vật lý của loa.
-
-TTS có timeout tổng, giới hạn ký tự và byte, không retry POST, giới hạn kết nối đồng thời. Âm thanh được lưu theo tenant và kiểm tra TTL khi tải. Bản hiện tại dùng giọng nói để trả lời; nếu cần nhập câu hỏi bằng micro thì bổ sung ASR thành dịch vụ độc lập trước API chat.
-
-## 6 Vì sao kiến trúc này tiết kiệm thời gian
-
-Supervisor chọn số chuyên viên theo yêu cầu thay vì luôn qua một chuỗi cố định. Công việc độc lập chạy đồng thời; nhiều bước truy xuất ở sub-agent không làm phình context chính. Top K và số task được giới hạn. Embedding được batch/cache; không nạp lại index và model trong mỗi câu hỏi. Ingestion và retrieval đồng bộ được đưa ra worker thread để không chặn event loop.
-
-Tổng thời gian một đợt độc lập xấp xỉ thời gian của task lâu nhất cộng phần điều phối, thay vì tổng tất cả task. Tuy nhiên, chạy nhiều task vẫn tăng số token/call và có thể chạm rate limit hoặc tranh tài nguyên GPU. Giá trị ba task đồng thời là cấu hình khởi điểm; giảm khi model server chỉ xử lý hiệu quả một hoặc hai request.
-
-Không thể cam kết độ trễ thực của LLM/TTS từ test offline. Với RAG agent hiện tại, một câu tra cứu thường có lượt supervisor giao việc, lượt RAG gọi tool, lượt RAG tổng hợp và lượt supervisor trả lời. Nếu benchmark cho thấy overhead lớn, có thể thay RAG bằng compiled graph retrieval trước rồi synthesis một lượt, giữ cùng hợp đồng bằng chứng và registry.
-
-## 7 Cấu hình model và hạ tầng
-
-Điểm tích hợp LLM là API OpenAI-compatible qua `ChatOpenAI`; bắt buộc tool calling. Có thể chạy dịch vụ nội bộ hoặc nhà cung cấp ngoài theo chính sách dữ liệu của đơn vị. `SUBAGENT_MODEL` cho phép dùng model nhẹ hơn cho các task chuyên môn. Model phải được kiểm tra về tool schema, tiếng Việt, các con số và khả năng tuân thủ nguồn trước khi sử dụng.
-
-Embedding có hai lựa chọn thật: server OpenAI-compatible hoặc HuggingFace cục bộ. Nên so sánh hai model embedding đa ngôn ngữ trên cùng dữ liệu; đo retrieval trước khi đo chatbot. Chỉ thêm reranker nếu giúp các câu hỏi khó và phần tăng độ trễ chấp nhận được. Reranker chưa nằm trong code 1.0.0.
-
-Khi dùng một GPU cho LLM, embedding và ZeroTTS, cần đo tải chồng nhau trước khi tăng concurrency. Bản code không gắn chặt vào một cấu hình GPU. Tách ZeroTTS thành dịch vụ đã có sẵn giúp chatbot không phải nạp thêm model âm thanh vào process điều phối.
-
-## 8 Lưu trữ và cách ly
-
-API key được ánh xạ tới tenant trên server. Client không truyền tenant trong body hoặc tool. Tài liệu/index và audio đặt trong thư mục tenant; mọi truy vấn session/reply/audio dùng điều kiện tenant. ContextVar giữ registry nguồn riêng cho từng request. Một khóa có thể đại diện một đơn vị; người cùng tenant chia sẻ quyền của tenant.
-
-SQLite lưu hội thoại rút gọn, bản sao nguồn và kết quả trả lời. Các request cùng phiên được khóa nối tiếp để không ghi đè lượt hội thoại. Chỉ lịch sử user/assistant được gửi lại cho LLM; không lưu toàn bộ vòng tool/filesystem của harness. Browser giữ khóa truy cập trong RAM và tải audio bằng header, không đưa khóa vào URL.
-
-Mã nguồn hiện dùng khóa chia sẻ theo tenant, không có SSO hay RBAC theo từng nhân viên/tài liệu. Cần authentication theo người dùng và ACL tài liệu khi đưa vào hệ thống nội bộ có nhiều mức quyền. Việc cách ly tenant trong code đã có kiểm thử riêng; khả năng chịu tải nhiều process chưa được thực hiện.
-
-## 9 Đánh giá trước khi chốt cấu hình
-
-Tạo bộ 100–200 câu do người nghiệp vụ gán đáp án và nguồn. Tách tập điều chỉnh và tập kiểm tra cuối cùng để không chỉnh tham số trên cùng dữ liệu báo cáo. Bao gồm câu hỏi tra cứu trực tiếp, paraphrase tiếng Việt, bảng/số liệu, so sánh hai tài liệu, câu không có đáp án, câu thiếu dữ kiện, nguồn mâu thuẫn và lượt hỏi tiếp.
-
-| Nhóm chỉ số | Đo gì | Cách đánh giá |
+| Agent | Công cụ | Vai trò |
 |---|---|---|
-| Retrieval | Đoạn đúng có xuất hiện, đứng thứ mấy | Recall@K, MRR@K, mẫu JSONL đã gán nguồn |
-| Câu trả lời | Sự kiện, số liệu và đơn vị đúng | Người nghiệp vụ chấm theo đáp án chuẩn |
-| Nguồn | Mã tồn tại và nguồn thực hỗ trợ câu | Kiểm tra runtime cộng đánh giá entailment thủ công |
-| Thiếu thông tin | Từ chối hoặc hỏi thêm khi cần | Bộ câu không có đáp án/thiếu dữ kiện |
-| Độ trễ | Thấy chữ, âm thanh, kết thúc | p50/p95 ở tải 1 rồi 2 rồi 4 request |
-| Chi phí | Call, token, RAM/VRAM và synthesis | Log provider và theo dõi hạ tầng thật |
+| `rag-agent` | `search_documents`, `read_file` | Tìm bằng chứng mới từ kho tri thức (.docx, .txt, .pdf), trả excerpt và `[S...]`. |
+| `analyst-agent` | `calculate`, `calculate_date`, `read_file` | So sánh bằng chứng, tính toán số học AST an toàn và tính toán ngày tháng chuẩn UTC+7. |
+| `writer-agent` | `read_file` | Soạn thảo/tóm tắt từ dữ liệu và bằng chứng đã được giao (chế độ fork kế thừa ngữ cảnh). |
+| `tracking-agent` | `track_item` | Tra cứu hành trình bưu phẩm/bưu kiện theo mã vận đơn chuẩn UPU S10 hoặc nội địa. |
+| `post-office-agent` | `lookup_post_office` | Tra cứu mạng lưới bưu cục VNPost, mã Vpostcode, địa chỉ và giờ mở cửa. |
 
-`evaluate_retrieval.py` đã có để đo retrieval; đánh giá chất lượng cuối cùng cần người nghiệp vụ. Mục tiêu nghiệm thu phải được thống nhất theo use case, không tự đặt một tỷ lệ đúng cao rồi coi test nhỏ là bằng chứng. Không dùng thông tin “streaming khoảng 0,3 giây” từ Postman làm KPI đã đo của chatbot.
+Supervisor điều phối giao việc bằng công cụ `task(subagent_type, description)` chuẩn của Deep Agents. Các lời gọi `task` độc lập phát trong cùng một lượt được runtime LangGraph tự động gom đợt và thực thi song song theo `max_concurrency = self.settings.max_parallel_subagents` (3 sub-agents, đồng thời giới hạn bởi semaphore `run.slots`). Các tác vụ phụ thuộc (như `writer-agent`) được Supervisor phát ở lượt tiếp theo sau khi đợt song song đầu tiên hoàn tất. Công cụ `parallel_tasks` cài đặt sẵn qua `asyncio.gather` đóng vai trò tiện ích bổ trợ.
 
-## 10 Mở rộng khi pilot vượt giới hạn
+Mỗi request có `RunContext` riêng: tenant, session, registry nguồn, cache retrieval, semaphore và ngân sách. Cấu hình giới hạn tối đa 3 sub-agent đồng thời, 8 task/request, 12 bước đồ thị và timeout 35 giây. Sub-agent lỗi trả trạng thái kiểm soát (`task_failed`), không làm lộ lỗi provider hoặc prompt.
 
-Bản 1.0.0 phù hợp một instance với giới hạn ban đầu 200 file, 10 triệu ký tự/tenant. Đây là giới hạn bảo vệ khởi điểm; cần đo bộ tài liệu thực để định kích thước RAM và thời gian indexing. Chạy `--workers 1`, vì khóa session và trạng thái KB nằm trong process.
+### 3.1. Quản lý Trạng thái Checkpointer và Kho Kỹ năng (/skills/)
 
-Khi tăng kho hoặc số người dùng, thay index RAM bằng Qdrant/pgvector hoặc vector store phù hợp qua LlamaIndex, thay catalog bằng PostgreSQL và quản lý khóa/cache/queue qua Redis. Tách worker ingestion để API upload trả job ID ngay; dùng upsert/delete theo document thay vì rebuild toàn snapshot. Thêm ACL vào filter retrieval trước khi nội dung tới LLM, không lọc sau khi đã trả lời.
+- **Checkpointer SQLite:** `PersistentSqliteCheckpointer` lưu trạng thái đồ thị bất đồng bộ vào `checkpoints.sqlite3` với thread ID `{tenant}:{session}:{request}` phục vụ kiểm toán audit và tái hiện trạng thái phiên.
+- **Kỹ năng nghiệp vụ (`/skills/`):** Hàm `_load_enterprise_skills()` nạp các file `.md` trong `data/skills/` vào hệ thống tệp ảo `/skills/...` của `StateBackend`. Các Sub-agent (`rag-agent`, `analyst-agent`, `writer-agent`) truy xuất qua công cụ `read_file`. Hiện tại hệ thống có 3 bộ kỹ năng chuẩn hóa (đối chiếu 3 file `SKILL.md` thực tế):
+  1. `bang_ma_buu_chinh_vung_cuoc`: Phân định 3 vùng cước (Vùng 1: Nội tỉnh; Vùng 2: Nội miền; Vùng 3: Liên miền) và chuẩn mã bưu chính quốc gia Vpostcode 5 ký tự số.
+  2. `quy_dinh_hang_cong_kenh`: Quy tắc tính khối lượng quy đổi thể tích cho hàng cồng kềnh: $\text{Khối lượng quy đổi (kg)} = (\text{Dài} \times \text{Rộng} \times \text{Cao}) / 6000$ (cm). Khối lượng tính cước là giá trị lớn hơn giữa cân nặng thực tế và thể tích quy đổi (áp dụng chuẩn duy nhất hệ số **6000** toàn mạng lưới).
+  3. `quy_trinh_khieu_nai_boi_thuong`: Thời hiệu khiếu nại quy định **06 tháng** cho bưu gửi nội địa và **12 tháng** cho bưu gửi quốc tế kể từ ngày gửi; thời hạn giải quyết tối đa 20 ngày làm việc (nội địa), 30 ngày (quốc tế EMS); bồi thường 100% giá trị khai giá với bưu gửi có khai giá, hoàn cước cộng tối đa 04 lần cước với bưu gửi không khai giá, và hoàn cước khi phát chậm.
 
-Các hạng mục này là hướng mở rộng, chưa nằm trong code hiện tại: OCR/PDF, reranker, ASR, SSO/RBAC, multi-instance, ingestion job queue, tracing token/cost tự động và kiểm tra entailment tự động. Chúng không phải điều kiện để chạy pilot DOCX/TXT với Deep Agents và TTS hiện có.
+## 4. Dữ liệu và RAG
 
-## 11 Đối chiếu code TTS ban đầu
+- TXT được tách theo đoạn/dòng.
+- DOCX giữ thứ tự đoạn và bảng; dữ liệu bảng mang cả tên cột.
+- PDF được đọc bằng `pypdf` theo trang khi có text layer. PDF scan hoặc không trích được chữ bị từ chối; OCR chưa có trong root app.
+- Upload thông thường là nguồn người dùng. `/api/documents/verified` chỉ nhận nguồn `official_public` từ HTTPS thuộc domain cấu hình, bằng khóa quản trị riêng. `/api/documents/s3` nhận URL presigned hoặc bucket/key.
 
-ZIP đầu vào chỉ có frontend ZeroTTS. Chưa có code backend agent hay RAG. Postman đã cung cấp đủ các endpoint cần cho trả lời giọng nói, nhưng chưa cung cấp LLM, embedding hay dữ liệu nghiệp vụ để đo chất lượng thật.
+`SentenceSplitter` chỉ là fallback cho đơn vị cấu trúc quá dài. RAG giữ nguyên đơn vị cấu trúc: đoạn/dòng của TXT, đoạn hoặc hàng bảng của DOCX và trang của PDF. `CHUNK_SIZE=256` và `CHUNK_OVERLAP=64` không phải cách cắt mặc định toàn bộ tài liệu; chúng chỉ áp dụng khi một đơn vị cấu trúc vượt ngưỡng, để vẫn nằm trong giới hạn embedding của `bkai-foundation-models/vietnamese-bi-encoder`.
 
-Các điểm đã xử lý ở bộ code mới: proxy TTS tại backend để giữ khóa, giữ path `/zero-tts`, đo PCM đầu tiên thay vì gán giá trị fallback 0,3 giây, parse WAV nhiều chunk thay vì bỏ 44 byte ở chunk đầu, dùng sample rate từ header, giữ đáp án chữ khi voice lỗi. Health hiện báo liveness và cấu hình; không suy ra GPU từ trường `active_providers` khi mẫu Postman dùng `providers`.
+RAG kết hợp vector retrieval và BM25Plus đã chuẩn hóa dấu tiếng Việt, sau đó RRF hợp nhất thứ hạng. `RETRIEVAL_TOP_K` mặc định là 5. Reranker cross-encoder `BAAI/bge-reranker-v2-m3` chỉ chạy khi `RERANKER_ENABLED=true`; khi bật, tối đa `RERANKER_CANDIDATE_K` ứng viên được xếp lại trước khi chọn top K.
 
-## 12 Tài liệu kỹ thuật tham khảo
+Embedding cache SQLite tách namespace query/document/model/revision. Index được build snapshot mới rồi đổi con trỏ nguyên tử `os.replace` sang `current.json`. Index LlamaIndex và BM25 hiện nằm trong process, phù hợp pilot một instance.
 
-- Deep Agents Subagents: https://docs.langchain.com/oss/python/deepagents/subagents
-- Deep Agents Customization: https://docs.langchain.com/oss/python/deepagents/customization
-- Deep Agents package: https://pypi.org/project/deepagents/
-- LlamaIndex Retriever: https://developers.llamaindex.ai/python/framework/module_guides/querying/retriever/
-- LlamaIndex OpenAI Embedding: https://developers.llamaindex.ai/python/framework-api-reference/embeddings/openai/
-- API ZeroTTS: collection Postman do người dùng cung cấp, bản đối chiếu trong `reference/ZeroTTS.postman_collection.json`.
+## 5. Bằng chứng, quyền và dữ liệu nhạy cảm
 
-Dependency chính được pin theo các phiên bản đã cài và kiểm tra trong bộ bàn giao. `requirements.lock.txt` ghi môi trường kiểm thử; tên package/hành vi đã đối chiếu với tài liệu và API thư viện đang cài.
+Mỗi hit được đăng ký trong request dưới mã `[S1]`, `[S2]`...; chỉ mã thực sự được dùng và vượt kiểm tra hỗ trợ mới trả về client. Kiểm tra này không thay thế đánh giá entailment nghiệp vụ bởi con người.
+
+Tenant là ranh giới hiện có: API key chọn tenant, kho/index/audio/session được tách theo tenant. Đây **không phải** SSO, RBAC theo người dùng hoặc ACL theo tài liệu/phòng ban. Không đưa tài liệu mật đa cấp vào hệ thống cho đến khi ACL được lấy từ hệ thống định danh đáng tin cậy và được lọc ngay trong retrieval, trước khi nội dung tới LLM.
+
+## 6. TTS và streaming
+
+ZeroTTS dùng base URL cấu hình (mặc định `https://ai.vnpost.vn/zero-tts`) và các endpoint `/tts`, `/tts/stream`, `/v1/audio/speech`, `/voices` tùy mode. Client giới hạn timeout, số kết nối đồng thời, số ký tự và số byte audio; không retry POST synthesis. WAV lưu theo tenant và chỉ tải qua API đã xác thực, với TTL.
+
+Chat SSE chỉ stream token ở Fast RAG. Deep Agent phát event tiến trình và câu trả lời đã kiểm tra, không phát chain-of-thought. Ứng dụng chưa có ASR; cần xây thành dịch vụ độc lập nếu muốn nhận câu hỏi qua micro.
+
+## 7. Cấu hình và kiểm chứng
+
+LLM dùng endpoint OpenAI-compatible qua `ChatOpenAI`; Deep Agent yêu cầu tool/function calling. `scripts/check_services.py --live` cần chạy trước pilot live. Demo dùng model kịch bản và embedding hash để kiểm luồng, không là bằng chứng chất lượng nghiệp vụ.
+
+Hệ thống đã thực hiện đo đạc benchmark thực tế trên mô hình `gemini-2.5-flash` và mô hình nhúng `vietnamese-bi-encoder` (kết quả lưu tại `reports/architecture_metrics.json` và `reports/architecture_comparison.json`, ngày 16/10/2026), ghi nhận:
+- P50 độ trễ toàn hệ thống: **2.27 giây** (Fast RAG P50 2.27s, Deep Agent P50 3.55s, Tầng 0 shortcut 31ms).
+- Tỷ lệ hoàn thành: **8/8 (100%)**, 0 lỗi, 0 timeout.
+
+Trước nghiệm thu mở rộng, cần bộ 100–200 câu do nghiệp vụ gán đáp án và nguồn đúng, gồm câu trực tiếp, paraphrase, bảng/số liệu, so sánh, không có đáp án và nguồn mâu thuẫn. Đo Recall@K/MRR@K bằng `scripts/evaluate_retrieval.py`, sau đó chấm câu trả lời, nguồn, p50/p95, chi phí và độ trễ TTS trên dịch vụ thật.
+
+## 8. Lộ trình mở rộng
+
+Khi mở rộng, giữ các nguyên tắc: route theo bằng chứng thay vì mặc định gọi nhiều agent; fan-out có giới hạn; ACL fail-closed trước retrieval; logs không ghi toàn bộ nội dung nhạy cảm; ingestion bất đồng bộ và có version; TTS tách dịch vụ khi dùng GPU riêng.
+
+Chưa nằm trong root app: vector database (Qdrant/pgvector), PostgreSQL/Redis, queue/worker ingestion, OCR, ASR, SSO/RBAC/ACL tài liệu, multi-instance, audit log đầy đủ, tracing token/cost và entailment tự động. Khi cần các năng lực này, thay index RAM bằng vector store có metadata filter, lưu catalog/version ở database và đưa ingestion vào worker; không tăng số Uvicorn worker khi state session/KB vẫn nằm trong process.
+
+## 9. Tài liệu liên quan
+
+- `README.md`: chạy, cấu hình và giới hạn pilot.
+- `docs/API.md`: hợp đồng API.
+- `docs/ROUTING_AND_SCALE.md`: định tuyến và hướng mở rộng.
+- `docs/VALIDATION.md`: phạm vi kiểm thử và những điều chưa xác nhận trên dịch vụ thật.

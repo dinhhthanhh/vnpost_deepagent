@@ -5,19 +5,63 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vnpost-deepagent-chatbot"
 version = "1.0.0"
-description = "Deep Agents harness + LlamaIndex document RAG + ZeroTTS"
-requires-python = ">=3.11,<3.14"
+description = "Deep Agents harness + LlamaIndex document RAG + ZeroTTS + Qdrant"
+requires-python = ">=3.11,<3.13"
 dependencies = [
-  "deepagents==0.7.24", "langchain-openai==1.7.1",
-  "llama-index-core==0.14.25", "llama-index-embeddings-openai==0.7.0",
-  "fastapi==0.143.0", "uvicorn==0.54.0", "httpx[socks]==0.28.1",
-  "pydantic-settings==2.15.0", "python-multipart==0.0.32",
-  "python-docx==1.2.0", "rank-bm25==0.2.2",
+  "deepagents==0.7.24",
+  "langchain-openai==1.7.1",
+  "llama-index-core==0.14.25",
+  "llama-index-embeddings-openai==0.7.0",
+  "llama-index-vector-stores-qdrant>=0.10.4",
+  "qdrant-client>=1.19.1",
+  "fastapi==0.143.0",
+  "uvicorn==0.54.0",
+  "httpx[socks]==0.28.1",
+  "pydantic-settings==2.15.0",
+  "python-multipart==0.0.32",
+  "python-docx==1.2.0",
+  "rank-bm25==0.2.2",
+  "pypdf>=6.20.0",
+  "pymupdf>=1.25.0",
+  "aiosqlite>=0.20.0",
+  "langgraph-checkpoint-sqlite>=3.0.0",
+  "langgraph-checkpoint-postgres>=2.0.0",
+  "psycopg[binary,pool]>=3.2.0",
+  "mcp[cli]>=1.19.0,<2.0.0",
+  "a2a-sdk==1.2.3",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "respx==0.23.1", "ruff==0.17.0"]
-local-embedding = ["llama-index-embeddings-huggingface>=0.6,<0.8"]
+dev = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "respx==0.23.1",
+  "ruff==0.17.0",
+]
+local-embedding = [
+  "llama-index-embeddings-huggingface>=0.7.0",
+  "sentence-transformers>=5.0.0",
+  "pyvi>=0.1.1,<0.2",
+  "torch>=2.6.0",
+  "torchvision>=0.21.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "respx==0.23.1",
+  "ruff==0.17.0",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
 
 [tool.setuptools.packages.find]
 include = ["app*"]
@@ -25,6 +69,9 @@ include = ["app*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+  "ignore::langchain_core._api.beta_decorator.LangChainBetaWarning",
+]
 
 [tool.ruff]
 line-length = 100
@@ -33,3 +80,6 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/*.py" = ["F401", "F403"]

@@ -6,7 +6,7 @@ import json
 from langchain_core.tools import tool
 
 from app.agents import create_model
-from app.config import Settings
+from app.core.config import Settings
 from app.rag import make_embedding
 from app.tts import ZeroTTS
 

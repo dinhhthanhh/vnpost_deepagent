@@ -1,0 +1,8 @@
+[
+  {
+    "id": "RAG-001",
+    "query": "Quy định kích thước tối đa cho bưu gửi chuyển phát nhanh EMS là bao nhiêu?",
+    "expected_keywords": ["kích thước", "EMS", "tối đa", "thể lệ"],
+    "description": "Tra cứu quy định kích thước bưu gửi"
+  }
+]

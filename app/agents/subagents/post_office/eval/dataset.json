@@ -1,0 +1,8 @@
+[
+  {
+    "id": "PO-001",
+    "query": "Tìm bưu cục gần khu vực quận Hoàn Kiếm Hà Nội",
+    "expected_keywords": ["bưu cục", "Hoàn Kiếm", "Hà Nội", "địa chỉ"],
+    "description": "Tra cứu điểm phục vụ bưu điện"
+  }
+]

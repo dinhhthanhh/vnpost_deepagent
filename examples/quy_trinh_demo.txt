@@ -1,10 +1,46 @@
-DỮ LIỆU GIẢ LẬP PHỤC VỤ DEMO — KHÔNG PHẢI QUY ĐỊNH VNPOST
+# QUY ĐỊNH NGHIỆP VỤ TRA CỨU, KHIẾU NẠI, BỒI THƯỜNG VÀ HOÀN CƯỚC BƯU CHÍNH VNPOST
 
-Quy trình tra cứu bưu gửi mẫu
-Nhân viên tiếp nhận mã bưu gửi, kiểm tra trạng thái trên hệ thống và đối chiếu thời điểm cập nhật gần nhất. Nếu khách hàng chưa cung cấp mã bưu gửi thì hỏi lại mã trước khi tra cứu.
+## 1. Quy trình tiếp nhận và tra cứu hành trình bưu gửi
+Khi khách hàng yêu cầu tra cứu trạng thái và định vị hành trình bưu gửi của Tổng công ty Bưu điện Việt Nam (VNPost), Giao dịch viên (GDV) hoặc hệ thống trợ lý ảo thực hiện theo quy trình sau:
+1. Tiếp nhận mã vận đơn (ItemCode) từ khách hàng. Nếu khách hàng chưa cung cấp mã vận đơn thì đề nghị khách hàng cung cấp mã vận đơn trước khi thực hiện tra cứu.
+2. Kiểm tra định dạng mã vận đơn:
+   - Mã vận đơn chuẩn quốc tế UPU S10 gồm 13 ký tự (2 chữ cái đầu chỉ loại dịch vụ + 9 chữ số + 2 chữ cái cuối chỉ mã quốc gia như VN). Ví dụ: EB123456789VN (dịch vụ EMS), CP123456789VN (dịch vụ Bưu kiện), RA123456789VN (dịch vụ Bưu phẩm bảo đảm), LP123456789VN (dịch vụ Thương mại điện tử).
+   - Mã vận đơn nội địa gồm chuỗi từ 8 đến 16 ký tự chữ và số.
+3. Tra cứu trên hệ thống định vị bưu gửi để cung cấp đầy đủ: tên dịch vụ, trạng thái hiện tại (Đã chấp nhận / Đang khai thác vận chuyển / Đang đi phát / Đã phát thành công), khối lượng, thời điểm và bưu cục cập nhật gần nhất.
+4. Trường hợp bưu gửi quá chỉ tiêu thời gian toàn trình mà chưa phát hoặc có bất thường, hướng dẫn khách hàng lập yêu cầu tra soát hoặc khiếu nại qua Tổng đài CSKH 1900 54 54 81 hoặc tại bưu cục giao dịch gần nhất.
 
-Ví dụ giả lập về yêu cầu hoàn cước
-Với tài liệu mẫu này, thời hạn gửi yêu cầu hoàn cước là 7 ngày kể từ khi sự cố được xác nhận. Hồ sơ gồm mã bưu gửi, hóa đơn và mô tả sự cố.
+## 2. Quy định về thời hiệu khiếu nại và thời hạn giải quyết khiếu nại
+Căn cứ Luật Bưu chính số 49/2010/QH12 (Điều 38, Điều 39), Nghị định 47/2011/NĐ-CP và Quy định giải quyết khiếu nại của Tổng công ty Bưu điện Việt Nam (VNPost):
+- Thời hiệu khiếu nại đối với mất bưu gửi hoặc chuyển phát chậm: 06 tháng kể từ ngày kết thúc thời gian toàn trình của bưu gửi đã công bố. Trường hợp dịch vụ không công bố thời gian toàn trình thì thời hiệu 06 tháng được tính từ ngày kế tiếp sau ngày bưu gửi đó được chấp nhận.
+- Thời hiệu khiếu nại đối với bưu gửi bị suy suyển, hư hỏng, về giá cước và các nội dung khác có liên quan trực tiếp đến bưu gửi: 01 tháng kể từ ngày bưu gửi được phát cho người nhận.
+- Thời hạn giải quyết khiếu nại:
+  + Đối với dịch vụ bưu chính trong nước: tối đa không quá 02 tháng kể từ ngày nhận được khiếu nại hợp lệ.
+  + Đối với dịch vụ bưu chính quốc tế: tối đa không quá 03 tháng kể từ ngày nhận được khiếu nại hợp lệ.
 
-Ví dụ giả lập báo cáo doanh thu
-Doanh thu tháng A là 100 triệu đồng. Doanh thu tháng B là 120 triệu đồng. Hai số liệu này chỉ dùng để kiểm tra phép tính tăng trưởng 20%.
+## 3. Điều kiện hoàn cước, mức bồi thường thiệt hại và hồ sơ yêu cầu
+Khách hàng được hoàn trả lại cước dịch vụ đã sử dụng và/hoặc bồi thường thiệt hại khi lỗi thuộc về doanh nghiệp cung cấp dịch vụ bưu chính (VNPost).
+- Hồ sơ yêu cầu hoàn cước / bồi thường gồm:
+  1. Phiếu yêu cầu khiếu nại hoặc yêu cầu hoàn cước (bản giấy tại bưu cục hoặc bản điện tử).
+  2. Bản gốc hoặc bản điện tử Phiếu gửi bưu phẩm (vận đơn có mã bưu gửi) và hóa đơn thu cước.
+  3. Biên bản xác nhận tình trạng bưu gửi (mẫu LP24/CN24 có chữ ký của bưu tá/nhân viên bưu điện và người nhận) trong trường hợp bưu gửi bị suy suyển, hư hỏng một phần hoặc toàn bộ.
+  4. Giấy tờ tùy thân hợp lệ của người gửi hoặc người được ủy quyền nhận tiền.
+- Thời hạn chi trả tiền hoàn cước và bồi thường:
+  + Đối với trường hợp người gửi yêu cầu rút lại / hủy gửi bưu phẩm trước khi bưu gửi rời khỏi bưu cục chấp nhận: hoàn trả cước vận chuyển trong vòng 07 ngày làm việc (trừ phí dịch vụ rút bưu gửi nếu có).
+  + Đối với trường hợp hoàn cước và bồi thường sau khi giải quyết khiếu nại: thanh toán trong vòng tối đa 30 ngày kể từ ngày có quyết định giải quyết khiếu nại và xác nhận bồi thường/hoàn cước.
+
+| Dịch vụ bưu chính | Thời hiệu khiếu nại mất/chậm | Thời hiệu khiếu nại hư hỏng/cước | Điều kiện hoàn cước 100% | Mức bồi thường khi mất hoặc hư hỏng hoàn toàn (không khai giá) |
+| --- | --- | --- | --- | --- |
+| EMS Chuyển phát nhanh trong nước | 06 tháng từ khi kết thúc thời gian toàn trình | 01 tháng kể từ ngày phát bưu gửi | Chuyển phát chậm quá chỉ tiêu thời gian toàn trình công bố do lỗi VNPost hoặc hủy gửi trước khi rời bưu cục gốc | Bồi thường 04 lần cước dịch vụ đã sử dụng (đã bao gồm hoàn trả lại 100% cước đã thu) |
+| Bưu kiện trong nước (VNPost Parcel) | 06 tháng từ khi kết thúc thời gian toàn trình | 01 tháng kể từ ngày phát bưu gửi | Không phát được do lỗi VNPost hoặc chậm quá chỉ tiêu toàn trình công bố do lỗi VNPost | Bồi thường 04 lần cước dịch vụ đã sử dụng (đã bao gồm hoàn trả lại 100% cước đã thu) |
+| Bưu phẩm bảo đảm trong nước | 06 tháng từ khi kết thúc thời gian toàn trình | 01 tháng kể từ ngày phát bưu gửi | Bưu gửi không chuyển phát được do lỗi của VNPost | Bồi thường 04 lần cước dịch vụ đã sử dụng (đã bao gồm hoàn trả lại 100% cước đã thu) |
+| Dịch vụ Khai giá (bổ sung cho EMS / Bưu kiện) | 06 tháng từ khi kết thúc thời gian toàn trình | 01 tháng kể từ ngày phát bưu gửi | Mất hoặc hư hỏng toàn bộ nội dung bưu gửi khai giá do lỗi VNPost | Hoàn trả 100% cước dịch vụ đã sử dụng và bồi thường 100% giá trị đã khai (không tính phí khai giá) |
+
+## 4. Bảng cước và chỉ tiêu thời gian toàn trình tham khảo trong nước
+Dưới đây là bảng thông tin tham khảo về phân loại dịch vụ, khối lượng tiêu chuẩn, chỉ tiêu thời gian toàn trình liên tỉnh và mức cước cơ bản dùng để tra cứu và tính toán nghiệp vụ:
+
+| Mã dịch vụ | Tên dịch vụ | Khối lượng nấc đầu | Cước cơ bản nội tỉnh (VNĐ) | Cước cơ bản liên tỉnh (VNĐ) | Chỉ tiêu thời gian toàn trình liên tỉnh |
+| --- | --- | --- | --- | --- | --- |
+| EMS | Chuyển phát nhanh EMS Tài liệu / Hàng hóa | Đến 50 gram / 250 gram | 16.500 | 32.000 | Từ 24 giờ đến 48 giờ (1 - 2 ngày) |
+| BK | Bưu kiện tiêu chuẩn trong nước (VNPost Parcel) | Đến 1.000 gram (1 kg) | 18.000 | 35.000 | Từ 3 ngày đến 5 ngày làm việc |
+| BPBD | Bưu phẩm bảo đảm trong nước | Đến 50 gram | 15.000 | 20.000 | Từ 2 ngày đến 4 ngày làm việc |
+| COD | Dịch vụ phát hàng thu tiền (Phí thu hộ COD) | Theo giá trị tiền thu hộ | Tối thiểu 13.000 | Tối thiểu 15.000 | Chuyển trả tiền COD trong 24h - 48h sau khi phát thành công |

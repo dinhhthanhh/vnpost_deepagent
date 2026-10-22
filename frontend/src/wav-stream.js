@@ -48,9 +48,12 @@ export class WavPCMParser {
       const tag = this.tag(0), size = new DataView(this.buffer.buffer, this.buffer.byteOffset + 4, 4).getUint32(0, true);
       if (tag === "data") {
         if (!this.format) throw new Error("WAV chưa có thông tin định dạng.");
-        if (size !== 0 && size !== 0xffffffff && size % (this.format.channels * 2)) throw new Error("Kích thước PCM không hợp lệ.");
+        const isStreaming = size === 0 || size === 0xffffffff || size >= 0x70000000;
+        if (!isStreaming && (size % (this.format.channels * 2) !== 0)) {
+          throw new Error("Kích thước PCM không hợp lệ.");
+        }
         this.buffer = this.buffer.slice(8); this.data = true;
-        this.remaining = size === 0 || size === 0xffffffff ? null : size; this.dataPad = size % 2;
+        this.remaining = isStreaming ? null : size; this.dataPad = isStreaming ? 0 : size % 2;
         continue;
       }
       if (size > 1024 * 1024) throw new Error("Header WAV quá lớn hoặc không hợp lệ.");
@@ -69,8 +72,11 @@ export class WavPCMParser {
     return frames;
   }
   finish() {
-    if (!this.format || !this.samples || this.buffer.length || (this.data && this.remaining !== null && this.remaining !== 0)) {
-      throw new Error("Luồng WAV chưa đầy đủ hoặc bị ngắt.");
+    if (!this.format || !this.samples) {
+      throw new Error("Luồng WAV chưa đầy đủ hoặc không có dữ liệu âm thanh.");
+    }
+    if (this.remaining !== null && this.remaining > (this.format.channels * 2)) {
+      throw new Error("Luồng WAV chưa đầy đủ hoặc bị ngắt trước khi hoàn tất.");
     }
   }
 }
