@@ -1,126 +1,131 @@
-# Kiến trúc chatbot Deep Agent + RAG + ZeroTTS
+# Kiến trúc chatbot Deep Agent + RAG + ZeroTTS & STT
 
-Phiên bản 1.1. Tài liệu này mô tả ứng dụng đang chạy ở thư mục gốc: FastAPI trong `app/`, giao diện React trong `frontend/` và các dịch vụ LLM/embedding/ZeroTTS bên ngoài. Nó không mô tả một hệ thống Kubernetes, A2A hay MCP riêng.
+Phiên bản 1.3.0 (Cập nhật đồng bộ 100% với Codebase thực tế). Tài liệu này mô tả ứng dụng đang vận hành: Backend FastAPI (`app/`), giao diện React (`frontend/`), cụm lưu trữ doanh nghiệp PostgreSQL 16 (`compose.yaml`), giao thức FastMCP / A2A, và các dịch vụ AI (vLLM BGE-M3, Qwen3-Reranker-8B, ZeroTTS, Whisper STT).
 
-Mục tiêu là chọn đường xử lý nhỏ nhất nhưng vẫn có bằng chứng: câu đơn giản trả lời cục bộ hoặc Direct RAG; chỉ yêu cầu nhiều bước, so sánh, tính toán hoặc mơ hồ mới đi qua Deep Agent. Với câu hỏi nghiệp vụ có bật `grounded`, câu trả lời chỉ được trả khi có nguồn hợp lệ.
+Mục tiêu là chọn đường xử lý tối ưu nhất nhưng luôn đảm bảo bằng chứng: câu đơn giản/xã giao trả lời tức thì qua Tầng 0; câu tra cứu văn bản đi qua Fast RAG; các yêu cầu đa bước, tính cước thể tích, tra cứu hành trình, GPS bưu cục, tạo đơn gửi hàng hoặc khiếu nại bồi thường được điều phối tự động qua Deep Agent Supervisor.
 
 ## 1. Thành phần đang triển khai
 
 ```mermaid
 flowchart TD
-    U[Người dùng / React UI] --> API[FastAPI API]
-    API --> AUTH[X-API-Key to tenant]
-    AUTH --> FP[Đường tắt cục bộ]
-    AUTH --> RT[Router rule + retrieval-first]
-    FP --> OUT[Đáp án]
-    RT -->|Một ý rõ ràng| FAST[Fast RAG]
-    RT -->|Nhiều bước, so sánh, mơ hồ| DEEP[Deep Agent supervisor]
-    FAST --> KB
-    DEEP --> PREFETCH[RAG bắt buộc khi grounded]
+    U[Người dùng / React 19 UI\n• Canvas Image Compressor\n• Voice STT & TTS Audio Player\n• Prompt Re-ask / Edit History] --> API[FastAPI Gateway app.api.main]
+    API --> AUTH[Rate Limiter & X-API-Key Resolver]
+    AUTH --> FP[Tầng 0: Đường tắt xã giao & số học AST]
+    AUTH --> RT[Router 4 tầng Zero-LLM Fast-First]
+    FP --> OUT[Đáp án trực tiếp]
+    RT -->|Một ý tra cứu tài liệu| FAST[Tầng 1: Fast RAG Engine]
+    RT -->|Nhiều bước, so sánh, nghiệp vụ thời gian thực| DEEP[Tầng 2 & 3: Deep Agent Supervisor]
+    FAST --> KB[KnowledgeBase: Hybrid Dense BGE-M3 + BM25 + Qwen Reranker]
+    DEEP --> PREFETCH[Prefetched Evidence Loader]
     PREFETCH --> KB
-    DEEP --> RAG[RAG agent]
-    DEEP --> ANA[Analyst agent]
-    DEEP --> WR[Writer agent]
-    DEEP --> TRK[Tracking agent]
-    DEEP --> PO[Post office agent]
-    RAG --> KB[KnowledgeBase: LlamaIndex + BM25]
-    TRK --> POSTAL[Postal Services API]
+    DEEP -.->|Parallel Dispatch| RAG[rag-agent\nTra cứu văn bản]
+    DEEP -.->|Parallel Dispatch| ANA[analyst-agent\nTính cước 6000 & Ngày UTC+7]
+    DEEP -.->|Parallel Dispatch| TRK[tracking-agent\nĐịnh vị vận đơn S10]
+    DEEP -.->|Parallel Dispatch| PO[post-office-agent\nBưu cục & GPS Google Maps]
+    DEEP -.->|HITL 2-Phase| BOK[booking-agent\nTiếp nhận đặt gửi hàng]
+    DEEP -.->|HITL 2-Phase| COM[complaint-agent\nKhiếu nại bồi thường 6/12 tháng]
+    DEEP -.->|Sequential Turn| WR[writer-agent\nSoạn thảo văn bản]
+    RAG --> KB
+    TRK --> POSTAL[VNPost Postal Services API]
     PO --> POSTAL
-    KB --> DOC[TXT / DOCX / PDF có text]
-    FAST --> CHECK[Kiểm tra nguồn S1...]
+    BOK --> DB_DRAFTS[PostgreSQL: draft_bookings]
+    COM --> DB_DRAFTS[PostgreSQL: draft_complaints]
+    DEEP --> CHECKPOINT[PostgreSQL 16 Connection Pool\nPersistentPostgresCheckpointer]
+    DEEP --> MCP[FastMCP Server & A2A Server]
+    FAST --> CHECK[Kiểm tra trích dẫn [S1]... & Entailment]
     DEEP --> CHECK
-    CHECK --> SSE[JSON hoặc SSE]
-    SSE --> TTS[ZeroTTS adapter, tùy chọn]
-    TTS --> AUDIO[WAV theo tenant + TTL]
+    CHECK --> SSE[JSON Response hoặc SSE Stream]
+    SSE --> TTS[ZeroTTS Adapter\nStreaming Audio]
+    U -.->|Ghi âm micro| STT[Voice STT: Whisper / HuggingFace API]
+    STT -.->|Văn bản nhận diện| API
 ```
 
-| Thành phần | Trách nhiệm thực tế |
+| Thành phần | Trách nhiệm thực tế trong Codebase |
 |---|---|
-| FastAPI | `/api/chat`, `/api/chat/stream`, quản lý tài liệu, phiên, TTS và audio; frontend được phục vụ cùng origin khi đã build. |
-| Router | Rule/retrieval-first mặc định, không gọi LLM. LLM router là thử nghiệm, chỉ chạy khi `LLM_ROUTER_ENABLED=true`. |
-| Fast path | Trả lời chào hỏi, phép tính hoặc ngày tháng đủ chắc chắn mà không gọi LLM/RAG. |
-| Fast RAG | Một lần retrieval rồi một lượt LLM streaming/không streaming cho câu một ý. Thiếu bằng chứng có thể leo thang Deep Agent. |
-| Deep Agent | `create_deep_agent` điều phối `rag-agent`, `analyst-agent`, `writer-agent`, `tracking-agent`, `post-office-agent`; có giới hạn bước, timeout và ngân sách task. |
-| RAG | Đọc TXT, DOCX (gồm bảng) và PDF có text layer; hybrid vector + BM25, RRF và reranker tùy chọn. |
-| TTS | Gọi ZeroTTS; gửi đáp án chữ trước, âm thanh lỗi không làm mất đáp án chữ. |
+| **FastAPI Gateway** | Điểm tiếp nhận `/api/chat`, `/api/chat/stream`, `/api/stt`, `/api/tts`, `/api/documents`, quản lý phiên và tài liệu. |
+| **Router (Bộ định tuyến)** | Phân luồng 4 tầng Zero-LLM (`app/router/classifier.py` và `app/agents/signals.py`) với độ trễ < 0.1ms; chỉ gọi LLM Router khi opt-in `LLM_ROUTER_ENABLED=true`. |
+| **Tầng 0 (Fast Path)** | Phản hồi chào hỏi, cảm ơn, phép tính số học trực tiếp hoặc thời gian tương đối mà không tốn chi phí gọi LLM/RAG. |
+| **Tầng 1 (Fast RAG)** | Truy hồi lai 1 lượt (Dense BGE-M3 + BM25 + Qwen Reranker) và 1 lượt LLM streaming; tích hợp **Trí nhớ hội thoại tự nhiên** đọc ngữ cảnh 10 lượt gần nhất. |
+| **Tầng 2 & 3 (Deep Agent)** | Nhạc trưởng Supervisor (LangGraph StateGraph) điều phối đồng thời 7 Sub-agents chuyên trách; hỗ trợ Human-in-the-Loop (HITL), ngắt/hủy đơn nháp và quản lý ngân sách task. |
+| **Hệ thống 7 Sub-agents** | `rag-agent`, `analyst-agent`, `writer-agent`, `tracking-agent`, `post-office-agent`, `booking-agent`, `complaint-agent`. |
+| **Cơ sở dữ liệu PostgreSQL 16** | Lưu trữ tập trung bảng phiên (`sessions`), phản hồi (`replies`), bản nháp đơn hàng/khiếu nại (`draft_bookings`, `draft_complaints`), bộ nhớ trạng thái (`checkpoints` qua `AsyncPostgresSaver`) và bộ đệm nhúng vector (`embedding_cache`). |
+| **Voice STT & TTS Pipeline** | Chuyển đổi giọng nói hai chiều: Nhận diện giọng nói qua Whisper API (`/api/stt`) và tổng hợp giọng nói tự nhiên qua ZeroTTS streaming (`/api/tts/stream`). |
+| **Chuẩn FastMCP & A2A** | Máy chủ FastMCP (`app/mcp/server.py`) và máy chủ giao tiếp Agent-to-Agent (`app/a2a/server.py`). |
 
-## 2. Luồng định tuyến và trả lời
+---
 
-1. API xác thực `X-API-Key` và ánh xạ khóa sang tenant. Browser không truyền tenant vào body hoặc tool.
-2. Nếu nhận diện được chào hỏi, phép tính hoặc ngày tháng đơn giản, `fastpath` trả lời tại chỗ.
-3. Với `mode=fast` hoặc một yêu cầu một ý trong `mode=auto`, Fast RAG lấy nguồn trước. Cổng bằng chứng kiểm tra số nguồn và ngưỡng điểm; không đủ thì chuyển sang Deep Agent.
-4. Với `mode=deep`, yêu cầu dài, nhiều câu hỏi, so sánh, hình ảnh hoặc suy luận thời gian, hệ thống gọi Deep Agent. Khi `grounded=true`, backend bắt buộc retrieval trước supervisor và nạp excerpt có mã `[S...]` vào lượt hiện tại.
-5. Kết quả đi qua kiểm tra citation: mã nguồn phải tồn tại và excerpt phải có đủ từ khóa hỗ trợ; citation không đạt bị loại. Nếu thiếu bằng chứng nghiệp vụ, hệ thống trả mẫu `[[NO_EVIDENCE]]` đã chuẩn hóa. Với các tác vụ thời gian thực từ `tracking-agent` hoặc `post-office-agent`, kết quả được gán trạng thái `grounding_status="computed"` đảm bảo tính xác thực mà không đòi hỏi trích đoạn tài liệu tĩnh.
-6. API lưu câu trả lời/nguồn theo tenant và phiên. Với SSE, event `answer` được gửi trước synthesis; sau đó là `speech_ready` hoặc `speech_error`, rồi `done`.
+## 2. Luồng định tuyến và xử lý yêu cầu
 
-`router_enabled` không làm LLM router thành mặc định: LLM router là opt-in và tắt mặc định.
+1. **Xác thực & Tách Tenant**: API xác thực `X-API-Key` và ánh xạ sang tenant (mặc định `vnpost`). Kiểm soát tốc độ qua Sliding Window Rate Limiter.
+2. **Tầng 0 (Zero-LLM Bypass)**: Nếu nhận diện lời chào hỏi (`sig.chitchat`) hoặc phép tính số học thuần túy (`try_evaluate_math`), hệ thống phản hồi tức thì trong 30ms không tốn tài nguyên RAG.
+3. **Tầng 1 (Fast RAG - Mặc định)**: Với các câu hỏi tra cứu quy chế, biểu cước, dịch vụ đơn lẻ hoặc câu hỏi về thông tin trao đổi trong hội thoại, Fast RAG thực hiện tìm kiếm và sinh câu trả lời trong ~1.5 – 2.2 giây.
+4. **Tầng 2 & 3 (Deep Agent Escalation)**: Khi câu hỏi có mã vận đơn (`_POSTAL_OPS`), yêu cầu tìm bưu điện gần nhất qua GPS, đặt đơn gửi hàng, khiếu nại, tính toán ngày tháng/lịch trình (`_TEMPORAL_CALC`), hoặc so sánh phức tạp (`_COMPARE`, `_MULTISTEP`), Router lập tức chuyển sang Deep Agent Supervisor.
+5. **Human-in-the-Loop (HITL) 2 Pha**:
+   - Pha 1: Sub-agent thu thập thông tin (slot filling), tạo bản ghi nháp trong PostgreSQL và trình bày tóm tắt cho khách hàng.
+   - Pha 2: Chờ khách hàng phản hồi "Xác nhận/Đồng ý" mới chính thức kích hoạt công cụ cấp mã vận đơn hoặc mã ticket. Nếu khách từ chối, hỗ trợ gọi hủy nháp tức thì.
+6. **Kiểm tra Bằng chứng & Trích dẫn**:
+   - Mọi câu trả lời nghiệp vụ từ RAG phải kèm mã nguồn `[S1]`, `[S2]` và vượt qua đối soát từ khóa excerpt để chống ảo giác. Nếu tài liệu không chứa thông tin, trả về thông báo chuẩn hóa `NO_EVIDENCE_TEMPLATE`.
+   - Với tác vụ thời gian thực từ `tracking-agent`, `post-office-agent`, `booking-agent`, kết quả được gán trạng thái `grounding_status="computed"` đảm bảo tính xác thực.
+   - Với các câu hỏi về diễn biến phiên trò chuyện, hệ thống sử dụng lịch sử cuộc trò chuyện làm nguồn sự thật (Ground Truth) mà không ép `[[NO_EVIDENCE]]`.
 
-## 3. Deep Agent và chạy đồng thời
+---
 
-| Agent | Công cụ | Vai trò |
+## 3. Danh mục 7 Sub-agents và Điều phối song song
+
+| Sub-agent | Công cụ chính | Trách nhiệm nghiệp vụ |
 |---|---|---|
-| `rag-agent` | `search_documents`, `read_file` | Tìm bằng chứng mới từ kho tri thức (.docx, .txt, .pdf), trả excerpt và `[S...]`. |
-| `analyst-agent` | `calculate`, `calculate_date`, `read_file` | So sánh bằng chứng, tính toán số học AST an toàn và tính toán ngày tháng chuẩn UTC+7. |
-| `writer-agent` | `read_file` | Soạn thảo/tóm tắt từ dữ liệu và bằng chứng đã được giao (chế độ fork kế thừa ngữ cảnh). |
-| `tracking-agent` | `track_item` | Tra cứu hành trình bưu phẩm/bưu kiện theo mã vận đơn chuẩn UPU S10 hoặc nội địa. |
-| `post-office-agent` | `lookup_post_office` | Tra cứu mạng lưới bưu cục VNPost, mã Vpostcode, địa chỉ và giờ mở cửa. |
+| `rag-agent` | `search_documents`, `read_file` | Tìm kiếm tài liệu nội bộ (.docx, .txt, .pdf) theo câu hỏi cụ thể, trích xuất đoạn văn bản kèm mã trích dẫn `[S...]`. |
+| `analyst-agent` | `calculate`, `calculate_date`, `read_file` | Tính toán số học AST an toàn, tính cước hàng cồng kềnh (D×R×C/6000), và tính ngày tháng chuẩn múi giờ Việt Nam UTC+7. |
+| `tracking-agent` | `track_item` | Tra cứu hành trình bưu phẩm/bưu kiện VNPost theo mã vận đơn chuẩn UPU S10 (13 ký tự) hoặc nội địa. |
+| `post-office-agent` | `find_nearest_post_office`, `lookup_post_office` | Tìm bưu điện gần nhất theo tọa độ GPS (latitude, longitude), tính khoảng cách km và tạo link Google Maps; tra cứu địa chỉ, giờ mở cửa qua Vpostcode. |
+| `booking-agent` | `create_draft_booking`, `confirm_booking`, `cancel_draft_booking`, `cancel_booking`, `list_my_orders` | Thu thập thông tin gửi/nhận, trọng lượng/kích thước, tạo đơn hàng nháp, chờ người dùng duyệt HITL và hủy đơn linh hoạt. |
+| `complaint-agent` | `create_draft_complaint`, `confirm_complaint`, `cancel_draft_complaint`, `cancel_complaint`, `list_my_orders` | Tiếp nhận khiếu nại mất mát/hư hỏng/chậm phát, đối chiếu thời hiệu 06 tháng nội địa / 12 tháng quốc tế, tạo ticket nháp và duyệt HITL. |
+| `writer-agent` | `read_file` | Soạn thảo công văn, văn bản thông báo hoặc báo cáo tổng hợp từ dữ liệu đã thu thập (chế độ fork kế thừa context). |
 
-Supervisor điều phối giao việc bằng công cụ `task(subagent_type, description)` chuẩn của Deep Agents. Các lời gọi `task` độc lập phát trong cùng một lượt được runtime LangGraph tự động gom đợt và thực thi song song theo `max_concurrency = self.settings.max_parallel_subagents` (3 sub-agents, đồng thời giới hạn bởi semaphore `run.slots`). Các tác vụ phụ thuộc (như `writer-agent`) được Supervisor phát ở lượt tiếp theo sau khi đợt song song đầu tiên hoàn tất. Công cụ `parallel_tasks` cài đặt sẵn qua `asyncio.gather` đóng vai trò tiện ích bổ trợ.
+Supervisor điều phối giao việc bằng công cụ `task(subagent_type, description)`. Các sub-agent độc lập được LangGraph gom đợt và chạy song song theo `max_parallel_subagents = 3` được kiểm soát bằng Semaphore `run.slots`.
 
-Mỗi request có `RunContext` riêng: tenant, session, registry nguồn, cache retrieval, semaphore và ngân sách. Cấu hình giới hạn tối đa 3 sub-agent đồng thời, 8 task/request, 12 bước đồ thị và timeout 35 giây. Sub-agent lỗi trả trạng thái kiểm soát (`task_failed`), không làm lộ lỗi provider hoặc prompt.
+---
 
-### 3.1. Quản lý Trạng thái Checkpointer và Kho Kỹ năng (/skills/)
+## 4. Quản lý trạng thái Checkpointer và Kỹ năng doanh nghiệp (/skills/)
 
-- **Checkpointer SQLite:** `PersistentSqliteCheckpointer` lưu trạng thái đồ thị bất đồng bộ vào `checkpoints.sqlite3` với thread ID `{tenant}:{session}:{request}` phục vụ kiểm toán audit và tái hiện trạng thái phiên.
-- **Kỹ năng nghiệp vụ (`/skills/`):** Hàm `_load_enterprise_skills()` nạp các file `.md` trong `data/skills/` vào hệ thống tệp ảo `/skills/...` của `StateBackend`. Các Sub-agent (`rag-agent`, `analyst-agent`, `writer-agent`) truy xuất qua công cụ `read_file`. Hiện tại hệ thống có 3 bộ kỹ năng chuẩn hóa (đối chiếu 3 file `SKILL.md` thực tế):
-  1. `bang-ma-buu-chinh-vung-cuoc`: Phân định 3 vùng cước (Vùng 1: Nội tỉnh; Vùng 2: Nội miền; Vùng 3: Liên miền) và chuẩn mã bưu chính quốc gia Vpostcode 5 ký tự số.
-  2. `quy-dinh-hang-cong-kenh`: Quy tắc tính khối lượng quy đổi thể tích cho hàng cồng kềnh: $\text{Khối lượng quy đổi (kg)} = (\text{Dài} \times \text{Rộng} \times \text{Cao}) / 6000$ (cm). Khối lượng tính cước là giá trị lớn hơn giữa cân nặng thực tế và thể tích quy đổi (áp dụng chuẩn duy nhất hệ số **6000** toàn mạng lưới).
-  3. `quy-trinh-khieu-nai-boi-thuong`: Thời hiệu khiếu nại quy định **06 tháng** cho bưu gửi nội địa và **12 tháng** cho bưu gửi quốc tế kể từ ngày gửi; thời hạn giải quyết tối đa 20 ngày làm việc (nội địa), 30 ngày (quốc tế EMS); bồi thường 100% giá trị khai giá với bưu gửi có khai giá, hoàn cước cộng tối đa 04 lần cước với bưu gửi không khai giá, và hoàn cước khi phát chậm.
+- **PostgreSQL Checkpointer (`AsyncPostgresSaver`)**:
+  - Lưu trạng thái đồ thị LangGraph vào PostgreSQL (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) với thread ID `{tenant}:{session_id}`.
+  - Cho phép khôi phục phiên làm việc, hỗ trợ Human-in-the-Loop liền mạch ngay cả khi server khởi động lại.
+- **Kỹ năng nghiệp vụ chuẩn hóa (`/skills/`)**:
+  - `bang-ma-buu-chinh-vung-cuoc`: 3 vùng cước (Vùng 1: Nội tỉnh; Vùng 2: Nội miền; Vùng 3: Liên miền) và chuẩn mã bưu chính quốc gia 5 số.
+  - `quy-dinh-hang-cong-kenh`: Công thức quy đổi thể tích cồng kềnh: $\text{Khối lượng quy đổi (kg)} = (\text{Dài} \times \text{Rộng} \times \text{Cao}) / 6000$ (cm).
+  - `quy-trinh-khieu-nai-boi-thuong`: Thời hiệu khiếu nại (06 tháng nội địa, 12 tháng quốc tế), SLA giải quyết 20 ngày, quy chuẩn bồi thường 100% khai giá và 04 lần cước không khai giá.
 
-## 4. Dữ liệu và RAG
+---
 
-- TXT được tách theo đoạn/dòng.
-- DOCX giữ thứ tự đoạn và bảng; dữ liệu bảng mang cả tên cột.
-- PDF được đọc bằng `pypdf` theo trang khi có text layer. PDF scan hoặc không trích được chữ bị từ chối; OCR chưa có trong root app.
-- Upload thông thường là nguồn người dùng. `/api/documents/verified` chỉ nhận nguồn `official_public` từ HTTPS thuộc domain cấu hình, bằng khóa quản trị riêng. `/api/documents/s3` nhận URL presigned hoặc bucket/key.
+## 5. Dữ liệu và Pipeline RAG
 
-`SentenceSplitter` chỉ là fallback cho đơn vị cấu trúc quá dài. RAG giữ nguyên đơn vị cấu trúc: đoạn/dòng của TXT, đoạn hoặc hàng bảng của DOCX và trang của PDF. `CHUNK_SIZE=256` và `CHUNK_OVERLAP=64` không phải cách cắt mặc định toàn bộ tài liệu; chúng chỉ áp dụng khi một đơn vị cấu trúc vượt ngưỡng, để vẫn nằm trong giới hạn embedding của `bkai-foundation-models/vietnamese-bi-encoder`.
+- **Định dạng hỗ trợ**:
+  - `.txt`: Tách theo đoạn/dòng ngữ nghĩa.
+  - `.docx`: Giữ nguyên cấu trúc bảng biểu kèm tiêu đề cột.
+  - `.pdf`: Đọc qua `pypdf` bảo toàn văn bản theo trang.
+- **Mô hình nhúng & Reranker**:
+  - Vector Embedding: **BGE-M3** đa ngôn ngữ phục vụ nhúng ngữ nghĩa chiều sâu (`https://ai.vnpost.vn/vllm-bge-m3/v1/embeddings`).
+  - Lexical Search: **BM25Plus** đã chuẩn hóa tiếng Việt loại bỏ dấu thanh và tách từ.
+  - Hợp nhất thứ hạng: **Reciprocal Rank Fusion (RRF)**.
+  - Cross-Encoder Reranker: **Qwen3-Reranker-8B** (`https://ai.vnpost.vn/vllm-qwen3-reranker-8b/rerank`) lọc lại Top-K ứng viên có điểm liên quan cao nhất.
+- **Bộ nhớ đệm nhúng**: Bảng `embedding_cache` trên PostgreSQL lưu trữ vector đã tính toán, giảm thiểu 100% chi phí tính lại các văn bản lặp lại.
 
-RAG kết hợp vector retrieval và BM25Plus đã chuẩn hóa dấu tiếng Việt, sau đó RRF hợp nhất thứ hạng. `RETRIEVAL_TOP_K` mặc định là 5. Reranker cross-encoder `BAAI/bge-reranker-v2-m3` chỉ chạy khi `RERANKER_ENABLED=true`; khi bật, tối đa `RERANKER_CANDIDATE_K` ứng viên được xếp lại trước khi chọn top K.
+---
 
-Embedding cache SQLite tách namespace query/document/model/revision. Index được build snapshot mới rồi đổi con trỏ nguyên tử `os.replace` sang `current.json`. Index LlamaIndex và BM25 hiện nằm trong process, phù hợp pilot một instance.
+## 6. Giao diện Frontend và Trải nghiệm tương tác
 
-## 5. Bằng chứng, quyền và dữ liệu nhạy cảm
+Giao diện người dùng được xây dựng trên nền tảng **React 19 + Vite**:
+- **Tính năng Hỏi lại / Sửa câu hỏi (Re-ask Prompt)**: Cho phép người dùng chỉnh sửa prompt của bất kỳ câu hỏi nào trong quá khứ. Hệ thống cập nhật Optimistic UI, tự động cắt tỉa các lượt chat phía sau câu hỏi được sửa để giữ cho ngữ cảnh hội thoại luôn nhất quán.
+- **Điều khiển bằng giọng nói (Voice STT)**: Thu âm trực tiếp từ trình duyệt qua Web Audio API, nén WAV và gửi lên `/api/stt` để chuyển thành văn bản tức thì.
+- **Phát âm thanh phản hồi (Streaming TTS)**: Nhận phản hồi dạng văn bản trước, kết hợp phát audio trực tiếp từ ZeroTTS.
+- **Nút tác vụ nhanh (Quick Actions)**: Cung cấp các lối tắt nghiệp vụ tiện dụng (📍 Tìm bưu cục gần tôi, 📦 Tra cứu vận đơn, 💰 Bảng giá cước, 📝 Tạo đơn gửi hàng).
 
-Mỗi hit được đăng ký trong request dưới mã `[S1]`, `[S2]`...; chỉ mã thực sự được dùng và vượt kiểm tra hỗ trợ mới trả về client. Kiểm tra này không thay thế đánh giá entailment nghiệp vụ bởi con người.
+---
 
-Tenant là ranh giới hiện có: API key chọn tenant, kho/index/audio/session được tách theo tenant. Đây **không phải** SSO, RBAC theo người dùng hoặc ACL theo tài liệu/phòng ban. Không đưa tài liệu mật đa cấp vào hệ thống cho đến khi ACL được lấy từ hệ thống định danh đáng tin cậy và được lọc ngay trong retrieval, trước khi nội dung tới LLM.
+## 7. Tài liệu liên quan
 
-## 6. TTS và streaming
-
-ZeroTTS dùng base URL cấu hình (mặc định `https://ai.vnpost.vn/zero-tts`) và các endpoint `/tts`, `/tts/stream`, `/v1/audio/speech`, `/voices` tùy mode. Client giới hạn timeout, số kết nối đồng thời, số ký tự và số byte audio; không retry POST synthesis. WAV lưu theo tenant và chỉ tải qua API đã xác thực, với TTL.
-
-Chat SSE chỉ stream token ở Fast RAG. Deep Agent phát event tiến trình và câu trả lời đã kiểm tra, không phát chain-of-thought. Ứng dụng chưa có ASR; cần xây thành dịch vụ độc lập nếu muốn nhận câu hỏi qua micro.
-
-## 7. Cấu hình và kiểm chứng
-
-LLM dùng endpoint OpenAI-compatible qua `ChatOpenAI`; Deep Agent yêu cầu tool/function calling. `scripts/check_services.py --live` cần chạy trước pilot live. Demo dùng model kịch bản và embedding hash để kiểm luồng, không là bằng chứng chất lượng nghiệp vụ.
-
-Hệ thống đã thực hiện đo đạc benchmark thực tế trên mô hình `gemini-2.5-flash` và mô hình nhúng `vietnamese-bi-encoder` (kết quả lưu tại `reports/architecture_metrics.json` và `reports/architecture_comparison.json`, ngày 16/10/2026), ghi nhận:
-- P50 độ trễ toàn hệ thống: **2.27 giây** (Fast RAG P50 2.27s, Deep Agent P50 3.55s, Tầng 0 shortcut 31ms).
-- Tỷ lệ hoàn thành: **8/8 (100%)**, 0 lỗi, 0 timeout.
-
-Trước nghiệm thu mở rộng, cần bộ 100–200 câu do nghiệp vụ gán đáp án và nguồn đúng, gồm câu trực tiếp, paraphrase, bảng/số liệu, so sánh, không có đáp án và nguồn mâu thuẫn. Đo Recall@K/MRR@K bằng `scripts/evaluate_retrieval.py`, sau đó chấm câu trả lời, nguồn, p50/p95, chi phí và độ trễ TTS trên dịch vụ thật.
-
-## 8. Lộ trình mở rộng
-
-Khi mở rộng, giữ các nguyên tắc: route theo bằng chứng thay vì mặc định gọi nhiều agent; fan-out có giới hạn; ACL fail-closed trước retrieval; logs không ghi toàn bộ nội dung nhạy cảm; ingestion bất đồng bộ và có version; TTS tách dịch vụ khi dùng GPU riêng.
-
-Chưa nằm trong root app: vector database (Qdrant/pgvector), PostgreSQL/Redis, queue/worker ingestion, OCR, ASR, SSO/RBAC/ACL tài liệu, multi-instance, audit log đầy đủ, tracing token/cost và entailment tự động. Khi cần các năng lực này, thay index RAM bằng vector store có metadata filter, lưu catalog/version ở database và đưa ingestion vào worker; không tăng số Uvicorn worker khi state session/KB vẫn nằm trong process.
-
-## 9. Tài liệu liên quan
-
-- `README.md`: chạy, cấu hình và giới hạn pilot.
-- `docs/API.md`: hợp đồng API.
-- `docs/ROUTING_AND_SCALE.md`: định tuyến và hướng mở rộng.
-- `docs/VALIDATION.md`: phạm vi kiểm thử và những điều chưa xác nhận trên dịch vụ thật.
+- `README.md`: Hướng dẫn cài đặt, cấu hình biến môi trường `.env` và vận hành hệ thống.
+- `Mipo báo cáo kỹ thuật Deep Agent, RAG LlamaIndex và TTS.md`: Báo cáo khảo sát kỹ thuật chi tiết nhất (1.300+ dòng) phân tích sâu về Agent Harness, Benchmark và Kiểm toán an toàn.
+- `docs/ROUTING_AND_SCALE.md`: Tài liệu kỹ thuật chuyên sâu về thuật toán định tuyến 4 tầng và kịch bản mở rộng 100.000 tài liệu.
+- `docs/API.md`: Hợp đồng đặc tả chi tiết toàn bộ các REST endpoints và SSE event streams.

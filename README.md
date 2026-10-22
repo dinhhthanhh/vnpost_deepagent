@@ -67,6 +67,8 @@ flowchart TD
         DeepAgent -.->|Async Parallel Dispatch| TRK_A["tracking-agent\n(Vận đơn S10)"]
         DeepAgent -.->|Async Parallel Dispatch| PO_A["post-office-agent\n(Bưu cục & Vpostcode)"]
         DeepAgent -.->|Async Parallel Dispatch| CALC_A["analyst-agent\n(Cước thể tích 6000 & Ngày)"]
+        DeepAgent -.->|HITL 2-Phase| BOK_A["booking-agent\n(Tạo đơn & duyệt HITL)"]
+        DeepAgent -.->|HITL 2-Phase| COM_A["complaint-agent\n(Khiếu nại 06/12 tháng)"]
         DeepAgent -.->|Sequential Turn| WRI_A["writer-agent\n(Soạn thảo phản hồi)"]
     end
 
