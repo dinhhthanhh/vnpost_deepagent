@@ -34,6 +34,7 @@ from app.api.schemas import (
     ChatRequest,
     S3IngestRequest,
     SpeechRequest,
+    TruncateSessionRequest,
 )
 from app.core.config import Settings
 from app.core.rate_limit import check_rate_limit
@@ -472,6 +473,17 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
             "session_id": str(session_id),
             "messages": await asyncio.to_thread(svc.store.history, scope, str(session_id)),
         }
+
+    @app.post("/api/sessions/{session_id}/truncate")
+    async def truncate_session(
+        session_id: str,
+        body: TruncateSessionRequest,
+        scope=Depends(tenant),
+        svc=Depends(get_service),
+    ):
+        sid = str(session_id).strip()
+        remaining = await asyncio.to_thread(svc.store.truncate_session, scope, sid, body.index)
+        return {"session_id": sid, "remaining_count": len(remaining), "messages": remaining}
 
     @app.delete("/api/sessions/{session_id}")
     async def delete_session(

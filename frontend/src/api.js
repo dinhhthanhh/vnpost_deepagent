@@ -64,3 +64,12 @@ export async function transcribeAudio(blob, key = null, filename = "audio.webm")
   });
   return await response.json();
 }
+
+export async function truncateSession(sessionId, index, key = null) {
+  const response = await request(`/api/sessions/${encodeURIComponent(sessionId)}/truncate`, key, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ index }),
+  });
+  return await response.json();
+}

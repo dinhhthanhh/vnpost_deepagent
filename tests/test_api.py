@@ -50,6 +50,16 @@ def test_api_upload_chat_sse_and_tenant_authorization(settings):
             client.delete("/api/documents/" + uploaded.json()["id"], headers=ha).status_code == 200
         )
 
+        # Check session truncation (Method 2: Re-ask / Truncate & Regenerate)
+        trunc_resp = client.post(
+            f"/api/sessions/{result['session_id']}/truncate",
+            headers=ha,
+            json={"index": 0},
+        )
+        assert trunc_resp.status_code == 200
+        assert trunc_resp.json()["remaining_count"] == 0
+        assert client.get("/api/sessions/" + result["session_id"], headers=ha).json()["messages"] == []
+
         # Check session deletion
         del_res = client.delete("/api/sessions/" + result["session_id"], headers=ha)
         assert del_res.status_code == 200

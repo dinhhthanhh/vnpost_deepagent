@@ -193,6 +193,34 @@ class Store:
                 (tenant, session_id, json.dumps(trimmed, ensure_ascii=False), now),
             )
 
+    def truncate_session(self, tenant: str, session_id: str, index: int) -> list[dict]:
+        """Cắt tỉa lịch sử hội thoại, chỉ giữ lại các tin nhắn trước index chỉ định (0-indexed)."""
+        history = self.history(tenant, session_id)
+        trimmed = history[:max(0, index)]
+        now = time.time()
+        if self.use_postgres:
+            try:
+                with self.pool.connection() as conn:
+                    conn.execute(
+                        """
+                        UPDATE sessions
+                        SET messages = %s, updated = %s
+                        WHERE tenant = %s AND id = %s;
+                        """,
+                        (Jsonb(trimmed), now, tenant, session_id),
+                    )
+                return trimmed
+            except Exception as exc:
+                logger.error("Postgres error in truncate_session: %s", exc)
+                return history
+
+        with self._connect_sqlite() as db:
+            db.execute(
+                "UPDATE sessions SET messages = ?, updated = ? WHERE tenant = ? AND id = ?",
+                (json.dumps(trimmed, ensure_ascii=False), now, tenant, session_id),
+            )
+        return trimmed
+
     def list_sessions(self, tenant: str, limit: int = 50) -> list[dict]:
         if self.use_postgres:
             try:

@@ -241,3 +241,7 @@ class ActionCancelRequest(BaseModel):
         "",
         description="4 số cuối hoặc số điện thoại người gửi để xác minh quyền sở hữu khi hủy từ session khác hoặc qua REST",
     )
+
+
+class TruncateSessionRequest(BaseModel):
+    index: int = Field(ge=0, description="Vị trí tin nhắn bắt đầu cắt tỉa (chỉ giữ lại các tin nhắn trước index này)")

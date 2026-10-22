@@ -49,7 +49,7 @@ import {
   faTriangleExclamation,
   faWandMagicSparkles,
 } from "@fortawesome/free-solid-svg-icons";
-import { audioBlob, request, streamChat, transcribeAudio } from "./api";
+import { audioBlob, request, streamChat, transcribeAudio, truncateSession } from "./api";
 import { playWavStream } from "./wav-stream";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -417,6 +417,8 @@ export default function App() {
   const [likedMap, setLikedMap] = useState({});
   const [dislikedMap, setDislikedMap] = useState({});
   const [copiedId, setCopiedId] = useState(null);
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [editText, setEditText] = useState("");
   const [locating, setLocating] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -709,6 +711,8 @@ export default function App() {
     setNotice("");
     setAttachedImage(null);
     setEvents([]);
+    setEditingMessageId(null);
+    setEditText("");
     try {
       const data = await request(`/api/sessions/${sid}`, key).then((r) => r.json());
       setMessages(
@@ -777,6 +781,8 @@ export default function App() {
     setNotice("");
     setAttachedImage(null);
     setSessionDocs([]);
+    setEditingMessageId(null);
+    setEditText("");
   }
 
   async function compressImageFile(file, maxWidth = 1600, maxHeight = 1600, quality = 0.82) {
@@ -1032,7 +1038,7 @@ export default function App() {
     return now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
-  async function send(event, text = input, locOverride = null) {
+  async function send(event, text = input, locOverride = null, baseMessages = null) {
     event?.preventDefault();
     text = text.trim();
     if ((!text && !attachedImage) || busy) return;
@@ -1060,7 +1066,7 @@ export default function App() {
 
     // Thêm câu hỏi của user và bubble chờ của assistant
     setMessages((previous) => [
-      ...previous,
+      ...(baseMessages !== null ? baseMessages : previous),
       { id: crypto.randomUUID(), role: "user", text, image: currentImage, time: nowStr },
       { id: assistantMsgId, role: "assistant", pending: true, time: nowStr },
     ]);
@@ -1151,6 +1157,24 @@ export default function App() {
       setBusy(false);
       loadSessions(key);
     }
+  }
+
+  async function handleReask(msgIndex, newText) {
+    if (busy) return;
+    const trimmed = (newText || "").trim();
+    if (!trimmed) return;
+    stopAudio();
+    setEditingMessageId(null);
+    setEditText("");
+    const sliced = messages.slice(0, msgIndex);
+    if (session) {
+      try {
+        await truncateSession(session, msgIndex, key);
+      } catch (err) {
+        console.warn("Không thể cắt tỉa session trên máy chủ:", err);
+      }
+    }
+    send(null, trimmed, null, sliced);
   }
 
   function handleFormSubmit(e) {
@@ -1475,21 +1499,74 @@ export default function App() {
               </div>
             ) : (
               /* Khi đã bắt đầu hội thoại: Hiển thị các tin nhắn */
-              messages.map((message) =>
+              messages.map((message, index) =>
                 message.role === "user" ? (
                   <div className="chat-row user-row" key={message.id}>
                     <div className="user-avatar-small">
                       <User size={18} color="#94a3b8" />
                     </div>
-                    <div className="user-bubble-box">
-                      {message.image && (
-                        <div className="attached-image-wrapper">
-                          <img src={message.image} alt="Đính kèm" className="attached-image-render" />
+                    {editingMessageId === message.id ? (
+                      <div className="user-bubble-box user-bubble-editing">
+                        <textarea
+                          className="user-edit-textarea"
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              handleReask(index, editText);
+                            } else if (e.key === "Escape") {
+                              setEditingMessageId(null);
+                            }
+                          }}
+                          autoFocus
+                          placeholder="Chỉnh sửa câu hỏi..."
+                          rows={Math.min(6, Math.max(2, (editText.match(/\n/g) || []).length + 1))}
+                        />
+                        <div className="user-edit-actions">
+                          <button
+                            type="button"
+                            className="user-edit-cancel-btn"
+                            onClick={() => setEditingMessageId(null)}
+                            disabled={busy}
+                          >
+                            Hủy
+                          </button>
+                          <button
+                            type="button"
+                            className="user-edit-submit-btn"
+                            onClick={() => handleReask(index, editText)}
+                            disabled={busy || !editText.trim()}
+                          >
+                            Lưu &amp; Hỏi lại
+                          </button>
                         </div>
-                      )}
-                      <div className="user-message-text">{message.text}</div>
-                      <span className="bubble-timestamp">{message.time || getCurrentTimeString(message.created)}</span>
-                    </div>
+                      </div>
+                    ) : (
+                      <div className="user-bubble-box">
+                        {message.image && (
+                          <div className="attached-image-wrapper">
+                            <img src={message.image} alt="Đính kèm" className="attached-image-render" />
+                          </div>
+                        )}
+                        <div className="user-message-text">{message.text}</div>
+                        <div className="user-bubble-footer">
+                          <span className="bubble-timestamp">{message.time || getCurrentTimeString(message.created)}</span>
+                          <button
+                            type="button"
+                            className="user-quick-action-btn"
+                            title="Chỉnh sửa câu hỏi &amp; Hỏi lại"
+                            onClick={() => {
+                              if (busy) return;
+                              setEditingMessageId(message.id);
+                              setEditText(message.text || "");
+                            }}
+                          >
+                            <FontAwesomeIcon icon={faPenToSquare} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="chat-row bot-row" key={message.id}>
