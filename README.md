@@ -39,9 +39,10 @@ Hệ thống đáp ứng trọn vẹn 5 yêu cầu cốt lõi cùng các tiêu c
 
 6. **Sẵn sàng cho Production (Production Hardening):**
    - **Rate Limiting:** Bộ điều phối tốc độ Sliding Window (`app/core/rate_limit.py`) kiểm soát theo IP và Tenant API Key, chống giả mạo header `X-Forwarded-For`.
-   - **Checkpointer bền vững:** Hỗ trợ lưu trữ trạng thái đồ thị qua SQLite hoặc PostgreSQL (`langgraph-checkpoint-postgres`) phục vụ kiểm toán và mở rộng ngang (horizontal scale).
+   - **Cơ sở dữ liệu PostgreSQL chuẩn Production:** Toàn bộ lịch sử hội thoại (`sessions`), phản hồi (`replies`), bản nháp giao dịch (`draft_bookings`, `draft_complaints`), bộ nhớ trạng thái suy luận (`checkpoints` qua `langgraph-checkpoint-postgres`), và bộ nhớ đệm vector nhúng (`embedding_cache`) đều được lưu trữ tập trung trên PostgreSQL, loại bỏ hoàn toàn các hạn chế khóa tệp của SQLite để sẵn sàng mở rộng ngang (horizontal scale).
    - **Tối ưu hình ảnh:** Client nén ảnh tự động qua HTML5 Canvas trước khi mã hóa Base64, giảm hơn 95% tải băng thông mạng.
    - **Chuẩn FastMCP & A2A:** Tích hợp máy chủ FastMCP (`app/mcp/server.py`) và giao thức Agent-to-Agent (`app/a2a/server.py`).
+
 
 ---
 
@@ -73,7 +74,7 @@ flowchart TD
         RAG_A --> KB["Knowledge Base\n• Hybrid Vector + BM25\n• Multi-Query RRF Fusion"]
         TRK_A --> PostalAPI["VNPost Postal Service Tools"]
         PO_A --> PostalAPI
-        DeepAgent --> Checkpointer["Checkpointer Persistence\n(SQLite / PostgreSQL Pool)"]
+        DeepAgent --> Checkpointer["PostgreSQL 16 Connection Pool\n• Sessions & Checkpoints\n• Drafts & Embedding Cache"]
         DeepAgent --> MCP["FastMCP Server & A2A Server"]
     end
 
@@ -109,14 +110,15 @@ vnpost_deepagent/
 │   ├── rag/                     # LlamaIndex Advanced RAG engine
 │   │   ├── engine.py            # LlamaIndex query engine, Multi-Query, RRF, Hybrid search
 │   │   ├── fast_rag.py          # Fast RAG pipeline cho câu hỏi đơn giản
-│   │   ├── store.py             # Quản lý kho vector & lưu trữ metadata
+│   │   ├── store.py             # Quản lý phiên chat (sessions) & replies trên PostgreSQL
+│   │   ├── embedding_cache.py   # Bộ nhớ đệm vector nhúng BGE-M3 trên PostgreSQL
 │   │   ├── reranker.py          # Cross-encoder reranking
-│   │   └── vietnamese_embedding.py # Embedding tiếng Việt (bkai / local / OpenAI)
+│   │   └── vietnamese_embedding.py # Embedding tiếng Việt (BGE-M3 / local / OpenAI)
 │   ├── core/                    # Hạ tầng và cấu hình hệ thống
 │   │   ├── config.py            # Pydantic BaseSettings, đọc từ .env
 │   │   ├── rate_limit.py        # Rate limiter theo sliding window
-│   │   ├── checkpointer.py      # Checkpointer cho SQLite & PostgreSQL
-│   │   ├── postgres.py          # Quản lý kết nối & connection pool PostgreSQL
+│   │   ├── checkpointer.py      # Checkpointer persistence (SQLite fallback cho test)
+│   │   ├── postgres.py          # PostgreSQL Pool, DDL schemas, checkpointer & draft persistence
 │   │   └── prompts.py           # Hệ thống prompt chuẩn hóa cho các tác tử
 │   ├── mcp/                     # Chuẩn tích hợp FastMCP
 │   │   ├── server.py            # FastMCP server cung cấp postal tools
@@ -133,13 +135,13 @@ vnpost_deepagent/
 ├── frontend/                    # Giao diện người dùng React 19 + Vite
 │   ├── src/                     # React components, Canvas compression, Voice/TTS
 │   ├── package.json             # Cấu hình frontend dependencies
-│   └── vite.config.js           # Vite dev server proxy tới cổng 8080
+│   └── vite.config.js           # Vite dev server proxy tới cổng 8000
 ├── scripts/                     # Kịch bản bảo trì & kiểm định
 │   ├── seed_demo.py             # Khởi tạo dữ liệu giả lập ban đầu
 │   ├── benchmark_architecture.py# Đo lường hiệu năng kiến trúc đa tác tử
 │   └── reindex.py               # Tái tạo vector index cho kho tài liệu
-├── tests/                       # 224 automated test cases (Pytest)
-├── compose.yaml                 # Docker Compose chạy Chatbot + PostgreSQL 16
+├── tests/                       # 224+ automated test cases (Pytest)
+├── compose.yaml                 # Docker Compose chạy Chatbot + PostgreSQL 16 + Qdrant v1.12
 ├── Dockerfile                   # Dockerfile multi-stage production build
 ├── .env.example                 # Mẫu cấu hình môi trường chuẩn hóa (70 biến)
 └── pyproject.toml               # Quản lý dependencies dự án Python
@@ -158,7 +160,7 @@ vnpost_deepagent/
 
 ### 2. Triển khai bằng Docker Compose (Khuyên dùng cho Production)
 
-Hệ thống đi kèm file [`compose.yaml`](file:///c:/Users/admin/Downloads/vnpost_deepagent/compose.yaml) bao gồm **PostgreSQL 16 Alpine** (lưu checkpointer và telemetry) cùng service **Chatbot Backend**:
+Hệ thống đi kèm file [`compose.yaml`](file:///c:/Users/admin/Downloads/vnpost_deepagent/compose.yaml) chuẩn hóa Production bao gồm **PostgreSQL 16 Alpine** (lưu sessions, checkpoints, drafts, embedding cache), **Qdrant Vector Database v1.12** cùng service **Chatbot Backend**:
 
 ```bash
 # 1. Sao chép cấu hình môi trường
@@ -172,7 +174,7 @@ docker compose up --build -d
 
 - Backend API & Web UI: [http://127.0.0.1:8080](http://127.0.0.1:8080)
 - OpenAPI Swagger Docs: [http://127.0.0.1:8080/docs](http://127.0.0.1:8080/docs)
-- Dữ liệu lưu trữ bền vững tại Docker volumes: `chatbot_data` và `postgres_data`.
+- Dữ liệu lưu trữ bền vững tại Docker volumes: `chatbot_data`, `postgres_data`, và `qdrant_data`.
 
 ---
 
@@ -196,13 +198,13 @@ Copy-Item .env.example .env
 # Khởi tạo dữ liệu demo
 python scripts\seed_demo.py
 
-# Khởi chạy server FastAPI
-python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8080 --reload
+# Khởi chạy server FastAPI (mặc định cổng 8000)
+python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Hoặc sử dụng kịch bản PowerShell có sẵn:
 ```powershell
-.\start.ps1 -Port 8080
+.\start.ps1 -Port 8000
 ```
 
 **Trên Linux / macOS:**
@@ -213,7 +215,7 @@ pip install --upgrade pip
 pip install -e '.[dev]'
 cp .env.example .env
 python scripts/seed_demo.py
-python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8080 --reload
+python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ---
@@ -227,7 +229,7 @@ npm run dev
 ```
 
 - Giao diện Vite dev server hoạt động tại: [http://127.0.0.1:5173](http://127.0.0.1:5173).
-- Toàn bộ request `/api` tự động được proxy sang backend cổng `8080`.
+- Toàn bộ request `/api` tự động được proxy sang backend cổng `8000`.
 - Khi đóng gói cho bản production: `npm run build` (kết quả build trong `frontend/dist/` được FastAPI phục vụ trực tiếp).
 
 ---
@@ -250,11 +252,11 @@ Hệ thống được cấu hình qua file `.env`. Mẫu [`.env.example`](file:/
 |---|---|---|
 | **Chế độ chạy** | `DEMO_MODE` | Đặt `false` để kích hoạt kết nối LLM thật và Deep Agent đầy đủ. |
 | **Mô hình LLM chính** | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | Hỗ trợ mọi endpoint OpenAI-compatible (OpenAI, Gemini via proxy, vLLM, Ollama). |
-| **Embedding & RAG** | `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL` | Khuyên dùng `bkai-foundation-models/vietnamese-bi-encoder` cho văn bản tiếng Việt. |
-| **Xếp hạng lại** | `RERANKER_ENABLED`, `RERANKER_MODEL` | Bật Cross-Encoder `BAAI/bge-reranker-v2-m3` để đạt độ chính xác cao nhất. |
-| **Vector Database** | `VECTOR_STORE_BACKEND`, `QDRANT_URL` | Lưu trữ vector (hỗ trợ in-memory / SQLite / Qdrant chuyên dụng). |
+| **Embedding & RAG** | `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL` | Hỗ trợ cụm GPU nội bộ `BAAI/bge-m3` tại `https://ai.vnpost.vn/vllm-bge-m3/v1` (1024 dims), hoặc `bkai-foundation-models/vietnamese-bi-encoder`. |
+| **Xếp hạng lại** | `RERANKER_ENABLED`, `RERANKER_MODEL` | Hỗ trợ Cross-Encoder `Qwen/Qwen3-Reranker-8B` tại `https://ai.vnpost.vn/vllm-qwen3-reranker-8b/rerank` (hoặc `BAAI/bge-reranker-v2-m3`). |
+| **Vector Database** | `VECTOR_STORE_BACKEND`, `QDRANT_URL` | Lưu trữ vector (hỗ trợ in-memory / Qdrant chuyên dụng v1.12+). |
 | **Bảo mật & Rate Limit** | `ALLOW_ANONYMOUS`, `API_KEYS_JSON`, `RATE_LIMIT_*` | Đặt `ALLOW_ANONYMOUS=false` trên production; cấu hình RPM cho chat, voice, general. |
-| **Checkpointer & DB** | `CHECKPOINTER_TYPE`, `POSTGRES_URL` | Đặt `CHECKPOINTER_TYPE=postgres` khi chạy cụm multi-instance. |
+| **Cơ sở dữ liệu & Memory** | `CHECKPOINTER_TYPE`, `POSTGRES_URL` | Mặc định `CHECKPOINTER_TYPE=postgres` và `POSTGRES_URL` cho Production (lưu trữ tập trung sessions, checkpoints, drafts và embedding cache). |
 | **Voice STT & TTS** | `TTS_PROVIDER`, `VOICE_STT_PROVIDER` | Hỗ trợ `edge-tts`, `zerotts`, `whisper` cho hội thoại bằng giọng nói. |
 | **Vision Đa phương thức** | `VISION_MODEL`, `VISION_BASE_URL` | Phân tích ảnh bưu gửi, hóa đơn, bảng cước. |
 
