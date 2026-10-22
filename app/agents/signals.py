@@ -49,19 +49,6 @@ _POSTAL_OPS = re.compile(
 )
 
 
-_IDENTITY_MEMORY = re.compile(
-    r"(?i)\b(?:"
-    r"tôi là ai|mình là ai|tao là ai"
-    r"|tôi tên(?: là)? (?:gì|chi)|tên (?:của )?tôi là (?:gì|chi)|tên tôi(?: là gì| là chi)?|tên mình(?: là gì)?"
-    r"|(?:bạn )?(?:có )?nhớ (?:tên )?tôi (?:không|chưa)|bạn (?:có )?biết tôi là ai (?:không|chưa)|nhớ tôi không"
-    r"|tôi vừa (?:nói|hỏi|bảo) gì|nhắc lại (?:câu|lời) (?:trước|vừa rồi)"
-    r"|(?:tôi|mình) là [a-zà-ỹ\s]{2,30}"
-    r"|tên (?:của )?tôi là [a-zà-ỹ\s]{2,30}"
-    r"|(?:tôi|mình) tên(?: là)? [a-zà-ỹ\s]{2,30}"
-    r")\b"
-)
-
-
 @dataclass(frozen=True)
 class Signals:
     chitchat: bool = False
@@ -71,7 +58,6 @@ class Signals:
     multi_question: bool = False
     temporal_calc: bool = False
     postal_ops: bool = False
-    identity_memory: bool = False
 
     def hit(self) -> list[str]:
         return [k for k, v in asdict(self).items() if v]
@@ -83,8 +69,6 @@ def analyze(raw: str) -> Signals:
     plain = re.sub(r"\s+", " ", plain)
     # Loại bỏ ngày tháng (8/3, 20/10, 30/4/1975) để không bị nhận nhầm dấu gạch chéo là phép chia
     t_no_dates = _DATE.sub(" ", t)
-    has_postal = bool(_POSTAL_OPS.search(t))
-    identity_mem = bool(_IDENTITY_MEMORY.search(plain)) and not has_postal and len(plain) <= 60
     return Signals(
         chitchat=bool(plain) and len(plain) <= 50 and bool(_CHITCHAT.fullmatch(plain)),
         compare=bool(_COMPARE.search(t)),
@@ -92,6 +76,6 @@ def analyze(raw: str) -> Signals:
         multistep=bool(_MULTISTEP.search(t)),
         multi_question=t.count("?") >= 2 or bool(_LIST.search(raw or "")),
         temporal_calc=bool(_TEMPORAL_CALC.search(t)),
-        postal_ops=has_postal,
-        identity_memory=identity_mem,
+        postal_ops=bool(_POSTAL_OPS.search(t)),
     )
+

@@ -47,32 +47,11 @@ class PreparedRAG:
         )
 
 
-def extract_user_name_from_history(history: list[dict] | None) -> str | None:
-    """Trích xuất tên người dùng đã từng giới thiệu trong toàn bộ phiên hội thoại."""
-    if not history:
-        return None
-    name_pattern = re.compile(
-        r"(?i)\b(?:tôi là|mình là|tên tôi là|tôi tên là|tôi tên|mình tên là)\s+([A-ZÀ-Ỹa-zà-ỹ\s]{2,30})\b"
-    )
-    non_names = {"ai", "gi", "gì", "chi", "nguoi", "người", "ai do", "ai đó", "khach hang", "khách hàng"}
-    for turn in history:
-        if turn.get("role") == "user":
-            content = turn.get("content", "")
-            m = name_pattern.search(content)
-            if m:
-                raw_name = m.group(1).strip()
-                cleaned = re.sub(r"(?i)\s+(?:nhé|nha|ạ|đây|nè)$", "", raw_name).strip()
-                if cleaned and cleaned.lower() not in non_names and len(cleaned.split()) <= 5:
-                    return cleaned
-    return None
-
-
 def is_greeting(text: str) -> bool:
     """Chỉ coi là xã giao khi toàn bộ câu là lời chào ngắn (fullmatch), không nuốt câu nghiệp vụ."""
     from app.agents.signals import analyze
 
-    sig = analyze(text)
-    return sig.chitchat or sig.identity_memory
+    return analyze(text).chitchat
 
 
 class FastRAGExecutor:
@@ -101,33 +80,20 @@ class FastRAGExecutor:
         """Retrieve once before choosing whether the request needs escalation."""
         run = current_run.get()
         history_messages = self._history_messages(history)
-        from app.agents.signals import analyze
-        sig = analyze(message)
 
-        if sig.chitchat or sig.identity_memory:
-            user_name = extract_user_name_from_history(history)
-            system_prompt = FAST_RAG_SYSTEM_PROMPT
-            if sig.identity_memory:
-                if user_name:
-                    system_prompt += f"\n\n[Ghi nhớ hội thoại: Người dùng trong phiên này đã giới thiệu tên là '{user_name}']"
-                else:
-                    system_prompt += "\n\n[Ghi nhớ hội thoại: Người dùng trong phiên này chưa giới thiệu tên. Nếu họ hỏi về tên của mình, hãy lịch sự thông báo là bạn chưa biết và mời họ chia sẻ.]"
+        if is_greeting(message):
             run.event(
-                "conversational_fast_path" if sig.identity_memory else "greeting_fast_path",
-                message=(
-                    "Phản hồi danh tính / ngữ cảnh hội thoại trực tiếp từ lịch sử, không cần truy vấn tài liệu"
-                    if sig.identity_memory
-                    else "Phản hồi chào hỏi trực tiếp không cần truy vấn tài liệu"
-                ),
+                "greeting_fast_path",
+                message="Phản hồi chào hỏi trực tiếp không cần truy vấn tài liệu",
             )
             return PreparedRAG(
                 [
-                    SystemMessage(content=system_prompt),
+                    SystemMessage(content=FAST_RAG_SYSTEM_PROMPT),
                     *history_messages,
                     HumanMessage(content=message),
                 ],
                 json.dumps(
-                    {"sources": [], "instruction": "Conversational memory; no retrieval needed."},
+                    {"sources": [], "instruction": "Conversational greeting; no retrieval needed."},
                     ensure_ascii=False,
                 ),
                 0,

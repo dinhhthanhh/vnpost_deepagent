@@ -114,7 +114,7 @@ def resolve_search_query(message: str, history: list[dict] | None = None) -> str
         return clean
     from app.agents.signals import analyze
     sig = analyze(clean)
-    if sig.chitchat or sig.identity_memory:
+    if sig.chitchat:
         return clean
     conv_indicators = (
         "tôi vừa",
