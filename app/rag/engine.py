@@ -116,6 +116,24 @@ def resolve_search_query(message: str, history: list[dict] | None = None) -> str
     sig = analyze(clean)
     if sig.chitchat or sig.identity_memory:
         return clean
+    conv_indicators = (
+        "tôi vừa",
+        "vừa mới",
+        "hồi nãy",
+        "lúc nãy",
+        "tôi bảo",
+        "tôi nói",
+        "tôi hỏi",
+        "tôi kể",
+        "tôi khoe",
+        "tôi tên",
+        "tôi là",
+        "tên tôi",
+        "nhớ tôi",
+        "nhớ tên",
+    )
+    if any(ind in clean.lower() for ind in conv_indicators):
+        return clean
     referential_keywords = (
         "tài liệu nào",
         "ở đâu",
