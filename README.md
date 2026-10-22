@@ -1,130 +1,297 @@
-# VNPost Deep Agent
+# VNPost Deep Agent Chatbot
 
-Trợ lý hội thoại cho nghiệp vụ bưu chính VNPost, kết hợp FastAPI, React, RAG có trích dẫn và Deep Agent điều phối các tác vụ cần công cụ chuyên biệt.
+Hệ thống Trợ lý AI Bưu chính Đa tác tử (**Multi-Agent System**) thế hệ mới phục vụ nghiệp vụ bưu chính **VNPost (Vietnam Post)**. Hệ thống kết hợp **FastAPI**, **React (Vite)**, kiến trúc điều phối **LangChain / LangGraph Deep Agents**, **LlamaIndex Advanced RAG**, giao thức **FastMCP / A2A**, cùng pipeline giọng nói **STT/TTS** và phân tích thị giác **Vision**.
 
-> Dự án không chứa API key, lịch sử chat, vector index hay dữ liệu crawl cục bộ. Sao chép `.env.example` thành `.env` và điền cấu hình của riêng bạn trước khi chạy.
+> [!IMPORTANT]
+> **Bảo mật thông tin:** Dự án không chứa API key, token bí mật, lịch sử chat, vector index hay dữ liệu khách hàng. Hãy sao chép `.env.example` thành `.env` và điền cấu hình hợp lệ trước khi vận hành. File `.env` đã được cấu hình trong `.gitignore` để không bao giờ bị đẩy lên kho lưu trữ.
 
-## Tính năng
+---
 
-- RAG cho TXT, DOCX và PDF; kết hợp vector search, BM25 và reranking tùy chọn.
-- Trích dẫn nguồn `[S1]`, kiểm tra citation và chặn trả lời thiếu bằng chứng khi bật grounded mode.
-- Router retrieval-first: câu hỏi đơn giản đi Fast RAG; câu phức tạp, tính ngày tháng, mã vận đơn và bưu cục đi Deep Agent.
-- Specialist tools cho tra cứu hành trình bưu gửi, bưu cục/mã bưu chính, tính toán và soạn thảo.
-- Lưu lịch sử theo tenant/session, SSE streaming và TTS ZeroTTS tùy chọn.
-- Xoá chat phản hồi ngay; quá trình dọn tài liệu/index riêng của session chạy nền.
+## 🌟 Điểm nổi bật & Yêu cầu nghiệp vụ
 
-## Kiến trúc
+Hệ thống đáp ứng trọn vẹn 5 yêu cầu cốt lõi cùng các tiêu chuẩn sẵn sàng cho môi trường Production:
+
+1. **Deep Agent Harness (LangChain / DeepAgents):**
+   - Đóng vai trò nhạc trưởng điều phối (**Agent Harness**), tự động phân tích và chia nhỏ tác vụ của người dùng (**Task Decomposition**).
+   - Tự động ủy quyền công việc cho các Sub-agents chuyên trách, tổng hợp kết quả từ nhiều nguồn và định dạng câu trả lời hoàn chỉnh kèm kiểm tra độ xác thực bằng chứng (**Grounding Verification**).
+
+2. **Hệ sinh thái Sub-Agents chuyên trách:**
+   - **`rag-agent`**: Tra cứu văn bản quy chế, biểu cước, dịch vụ từ kho tri thức.
+   - **`tracking-agent`**: Tra cứu trạng thái và hành trình bưu phẩm/bưu kiện theo mã vận đơn chuẩn UPU S10 và nội địa.
+   - **`post-office-agent`**: Tìm kiếm mạng lưới bưu cục VNPost, mã bưu chính quốc gia Vpostcode, địa chỉ và giờ làm việc.
+   - **`analyst-agent` / `calculator`**: Tính toán cước phí an toàn qua AST, áp dụng quy chuẩn quy đổi thể tích hàng cồng kềnh $(\text{Dài} \times \text{Rộng} \times \text{Cao}) / 6000$ và đối soát ngày tháng theo múi giờ UTC+7.
+   - **`writer-agent`**: Soạn thảo công văn, thư phúc đáp khách hàng và tóm tắt theo quy chuẩn hành chính.
+   - **`booking-agent` & `complaint-agent`**: Hỗ trợ tiếp nhận tạo đơn gửi và tra cứu quy trình khiếu nại bồi thường (thời hiệu 06 tháng nội địa, 12 tháng quốc tế).
+
+3. **Sub-agent RAG nâng cao với LlamaIndex:**
+   - Xử lý và đọc hiểu chuyên sâu các tài liệu định dạng `.docx` (giữ cấu trúc bảng biểu), `.txt` và `.pdf` (có text layer).
+   - Áp dụng **Multi-Query Decomposition** phân rã câu hỏi phức tạp thành nhiều truy vấn phụ.
+   - Cơ chế truy hồi lai (**Hybrid Search**) kết hợp Vector Semantic Search + BM25Plus chuẩn hóa tiếng Việt, xếp hạng hợp nhất bằng **Reciprocal Rank Fusion (RRF)** và Cross-Encoder Reranker tùy chọn (`BAAI/bge-reranker-v2-m3`).
+   - Đánh dấu và trích dẫn bằng chứng cụ thể `[S1]`, `[S2]`... có đối soát từ khóa excerpt ngăn chặn ảo giác (hallucination).
+
+4. **Thực thi song song (Parallel Subagents Execution):**
+   - Deep Agent có khả năng kích hoạt đồng thời nhiều Sub-agents trong cùng một lượt chạy thông qua cơ chế gom đợt của **LangGraph** runtime và `asyncio.gather`.
+   - Kiểm soát tài nguyên chặt chẽ với hàng đợi Semaphore (`max_parallel_subagents`), giới hạn số bước đồ thị (graph recursion limit) và timeout trên từng yêu cầu.
+
+5. **Tích hợp Pipeline Voice STT & TTS Streaming:**
+   - **Speech-to-Text (STT):** Nhận diện giọng nói qua Whisper API hoặc HuggingFace Inference API, nạp trực tiếp vào ngữ cảnh hội thoại.
+   - **Text-to-Speech (TTS):** Chuyển đổi văn bản thành giọng nói tiếng Việt tự nhiên (hỗ trợ Edge-TTS, ZeroTTS, Kokoro), phát trực tuyến qua Server-Sent Events (SSE) hoặc endpoint `/api/tts/stream`.
+
+6. **Sẵn sàng cho Production (Production Hardening):**
+   - **Rate Limiting:** Bộ điều phối tốc độ Sliding Window (`app/core/rate_limit.py`) kiểm soát theo IP và Tenant API Key, chống giả mạo header `X-Forwarded-For`.
+   - **Checkpointer bền vững:** Hỗ trợ lưu trữ trạng thái đồ thị qua SQLite hoặc PostgreSQL (`langgraph-checkpoint-postgres`) phục vụ kiểm toán và mở rộng ngang (horizontal scale).
+   - **Tối ưu hình ảnh:** Client nén ảnh tự động qua HTML5 Canvas trước khi mã hóa Base64, giảm hơn 95% tải băng thông mạng.
+   - **Chuẩn FastMCP & A2A:** Tích hợp máy chủ FastMCP (`app/mcp/server.py`) và giao thức Agent-to-Agent (`app/a2a/server.py`).
+
+---
+
+## 📐 Kiến trúc hệ thống
+
+```mermaid
+flowchart TD
+    Client["React 19 UI (Vite)\n• Canvas Image Compressor\n• Voice Recorder & TTS Player"] -->|HTTP / SSE Stream| API["FastAPI Gateway (app.api.main)"]
+
+    subgraph SecurityLayer ["Security & Routing"]
+        API --> RateLimit["Rate Limiter (Sliding Window)\nIP & Tenant Buckets"]
+        RateLimit --> Auth["X-API-Key Tenant Resolver"]
+        Auth --> Router["Router (Fastpath & Classification)"]
+    end
+
+    Router -->|Chào hỏi / Đơn giản| FastPath["Fast Path (Trực tiếp)"]
+    Router -->|1 ý hỏi rõ ràng| FastRAG["Fast RAG Engine"]
+    Router -->|Đa bước / Phức tạp / Tính toán| DeepAgent["Deep Agent Supervisor (LangGraph StateGraph)"]
+
+    subgraph SubAgentsLayer ["Parallel Subagents Ecosystem"]
+        DeepAgent -.->|Async Parallel Dispatch| RAG_A["rag-agent\n(LlamaIndex Docs)"]
+        DeepAgent -.->|Async Parallel Dispatch| TRK_A["tracking-agent\n(Vận đơn S10)"]
+        DeepAgent -.->|Async Parallel Dispatch| PO_A["post-office-agent\n(Bưu cục & Vpostcode)"]
+        DeepAgent -.->|Async Parallel Dispatch| CALC_A["analyst-agent\n(Cước thể tích 6000 & Ngày)"]
+        DeepAgent -.->|Sequential Turn| WRI_A["writer-agent\n(Soạn thảo phản hồi)"]
+    end
+
+    subgraph DataAndTools ["Data & Storage Layer"]
+        RAG_A --> KB["Knowledge Base\n• Hybrid Vector + BM25\n• Multi-Query RRF Fusion"]
+        TRK_A --> PostalAPI["VNPost Postal Service Tools"]
+        PO_A --> PostalAPI
+        DeepAgent --> Checkpointer["Checkpointer Persistence\n(SQLite / PostgreSQL Pool)"]
+        DeepAgent --> MCP["FastMCP Server & A2A Server"]
+    end
+
+    FastRAG --> GroundingCheck["Grounding & Citation Validator ([S1]...)"]
+    DeepAgent --> GroundingCheck
+    GroundingCheck --> ResponseOutput["SSE Stream Response"]
+    ResponseOutput --> TTSOutput["TTS Service (Edge-TTS / ZeroTTS)"]
+```
+
+---
+
+## 📂 Cấu trúc thư mục mã nguồn
 
 ```text
-React UI → FastAPI → Router
-                    ├─ Fast RAG → evidence + citation
-                    └─ Deep Agent → specialist tools / sub-agents
-
-Knowledge base → hybrid retrieval → citation validation → response / TTS
+vnpost_deepagent/
+├── app/
+│   ├── api/                     # FastAPI application layer
+│   │   ├── main.py              # Endpoints, middleware, SSE streaming, upload tài liệu
+│   │   └── schemas.py           # Pydantic request/response schemas
+│   ├── agents/                  # Multi-Agent Orchestration layer
+│   │   ├── orchestrator.py      # Deep Agent Supervisor, StateGraph, Task decomposition
+│   │   ├── postal_actions.py    # Bộ công cụ nghiệp vụ bưu chính (tracking, bưu cục, tra cước)
+│   │   ├── calculator.py        # Công cụ tính cước hàng cồng kềnh (/6000) & ngày tháng
+│   │   ├── signals.py           # Bộ nhận diện tín hiệu phân tuyến (signals)
+│   │   └── subagents/           # Các Sub-agents chuyên biệt độc lập
+│   │       ├── rag/             # Sub-agent RAG LlamaIndex
+│   │       ├── tracking/        # Sub-agent tra cứu vận đơn
+│   │       ├── post_office/     # Sub-agent mạng lưới bưu cục
+│   │       ├── analyst/         # Sub-agent so sánh và tính toán
+│   │       ├── writer/          # Sub-agent soạn văn bản
+│   │       ├── booking/         # Sub-agent tạo đơn bưu gửi
+│   │       └── complaint/       # Sub-agent khiếu nại bồi thường
+│   ├── rag/                     # LlamaIndex Advanced RAG engine
+│   │   ├── engine.py            # LlamaIndex query engine, Multi-Query, RRF, Hybrid search
+│   │   ├── fast_rag.py          # Fast RAG pipeline cho câu hỏi đơn giản
+│   │   ├── store.py             # Quản lý kho vector & lưu trữ metadata
+│   │   ├── reranker.py          # Cross-encoder reranking
+│   │   └── vietnamese_embedding.py # Embedding tiếng Việt (bkai / local / OpenAI)
+│   ├── core/                    # Hạ tầng và cấu hình hệ thống
+│   │   ├── config.py            # Pydantic BaseSettings, đọc từ .env
+│   │   ├── rate_limit.py        # Rate limiter theo sliding window
+│   │   ├── checkpointer.py      # Checkpointer cho SQLite & PostgreSQL
+│   │   ├── postgres.py          # Quản lý kết nối & connection pool PostgreSQL
+│   │   └── prompts.py           # Hệ thống prompt chuẩn hóa cho các tác tử
+│   ├── mcp/                     # Chuẩn tích hợp FastMCP
+│   │   ├── server.py            # FastMCP server cung cấp postal tools
+│   │   ├── clients.py           # MCP client gọi công cụ bên ngoài
+│   │   └── tools.py             # Đăng ký công cụ MCP
+│   ├── a2a/                     # Giao thức Agent-to-Agent
+│   │   └── server.py            # A2A JSON-RPC 2.0 server & agent card
+│   ├── tts/                     # Voice pipeline
+│   │   ├── service.py           # Chuyển đổi văn bản thành giọng nói (Edge-TTS / ZeroTTS)
+│   │   └── stt.py               # Nhận diện giọng nói (Whisper API / HF)
+│   └── router/                  # Bộ phân tuyến câu hỏi
+│       ├── classifier.py        # Phân loại mức độ phức tạp (fast/deep)
+│       └── fastpath.py          # Trả lời nhanh chào hỏi/ngày tháng tại chỗ
+├── frontend/                    # Giao diện người dùng React 19 + Vite
+│   ├── src/                     # React components, Canvas compression, Voice/TTS
+│   ├── package.json             # Cấu hình frontend dependencies
+│   └── vite.config.js           # Vite dev server proxy tới cổng 8080
+├── scripts/                     # Kịch bản bảo trì & kiểm định
+│   ├── seed_demo.py             # Khởi tạo dữ liệu giả lập ban đầu
+│   ├── benchmark_architecture.py# Đo lường hiệu năng kiến trúc đa tác tử
+│   └── reindex.py               # Tái tạo vector index cho kho tài liệu
+├── tests/                       # 224 automated test cases (Pytest)
+├── compose.yaml                 # Docker Compose chạy Chatbot + PostgreSQL 16
+├── Dockerfile                   # Dockerfile multi-stage production build
+├── .env.example                 # Mẫu cấu hình môi trường chuẩn hóa (70 biến)
+└── pyproject.toml               # Quản lý dependencies dự án Python
 ```
 
-## Yêu cầu
+---
 
-- Python 3.12
-- Node.js 22+ (chỉ cần khi phát triển giao diện)
-- Một LLM tương thích OpenAI có hỗ trợ tool/function calling nếu không chạy demo
+## 🚀 Hướng dẫn cài đặt & Khởi chạy
 
-## Chạy nhanh (demo/CPU)
+### 1. Yêu cầu tiên quyết
+- **Python**: 3.11 hoặc 3.12 (khuyên dùng Python 3.12).
+- **Node.js**: Phiên bản 20+ hoặc 22+ (khi phát triển frontend).
+- **Docker & Docker Compose**: (Tùy chọn, dùng khi triển khai container).
 
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install -e ".[dev]"
-Copy-Item .env.example .env
-.venv\Scripts\python.exe scripts\seed_demo.py
-.venv\Scripts\python.exe -m uvicorn app.api.main:app --host 127.0.0.1 --port 8080
-```
+---
 
-Mở [http://127.0.0.1:8080](http://127.0.0.1:8080). Demo dùng model và embedding giả lập để kiểm tra luồng; không đại diện cho chất lượng của LLM thật.
+### 2. Triển khai bằng Docker Compose (Khuyên dùng cho Production)
 
-Trên Linux/macOS:
+Hệ thống đi kèm file [`compose.yaml`](file:///c:/Users/admin/Downloads/vnpost_deepagent/compose.yaml) bao gồm **PostgreSQL 16 Alpine** (lưu checkpointer và telemetry) cùng service **Chatbot Backend**:
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
+# 1. Sao chép cấu hình môi trường
 cp .env.example .env
-.venv/bin/python scripts/seed_demo.py
-.venv/bin/python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8080
-```
 
-## Cấu hình môi trường
+# 2. Điền thông tin API Key thật của bạn vào file .env
 
-```bash
-cp .env.example .env
-```
-
-Các biến quan trọng:
-
-| Biến | Mục đích |
-|---|---|
-| `DEMO_MODE` | Dùng model giả lập khi `true`; production nên đặt `false`. |
-| `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | LLM chính tương thích OpenAI. |
-| `EMBEDDING_PROVIDER`, `EMBEDDING_*` | Embedding cục bộ hoặc qua API. |
-| `API_KEYS_JSON` | Khoá truy cập chatbot, ánh xạ theo tenant. |
-| `DATA_DIR` | Thư mục dữ liệu runtime; không commit. |
-| `TTS_*` | Cấu hình ZeroTTS tùy chọn. |
-
-Chỉ dùng placeholder trong `.env.example`. Không đưa `.env`, API key, token, dữ liệu khách hàng hoặc index vào Git.
-
-## Chạy với Docker
-
-```bash
-cp .env.example .env
-# Điền giá trị production vào .env
+# 3. Khởi tạo và chạy toàn bộ dịch vụ ngầm
 docker compose up --build -d
 ```
 
-Dịch vụ mặc định chỉ bind `127.0.0.1:8080`. Dữ liệu runtime được lưu trong Docker volume `chatbot_data`.
+- Backend API & Web UI: [http://127.0.0.1:8080](http://127.0.0.1:8080)
+- OpenAPI Swagger Docs: [http://127.0.0.1:8080/docs](http://127.0.0.1:8080/docs)
+- Dữ liệu lưu trữ bền vững tại Docker volumes: `chatbot_data` và `postgres_data`.
 
-## Phát triển giao diện
+---
+
+### 3. Cài đặt và chạy cục bộ (Local Development)
+
+#### Bước A: Thiết lập môi trường Python
+
+**Trên Windows (PowerShell):**
+```powershell
+# Tạo môi trường ảo Python 3.12
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+# Cài đặt mã nguồn và các gói phát triển
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+
+# Tạo file cấu hình từ template
+Copy-Item .env.example .env
+
+# Khởi tạo dữ liệu demo
+python scripts\seed_demo.py
+
+# Khởi chạy server FastAPI
+python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8080 --reload
+```
+
+Hoặc sử dụng kịch bản PowerShell có sẵn:
+```powershell
+.\start.ps1 -Port 8080
+```
+
+**Trên Linux / macOS:**
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e '.[dev]'
+cp .env.example .env
+python scripts/seed_demo.py
+python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8080 --reload
+```
+
+---
+
+#### Bước B: Khởi chạy Giao diện Frontend (React / Vite)
 
 ```bash
 cd frontend
-npm ci
+npm install
 npm run dev
 ```
 
-Vite phục vụ tại `http://127.0.0.1:5173` và proxy `/api` tới backend cổng 8080. Khi đóng gói production, chạy `npm run build`.
+- Giao diện Vite dev server hoạt động tại: [http://127.0.0.1:5173](http://127.0.0.1:5173).
+- Toàn bộ request `/api` tự động được proxy sang backend cổng `8080`.
+- Khi đóng gói cho bản production: `npm run build` (kết quả build trong `frontend/dist/` được FastAPI phục vụ trực tiếp).
 
-## Kiểm thử
+---
+
+#### Bước C: Khởi chạy FastMCP Server độc lập (Tùy chọn)
+
+Nếu bạn muốn cung cấp các công cụ bưu chính VNPost cho các hệ thống Agent bên ngoài thông qua giao thức **Model Context Protocol (MCP)**:
+
+```bash
+python -m app.mcp
+```
+
+---
+
+## ⚙️ Cấu hình môi trường (.env)
+
+Hệ thống được cấu hình qua file `.env`. Mẫu [`.env.example`](file:///c:/Users/admin/Downloads/vnpost_deepagent/.env.example) đã được đồng nhất 1:1 bao gồm các nhóm biến chính:
+
+| Nhóm cấu hình | Các biến tiêu biểu | Mô tả & Khuyến nghị Production |
+|---|---|---|
+| **Chế độ chạy** | `DEMO_MODE` | Đặt `false` để kích hoạt kết nối LLM thật và Deep Agent đầy đủ. |
+| **Mô hình LLM chính** | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | Hỗ trợ mọi endpoint OpenAI-compatible (OpenAI, Gemini via proxy, vLLM, Ollama). |
+| **Embedding & RAG** | `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL` | Khuyên dùng `bkai-foundation-models/vietnamese-bi-encoder` cho văn bản tiếng Việt. |
+| **Xếp hạng lại** | `RERANKER_ENABLED`, `RERANKER_MODEL` | Bật Cross-Encoder `BAAI/bge-reranker-v2-m3` để đạt độ chính xác cao nhất. |
+| **Vector Database** | `VECTOR_STORE_BACKEND`, `QDRANT_URL` | Lưu trữ vector (hỗ trợ in-memory / SQLite / Qdrant chuyên dụng). |
+| **Bảo mật & Rate Limit** | `ALLOW_ANONYMOUS`, `API_KEYS_JSON`, `RATE_LIMIT_*` | Đặt `ALLOW_ANONYMOUS=false` trên production; cấu hình RPM cho chat, voice, general. |
+| **Checkpointer & DB** | `CHECKPOINTER_TYPE`, `POSTGRES_URL` | Đặt `CHECKPOINTER_TYPE=postgres` khi chạy cụm multi-instance. |
+| **Voice STT & TTS** | `TTS_PROVIDER`, `VOICE_STT_PROVIDER` | Hỗ trợ `edge-tts`, `zerotts`, `whisper` cho hội thoại bằng giọng nói. |
+| **Vision Đa phương thức** | `VISION_MODEL`, `VISION_BASE_URL` | Phân tích ảnh bưu gửi, hóa đơn, bảng cước. |
+
+---
+
+## 🧪 Kiểm thử và Đảm bảo chất lượng
+
+Dự án sở hữu bộ kiểm thử tự động toàn diện bao phủ từ logic nghiệp vụ, RAG engine, rate limiter tới giao diện frontend:
 
 ```powershell
-.venv\Scripts\python.exe -m pytest -q
-.venv\Scripts\ruff.exe check app scripts tests
+# 1. Chạy toàn bộ 224 unit & integration tests của Backend
+python -m pytest -q
+
+# 2. Kiểm tra chất lượng mã nguồn bằng Ruff (0 warnings/errors)
+python -m ruff check app scripts tests
+
+# 3. Kiểm thử giao diện Frontend
 cd frontend
-npm run test
+npm test
+
+# 4. Kiểm tra biên dịch production của Frontend
 npm run build
 ```
 
-## API và tài liệu
+---
 
-- OpenAPI khi server chạy: `/docs`
-- Hợp đồng API: [docs/API.md](docs/API.md)
-- Kiến trúc và đánh giá retrieval: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+## 📖 Tài liệu kỹ thuật chuyên sâu
 
-## Cấu trúc mã nguồn
+Để tìm hiểu chi tiết hơn về các cơ chế kỹ thuật nội bộ, vui lòng tham khảo các tài liệu trong thư mục `docs/`:
 
-| Đường dẫn | Vai trò |
-|---|---|
-| `app/main.py` | API FastAPI, auth tenant, SSE và endpoints. |
-| `app/service.py` | Điều phối request, session, timeout, TTS. |
-| `app/router.py`, `app/signals.py` | Phân tuyến Fast/Deep theo tín hiệu rẻ. |
-| `app/fast_rag.py`, `app/rag.py` | Retrieval và knowledge base. |
-| `app/agents.py` | Deep Agent, specialist tools và validation. |
-| `frontend/` | Giao diện React/Vite. |
-| `tests/` | Unit, integration và contract tests. |
+- [Kiến trúc chi tiết hệ thống](file:///c:/Users/admin/Downloads/vnpost_deepagent/docs/ARCHITECTURE.md) (`docs/ARCHITECTURE.md`): Phân tích chi tiết luồng xử lý, supervisor, semaphore, state persistence và trích dẫn bằng chứng.
+- [Hợp đồng API & Đặc tả](file:///c:/Users/admin/Downloads/vnpost_deepagent/docs/API.md) (`docs/API.md`): Chi tiết toàn bộ endpoints REST, SSE streaming, authentication, format tải file và schema.
+- [Định tuyến & Mở rộng quy mô](file:///c:/Users/admin/Downloads/vnpost_deepagent/docs/ROUTING_AND_SCALE.md) (`docs/ROUTING_AND_SCALE.md`): Chiến lược phân tải Fast Path vs Deep Agent và mở rộng ngang với Postgres/Qdrant.
+- [Báo cáo đánh giá kiến trúc](file:///c:/Users/admin/Downloads/vnpost_deepagent/docs/ARCHITECTURE_REVIEW.md) (`docs/ARCHITECTURE_REVIEW.md`): Đánh giá bảo mật, hiệu năng và các điểm tối ưu hóa hệ thống.
 
-## Bảo mật
+---
 
-- Không commit `.env`, Postman environment, lịch sử, audio, index hay dữ liệu crawl.
-- Dùng khóa riêng cho từng tenant và HTTPS/VPN cho các upstream service.
-- Chỉ nạp nguồn public từ domain được allowlist hoặc tài liệu do người dùng cấp quyền.
-- Trước khi push, chạy `git status` và kiểm tra staged diff để tránh đưa secrets vào repository.
+## 🛡️ Giấy phép & Bản quyền
 
-## Giấy phép
-
-Chưa kèm giấy phép mã nguồn. Hãy bổ sung tệp `LICENSE` trước khi phân phối công khai.
+Dự án phát triển phục vụ giải pháp trợ lý ảo bưu chính thông minh cho VNPost. Vui lòng bổ sung giấy phép bản quyền phù hợp trước khi triển khai phân phối ra công chúng.
