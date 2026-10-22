@@ -120,6 +120,18 @@ def rule_based_decision(
             route_ms=round((time.perf_counter() - t0) * 1000, 2),
         )
 
+    # Tầng 0: Giao tiếp danh tính, giới thiệu tên & ghi nhớ ngữ cảnh hội thoại
+    if sig.identity_memory:
+        return RouterDecision(
+            "fast",
+            "Giao tiếp danh tính và ghi nhớ ngữ cảnh hội thoại (Tầng 0)",
+            "rule",
+            1.0,
+            tier=0,
+            signals=hits,
+            route_ms=round((time.perf_counter() - t0) * 1000, 2),
+        )
+
     # Tầng 2: Tính toán và suy luận thời gian / lịch trình
     if sig.temporal_calc:
         return RouterDecision(

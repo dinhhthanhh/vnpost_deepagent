@@ -112,6 +112,10 @@ def resolve_search_query(message: str, history: list[dict] | None = None) -> str
     words = clean.split()
     if not history or len(words) > 10:
         return clean
+    from app.agents.signals import analyze
+    sig = analyze(clean)
+    if sig.chitchat or sig.identity_memory:
+        return clean
     referential_keywords = (
         "tài liệu nào",
         "ở đâu",

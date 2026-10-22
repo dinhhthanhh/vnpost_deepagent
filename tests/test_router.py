@@ -28,6 +28,10 @@ def test_router_classification_heuristics():
         )[0]
         == "deep"
     )
+    assert classify_query("Tôi tên là gì?")[0] == "fast"
+    assert classify_query("tôi là Thành")[0] == "fast"
+    assert classify_query("bạn có nhớ tên tôi không?")[0] == "fast"
+    assert classify_query("tôi là ai")[0] == "fast"
 
 
 def test_router_normalizes_vietnamese_unicode_and_defaults_to_retrieval_first():
