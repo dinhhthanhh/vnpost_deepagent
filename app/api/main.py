@@ -13,6 +13,16 @@ if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     except Exception:
         pass
+    try:
+        import uvicorn.loops.asyncio
+        uvicorn.loops.asyncio.asyncio_loop_factory = lambda use_subprocess=False: asyncio.SelectorEventLoop
+    except Exception:
+        pass
+    try:
+        import uvicorn.loops.auto
+        uvicorn.loops.auto.auto_loop_factory = lambda use_subprocess=False: asyncio.SelectorEventLoop
+    except Exception:
+        pass
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -145,7 +155,7 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    logger.error("stream_failed error_type=%s", type(exc).__name__)
+                    logger.exception("stream_failed: %s", exc)
                     queue.put_nowait(
                         {
                             "type": "error",

@@ -152,6 +152,18 @@ async def get_async_pool(
     if not url:
         return None
 
+    if sys.platform == "win32":
+        try:
+            loop = asyncio.get_running_loop()
+            if not isinstance(loop, getattr(asyncio, "SelectorEventLoop", tuple)):
+                logger.warning(
+                    "Event loop hiện tại là %s thay vì SelectorEventLoop. Psycopg async không thể chạy với ProactorEventLoop trên Windows. Tự động chuyển sang fallback an toàn.",
+                    type(loop).__name__,
+                )
+                return None
+        except Exception:
+            pass
+
     if _ASYNC_POOL is None:
         async with _POOL_LOCK:
             if _ASYNC_POOL is None:
