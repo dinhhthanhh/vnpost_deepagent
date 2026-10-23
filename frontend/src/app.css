@@ -2185,6 +2185,56 @@ button:disabled {
   color: #b45309;
 }
 
+.action-card-badge.status-expired {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.action-card-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #b45309;
+  background: #fffbeb;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px dashed #f59e0b;
+}
+
+.action-card-timer.timer-warning {
+  color: #dc2626;
+  background: #fef2f2;
+  border-color: #ef4444;
+  animation: pulse-timer 1.5s infinite;
+}
+
+@keyframes pulse-timer {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.postal-action-card.expired-card {
+  border-left-color: #94a3b8;
+  background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+  opacity: 0.95;
+}
+
+.action-card-expired-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
 .action-card-badge.status-confirmed {
   background: #dcfce7;
   color: #15803d;

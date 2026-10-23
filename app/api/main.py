@@ -483,6 +483,16 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
     ):
         sid = str(session_id).strip()
         remaining = await asyncio.to_thread(svc.store.truncate_session, scope, sid, body.index)
+        from app.agents.postal_actions import cancel_orphaned_drafts
+
+        cancelled_drafts = await asyncio.to_thread(cancel_orphaned_drafts, scope, sid)
+        if cancelled_drafts:
+            logger.info(
+                "cancelled_orphaned_drafts_on_truncate tenant=%s session_id=%s count=%d",
+                scope,
+                sid,
+                cancelled_drafts,
+            )
         return {"session_id": sid, "remaining_count": len(remaining), "messages": remaining}
 
     @app.delete("/api/sessions/{session_id}")
@@ -657,13 +667,44 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
         return get_session_drafts(session_id=session_id, tenant=scope)
 
     @app.post("/api/actions/confirm")
-    async def confirm_action(body: ActionConfirmRequest, scope=Depends(tenant)):
+    async def confirm_action(
+        body: ActionConfirmRequest,
+        scope=Depends(tenant),
+        svc=Depends(get_service),
+    ):
         """Xác nhận trực tiếp một bản nháp đơn hàng hoặc khiếu nại (Human-in-the-Loop approval)."""
         from app.agents.postal_actions import confirm_booking, confirm_complaint
 
+        rec = None
         if body.action_type == "booking":
+            from app.agents.postal_actions import get_draft_booking
+
+            rec = get_draft_booking(body.draft_id, tenant=scope)
+            if (
+                rec
+                and rec.get("session_id")
+                and body.session_id
+                and rec.get("session_id") != body.session_id
+            ):
+                raise HTTPException(
+                    403,
+                    f"Không có quyền xác nhận bản nháp đơn hàng của phiên khác (phiên hiện tại: {body.session_id}).",
+                )
             res_str = confirm_booking(body.draft_id, confirmed_by_user=True, tenant=scope)
         elif body.action_type == "complaint":
+            from app.agents.postal_actions import get_draft_complaint
+
+            rec = get_draft_complaint(body.draft_id, tenant=scope)
+            if (
+                rec
+                and rec.get("session_id")
+                and body.session_id
+                and rec.get("session_id") != body.session_id
+            ):
+                raise HTTPException(
+                    403,
+                    f"Không có quyền xác nhận phiếu khiếu nại của phiên khác (phiên hiện tại: {body.session_id}).",
+                )
             res_str = confirm_complaint(body.draft_id, confirmed_by_user=True, tenant=scope)
         else:
             raise HTTPException(
@@ -676,10 +717,29 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
                 raise HTTPException(403, msg)
             if "không tìm thấy" in msg.lower():
                 raise HTTPException(404, msg)
+        elif data.get("status") in {
+            "confirmed",
+            "already_confirmed",
+            "submitted",
+            "already_submitted",
+        }:
+            sid = body.session_id or (rec.get("session_id") if rec else None)
+            if sid:
+                user_msg = f"Tôi xác nhận bản nháp {body.draft_id}."
+                bot_msg = data.get("message") or (
+                    f"Đã xác nhận đơn hàng {body.draft_id}. Mã vận đơn chính thức: {data.get('item_code')}."
+                    if body.action_type == "booking"
+                    else f"Đã xác nhận nộp khiếu nại {body.draft_id}. Mã số tiếp nhận: {data.get('ticket_number')}."
+                )
+                svc.store.save_turn(scope, sid, user_msg, bot_msg, svc.settings.max_history)
         return data
 
     @app.post("/api/actions/cancel")
-    async def cancel_action(body: ActionCancelRequest, scope=Depends(tenant)):
+    async def cancel_action(
+        body: ActionCancelRequest,
+        scope=Depends(tenant),
+        svc=Depends(get_service),
+    ):
         """Hủy trực tiếp một đơn hàng hoặc khiếu nại."""
         from app.agents.postal_actions import cancel_booking, cancel_complaint
 
@@ -714,6 +774,10 @@ def create_app(settings: Settings | None = None, service: ChatService | None = N
                 raise HTTPException(404, msg)
         elif data.get("status") in {"requires_verification", "verification_failed"}:
             raise HTTPException(400, data.get("message", "Yêu cầu xác minh thông tin chủ sở hữu"))
+        elif data.get("status") in {"cancelled", "already_cancelled"} and body.session_id:
+            user_msg = f"Tôi muốn hủy bản nháp {body.target_id}."
+            bot_msg = data.get("message") or f"Đã hủy bản nháp {body.target_id} thành công."
+            svc.store.save_turn(scope, body.session_id, user_msg, bot_msg, svc.settings.max_history)
         return data
 
     dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"

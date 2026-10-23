@@ -11,7 +11,18 @@ export async function request(path, key = null, options = {}) {
   const response = await fetch(path, fetchOptions);
   if (!response.ok) {
     let message = `HTTP ${response.status}`;
-    try { const data = await response.json(); message = typeof data.detail === "string" ? data.detail : "Dữ liệu gửi chưa hợp lệ."; } catch {}
+    try {
+      const data = await response.json();
+      if (typeof data.detail === "string") {
+        message = data.detail;
+      } else if (Array.isArray(data.detail)) {
+        message = data.detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+      } else if (data.message) {
+        message = data.message;
+      } else {
+        message = "Dữ liệu gửi chưa hợp lệ.";
+      }
+    } catch {}
     throw new Error(message);
   }
   return response;

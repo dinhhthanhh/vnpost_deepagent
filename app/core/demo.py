@@ -44,6 +44,7 @@ class DemoChatModel(BaseChatModel):
             (message_text(m) for m in reversed(messages) if isinstance(m, HumanMessage)), ""
         )
         user = user.split("\n\n[Chế độ hệ thống:")[0]
+        user = re.sub(r"\[(?:Thời gian thực|CHẾ ĐỘ|ĐẦU VÀO|Thông tin vị trí|Vị trí GPS)[^\]]*\]", "", user).strip()
         # Tool outputs belong only to the most recent user turn in this isolated invocation.
         last_user = max(
             (i for i, m in enumerate(messages) if isinstance(m, HumanMessage)), default=-1
@@ -96,8 +97,11 @@ class DemoChatModel(BaseChatModel):
         if self.role == "tracking":
             if results:
                 return AIMessage(content="Kết quả định vị bưu gửi:\n" + message_text(results[-1]))
-            m = re.search(r"\b[A-Za-z]{2}\d{9}[A-Za-z]{2}\b", user) or re.search(
-                r"\b[A-Za-z0-9]{8,16}\b", user
+            full_msgs = " ".join(message_text(m) for m in messages)
+            m = (
+                re.search(r"\b[A-Za-z]{2}\d{9}[A-Za-z]{2}\b", user)
+                or re.search(r"\b[A-Za-z]{2}\d{9}[A-Za-z]{2}\b", full_msgs)
+                or re.search(r"\b[A-Za-z0-9]{8,16}\b", user)
             )
             code = m.group() if m else "EB123456789VN"
             return AIMessage(
@@ -109,12 +113,116 @@ class DemoChatModel(BaseChatModel):
         if self.role == "post_office":
             if results:
                 return AIMessage(content="Kết quả tra cứu bưu cục:\n" + message_text(results[-1]))
+            full_msgs = "\n".join(message_text(m) for m in messages)
+            m_coords = re.search(
+                r"(?:latitude|vĩ độ)[=:\s]+([0-9.]+)[,\s]+(?:longitude|kinh độ)[=:\s]+([0-9.]+)",
+                full_msgs,
+                re.IGNORECASE,
+            ) or re.search(r"(-?\d{1,2}\.\d{3,8})[,\s/]+(-?\d{1,3}\.\d{3,8})", full_msgs)
+            if m_coords:
+                lat, lng = float(m_coords.group(1)), float(m_coords.group(2))
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "find_nearest_post_office",
+                            "args": {"latitude": lat, "longitude": lng},
+                            "id": "demo-po",
+                        }
+                    ],
+                )
             return AIMessage(
                 content="",
                 tool_calls=[
                     {"name": "lookup_post_office", "args": {"query": user}, "id": "demo-po"}
                 ],
             )
+        if self.role == "booking":
+            if results:
+                res_obj = None
+                try:
+                    res_obj = json.loads(message_text(results[-1]))
+                except Exception:
+                    pass
+                msg = res_obj.get("message") if isinstance(res_obj, dict) else message_text(results[-1])
+                return AIMessage(content=msg or "Thao tác đơn hàng hoàn tất.")
+            full_msgs = " ".join(message_text(m) for m in messages)
+            m_code = (
+                re.search(r"\b[A-Za-z]{2}\d{9}[A-Za-z]{2}\b", user)
+                or re.search(r"\b(?:bk|kn)-draft-[\w-]+|\bdraft-[\w-]+", user, re.I)
+                or re.search(r"\b[A-Za-z]{2}\d{9}[A-Za-z]{2}\b", full_msgs)
+                or re.search(r"\b(?:bk|kn)-draft-[\w-]+|\bdraft-[\w-]+", full_msgs, re.I)
+            )
+            target = m_code.group() if m_code else ""
+            if any(k in user.lower() for k in ["hủy", "huỷ"]):
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "cancel_booking",
+                            "args": {
+                                "item_code_or_draft_id": target,
+                                "reason": "Khách hàng yêu cầu hủy đơn hàng qua chat",
+                            },
+                            "id": "demo-cancel-booking",
+                        }
+                    ],
+                )
+            if any(k in user.lower() for k in ["xác nhận", "đồng ý", "chốt", "tạo đi", "nộp đi"]):
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "confirm_booking",
+                            "args": {"draft_id": target},
+                            "id": "demo-confirm-booking",
+                        }
+                    ],
+                )
+            return AIMessage(content="Đã ghi nhận yêu cầu về đơn hàng.")
+
+        if self.role == "complaint":
+            if results:
+                res_obj = None
+                try:
+                    res_obj = json.loads(message_text(results[-1]))
+                except Exception:
+                    pass
+                msg = res_obj.get("message") if isinstance(res_obj, dict) else message_text(results[-1])
+                return AIMessage(content=msg or "Thao tác khiếu nại hoàn tất.")
+            full_msgs = " ".join(message_text(m) for m in messages)
+            m_code = (
+                re.search(r"\bKN-[\w-]+|\b(?:bk|kn)-draft-[\w-]+|\bdraft-[\w-]+", user, re.I)
+                or re.search(r"\bKN-[\w-]+|\b(?:bk|kn)-draft-[\w-]+|\bdraft-[\w-]+", full_msgs, re.I)
+            )
+            target = m_code.group() if m_code else ""
+            if any(k in user.lower() for k in ["hủy", "huỷ", "rút"]):
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "cancel_complaint",
+                            "args": {
+                                "ticket_id_or_draft_id": target,
+                                "reason": "Khách hàng rút phiếu khiếu nại qua chat",
+                            },
+                            "id": "demo-cancel-complaint",
+                        }
+                    ],
+                )
+            if any(k in user.lower() for k in ["xác nhận", "đồng ý", "nộp đi"]):
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "confirm_complaint",
+                            "args": {"draft_ticket_id": target},
+                            "id": "demo-confirm-complaint",
+                        }
+                    ],
+                )
+            return AIMessage(content="Đã ghi nhận yêu cầu khiếu nại.")
+
         if self.role == "writer":
             return AIMessage(
                 content="Bố cục đề xuất: kết quả chính → bằng chứng → bước thực hiện. Chế độ demo chưa dùng LLM để soạn nội dung."
@@ -158,8 +266,15 @@ class DemoChatModel(BaseChatModel):
             return AIMessage(
                 content="Xin chào! Đây là chế độ demo. Bạn có thể nhập tài liệu và thử tra cứu có trích nguồn."
             )
+        full_conversation = " ".join(message_text(m) for m in messages)
+        has_code_in_conv = re.search(r"\b[A-Za-z]{2}\d{9}[A-Za-z]{2}\b", full_conversation)
+        is_readback_confirm = bool(
+            has_code_in_conv
+            and re.search(r"\b(đúng rồi|chính xác|vâng|chuẩn|đồng ý|ok|dạ)\b", user.lower())
+        )
         is_tracking = bool(
             re.search(r"\b[A-Za-z]{2}\d{9}[A-Za-z]{2}\b", user)
+            or is_readback_confirm
             or any(
                 k in user.lower()
                 for k in ["định vị", "vận đơn", "bưu gửi", "tracking", "tra cứu đơn"]
@@ -177,6 +292,32 @@ class DemoChatModel(BaseChatModel):
                 "chi nhánh",
             ]
         )
+
+        is_cancel = any(
+            k in user.lower()
+            for k in [
+                "hủy đơn",
+                "huỷ đơn",
+                "hủy lấy hàng",
+                "hủy bưu gửi",
+                "hủy vận đơn",
+                "hủy phiếu",
+                "hủy khiếu nại",
+                "huỷ khiếu nại",
+            ]
+        )
+        if is_cancel:
+            agent_type = "complaint-agent" if "khiếu nại" in user.lower() else "booking-agent"
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "task",
+                        "args": {"subagent_type": agent_type, "description": user},
+                        "id": "t1",
+                    }
+                ],
+            )
 
         if is_tracking and is_po:
             tool_calls = [

@@ -46,7 +46,30 @@ _POSTAL_OPS = re.compile(
     r"|bưu điện.*gần|gần.*bưu điện|bưu cục.*gần|gần.*bưu cục|vị trí.*bưu điện|tìm bưu điện|tìm bưu cục|bưu điện nào gần"
     r"|tạo đơn|đặt gửi|tạo vận đơn|muốn gửi|cần gửi|gửi hàng đi|lấy hàng|gom hàng"
     r"|mở khiếu nại|tạo khiếu nại|nộp khiếu nại|muốn khiếu nại|cần khiếu nại|yêu cầu bồi thường|đòi bồi thường|báo hỏng|báo mất"
+    r"|\b(?:bk|kn)-draft-\w+|\bdraft-\w+|hủy đơn|sửa đơn|huỷ đơn|phiếu khiếu nại|hủy khiếu nại|rút khiếu nại|hủy phiếu khiếu nại|nộp phiếu khiếu nại"
+    r"|xác nhận (?:đặt |nộp |tạo |gửi |đồng ý tạo )?(?:đơn|phiếu|khiếu nại|bưu gửi|đơn hàng)"
 )
+
+
+import unicodedata
+
+def _fold(s: str) -> str:
+    s = unicodedata.normalize("NFD", s.replace("đ", "d").replace("Đ", "D"))
+    return "".join(c for c in s if unicodedata.category(c) != "Mn")
+
+
+def _folded(p: re.Pattern) -> re.Pattern:
+    return re.compile(_fold(p.pattern), p.flags)
+
+
+_POSTAL_OPS_F = _folded(_POSTAL_OPS)
+_TEMPORAL_CALC_F = _folded(_TEMPORAL_CALC)
+_COMPARE_F = _folded(_COMPARE)
+_MULTISTEP_F = _folded(_MULTISTEP)
+
+
+def _search(p: re.Pattern, pf: re.Pattern, t: str, unaccented: bool) -> bool:
+    return bool(p.search(t)) or (unaccented and bool(pf.search(t)))
 
 
 @dataclass(frozen=True)
@@ -65,17 +88,18 @@ class Signals:
 
 def analyze(raw: str) -> Signals:
     t = norm(raw)
+    unaccented = t == _fold(t)  # người dùng gõ hoàn toàn không dấu
     plain = re.sub(r"[!?.,;:…]+", " ", t).strip()
     plain = re.sub(r"\s+", " ", plain)
     # Loại bỏ ngày tháng (8/3, 20/10, 30/4/1975) để không bị nhận nhầm dấu gạch chéo là phép chia
     t_no_dates = _DATE.sub(" ", t)
     return Signals(
         chitchat=bool(plain) and len(plain) <= 50 and bool(_CHITCHAT.fullmatch(plain)),
-        compare=bool(_COMPARE.search(t)),
+        compare=_search(_COMPARE, _COMPARE_F, t, unaccented),
         calc=bool(_CALC.search(t_no_dates)),
-        multistep=bool(_MULTISTEP.search(t)),
+        multistep=_search(_MULTISTEP, _MULTISTEP_F, t, unaccented),
         multi_question=t.count("?") >= 2 or bool(_LIST.search(raw or "")),
-        temporal_calc=bool(_TEMPORAL_CALC.search(t)),
-        postal_ops=bool(_POSTAL_OPS.search(t)),
+        temporal_calc=_search(_TEMPORAL_CALC, _TEMPORAL_CALC_F, t, unaccented),
+        postal_ops=_search(_POSTAL_OPS, _POSTAL_OPS_F, t, unaccented),
     )
 

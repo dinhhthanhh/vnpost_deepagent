@@ -2,8 +2,8 @@
 
 **Tài liệu:** Báo cáo Khảo sát Kỹ thuật Chuyên sâu (Codebase Architectural Survey & Agent Harness Analysis)  
 **Tác giả:** Senior Software Architect, AI Engineer & Technical Lead  
-**Vị trí dự án:** `vnpost_deepagent` · **Phiên bản:** 1.3.0 (100% PostgreSQL Enterprise Storage, Loại Bỏ Hoàn Toàn SQLite trong `data/`, Cụm Qdrant Vector & 229/229 Tests Passed)  
-**Phạm vi:** Khảo sát toàn diện mã nguồn, cấu hình, hạ tầng, cơ chế điều phối tác tử, đánh giá rủi ro và hiện thực hóa tích hợp PostgreSQL Checkpointer, Modular Subagents, FastMCP Server, A2A Protocol và Enterprise Skills.
+**Vị trí dự án:** `vnpost_deepagent` · **Phiên bản:** 1.4.0 (100% PostgreSQL Enterprise Storage, HITL Pure Confirmation Gate, Voice Readback Multi-Turn Flow, SafeStreamBuffer Fast RAG Marker Isolation, Phonetic Spacing, Dynamic Session Schema & 245/245 Tests Passed)  
+**Phạm vi:** Khảo sát toàn diện mã nguồn, cấu hình, hạ tầng, cơ chế điều phối tác tử, đánh giá rủi ro và hiện thực hóa tích hợp PostgreSQL Checkpointer, Modular Subagents, FastMCP Server, A2A Protocol, Enterprise Skills, thẩm định an toàn chốt chặn HITL Gate và phòng chống lặp giọng nói hai chiều.
 
 ---
 
@@ -26,7 +26,7 @@
    - 3.2 Quản trị Phụ thuộc, Cấu hình Môi trường và Đóng gói Container / Kubernetes
    - 3.3 Đánh giá An toàn Thông tin (SSRF, Tenant Isolation, Prompt Injection, Cloud Privacy)
    - 3.4 Phân tích Điểm nghẽn Hiệu năng (Bottlenecks) và Trùng lặp Mã nguồn
-   - 3.5 Hiện trạng Bộ Kiểm thử (229/229 Tests Passed) và Các mảng Cần Kiểm chứng Bổ sung
+   - 3.5 Hiện trạng Bộ Kiểm thử (245/245 Tests Passed Across 28 Files) và Các mảng Cần Kiểm chứng Bổ sung
    - 3.6 Báo cáo Đo đạc Thực nghiệm và Đánh giá Năng lực Hệ thống (reports/)
 4. [PHẦN IV: SƠ ĐỒ THIẾT KẾ KIẾN TRÚC VÀ TRÌNH TỰ ĐIỀU PHỐI (MERMAID)](#phần-iv-sơ-đồ-thiết-kế-kiến-trúc-và-trình-tự-điều-phối-mermaid)
    - 4.1 Sơ đồ Kiến trúc Thành phần (Component Architecture)
@@ -211,7 +211,7 @@ vnpost_deepagent/
 │       ├── kustomization.yaml            # Khai báo Kustomize base
 │       ├── secret.example.yaml           # Khuôn mẫu Secret lưu trữ API keys và Database credentials
 │       └── service.yaml                  # K8s Service ClusterIP kết nối port 8000
-├── tests/                                # Bộ kiểm thử tự động toàn diện (26 files, 229/229 Tests Passed)
+├── tests/                                # Bộ kiểm thử tự động toàn diện (28 files, 245/245 Tests Passed)
 │   ├── conftest.py                       # Fixtures dùng chung cho kiểm thử
 │   ├── test_a2a_contract.py              # 4 tests: Hợp đồng giao thức Agent-to-Agent SDK & Thẻ định danh
 │   ├── test_action_agents.py             # 21 tests: HITL Booking, Cancellation, Complaint, Phone Matching
@@ -228,7 +228,8 @@ vnpost_deepagent/
 │   ├── test_live_contract.py             # 1 test: Hợp đồng kết nối thực tế Gemini / vLLM
 │   ├── test_mcp_and_action_security.py   # 4 tests: Xác thực MCP SSE, chặn giả mạo UPU tracking & Phone verify
 │   ├── test_modular_agents.py            # 8 tests: Subagents Registry, FastMCP Server, AgentCard, K8s
-│   ├── test_postgres.py                  # 7 tests: PostgreSQL Checkpointer, Draft Persistence, Store live & fallback
+│   ├── test_multiturn_flow.py            # 12 tests: HITL Pure Confirmation, Not-Latest Draft, Voice Readback Loop Prevention, Fast RAG Token Leak Isolation, STT Guard, Phone/UPU Phonetics
+│   ├── test_postgres.py                  # 9 tests: PostgreSQL Checkpointer, Draft Persistence, Store live & fallback, Sync Pool Alias, Draft Created Event
 │   ├── test_prompts.py                   # 5 tests: Ranh giới tài liệu, chống Prompt Injection
 │   ├── test_rag.py                       # 23 tests: LlamaIndex Engine, Docx Tables, BM25Plus, Reranker
 │   ├── test_rate_limit_and_security.py   # 2 tests: Sliding-window rate limiter & Token Bucket HTTP 429
@@ -236,9 +237,9 @@ vnpost_deepagent/
 │   ├── test_s3_ingest.py                 # 5 tests: Nạp tài liệu qua S3 Presigned URL & Domain Whitelist
 │   ├── test_schemas_ssrf.py              # 15 tests: Chống tấn công SSRF trên URL và IP
 │   ├── test_skill_scoping.py             # 3 tests: Cô lập quyền đọc kỹ năng theo từng Subagent
-│   ├── test_stt.py                       # 2 tests: SpeechTranscriber STT và endpoint chuyển âm thanh
+│   ├── test_stt.py                       # 3 tests: SpeechTranscriber STT, Production Guard, API voice transcribe
 │   ├── test_terminology.py               # 5 tests: Từ điển bưu chính VNPost và chuẩn hóa số tiền
-│   └── test_tts.py                       # 10 tests: ZeroTTS Audio PCM WAV streaming & caching
+│   └── test_tts.py                       # 11 tests: ZeroTTS Audio PCM WAV streaming, caching & Truncate for speech
 ├── evaluation/                           # Bộ dữ liệu đo đạc Benchmark định tuyến & tải song song
 │   ├── architecture_benchmark.jsonl      # Bộ 8 câu hỏi kiểm tra toàn diện 4 tầng định tuyến (Tier 0-3)
 │   ├── parallel_subagents_benchmark.jsonl# Bộ câu hỏi kiểm tra năng lực chạy song song subagents
@@ -298,6 +299,8 @@ Hệ thống sử dụng framework `deepagents` (bản `0.7.24`), kế thừa tr
 - **Hàm khởi tạo đồ thị:** `create_deep_agent(...)` khởi tạo tác tử giám sát `vnpost-supervisor`.
 - **System Prompt Giám sát Module hóa:** Thay vì nhồi nhét vào mã nguồn, lời nhắc của Supervisor được tách thành tệp độc lập [app/agents/supervisor/prompt.md](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/supervisor/prompt.md) kèm cấu hình điều phối tại `config.py`. Supervisor đóng vai trò là kiến trúc sư trưởng, **không tự ý đoán mò thông tin nghiệp vụ**, chỉ được sử dụng dữ liệu từ các Sub-agent trả về hoặc bảng bằng chứng được nạp sẵn.
 - **Ranh giới an toàn nguồn:** Supervisor buộc phải trích dẫn theo đúng định danh `[S#]` có thật trong tài liệu. Hàm `validate_answer` ([app/agents/orchestrator.py:670-745](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/orchestrator.py#L670-L745)) quét kiểm duyệt toàn bộ câu trả lời cuối cùng, loại bỏ triệt để mã trích nguồn giả mạo hoặc không có từ khóa hỗ trợ trong trích đoạn.
+- **Xác thực Căn cứ Tính toán Nghiêm ngặt (Strict Computed Grounding):** Hàm `validate_answer` không suy diễn nhãn tính toán bằng regex tìm mẫu số hay ký tự trong nội dung văn bản tự do. Thay vào đó, cờ `computed` chỉ được kích hoạt khi có sự tham gia thực sự của Subagent tính toán (`run.computed_agents`), công cụ bưu chính được thực thi (`run.actions_invoked`), hoặc cờ `computed=True`. Cơ chế này loại bỏ triệt để việc gán nhãn sai cho các câu trả lời tra cứu thông thường.
+- **Phòng chống Vòng lặp Giọng nói (Voice Readback Instructions):** System Prompt của Supervisor nghiêm cấm hành vi hỏi đi hỏi lại thông tin khi người dùng đã xác nhận bằng giọng nói (`"đúng rồi"` / `"chuẩn rồi"`). Khi nhận được xác nhận, Supervisor phải lập tức kích hoạt công cụ tra cứu (`track_item`, `create_draft_booking`) và phản hồi kết quả trực diện.
 
 ---
 
@@ -392,14 +395,24 @@ Agent Harness triển khai cơ chế quản lý trạng thái đa tầng doanh n
 
 ### Các chốt chặn kỹ thuật và bảo mật chuyên sâu:
 1. **Chốt chặn Cấp lượt (Turn-level HITL Guard):** Khi `create_draft_booking` hoặc `create_draft_complaint` được gọi, mã nháp được tự động ghi vào `run.created_draft_ids`. Nếu trong cùng lượt chạy đó, mô hình LLM tự ý gọi `confirm_booking` hoặc `confirm_complaint`, hàm chặn đứng lập tức và trả về cảnh báo `hitl_required`.
-2. **Chốt chặn Ý định Người dùng (User Intent Guard):** Khi gọi `confirm_*`, hệ thống đối soát trực tiếp nội dung tin nhắn người dùng `run.user_message`. Nếu người dùng thể hiện ý định hủy bỏ hoặc chỉnh sửa (chứa từ khóa "hủy", "thôi", "khoan", "sửa") mà không có từ xác nhận, lệnh confirm sẽ bị từ chối với trạng thái `hitl_rejected_or_modifying`.
-3. **Cơ chế Đối Chiếu Số Điện Thoại Bảo Mật Đa Phiên (Phone Identity Matching):**
+2. **Chốt chặn Xác nhận Thuần túy & Chống Rò rỉ Dữ liệu (Pure Confirmation HITL Gate):**
+   - *Lỗ hổng tiềm ẩn:* Nếu chỉ kiểm tra sự tồn tại của từ xác nhận đơn thuần ("dạ", "đúng rồi"), khi người dùng cung cấp thông tin bổ sung như số điện thoại (*"dạ 0912345678 nhé"*) hoặc mã vận đơn (*"đúng rồi mã là EB123456789VN"*), LLM có thể gọi nhầm lệnh xác nhận phát hành đơn nháp chưa hoàn chỉnh.
+   - *Thuật toán xử lý:* [app/agents/postal_actions.py:27-56](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/postal_actions.py#L27-L56) triển khai hàm `_is_pure_confirmation(user_msg)`:
+     - Tách bỏ mã nháp draft ID: `_DRAFT_ID_RE = re.compile(r"\b(?:bk|kn)-draft-[\w-]+|\bdraft-[\w-]+", re.I)` (hỗ trợ cả UUID có dấu gạch ngang).
+     - Tách bỏ từ khóa xác nhận: `_CONFIRM_RE = re.compile(r"(?<!\w)(ok|đồng ý|xác nhận|chốt|duyệt|tạo đơn|đúng rồi|chính xác|tiến hành|gửi đi|tạo phiếu|được rồi|chuẩn rồi|nhất trí|nhé|nha|dạ)(?!\w)", re.I)`.
+     - Tách bỏ từ đệm giao tiếp: `_FILLER_RE = re.compile(r"(?<!\w)(tôi|em|anh|chị|nhé|nha|ạ|đi|luôn|rồi|vậy|thì|mipo|tạo|đơn|phiếu|khiếu nại|nộp|đặt|gửi)(?!\w)", re.I)`.
+     - Quy chuẩn: Phần còn lại của thông điệp chỉ được phép chứa tối đa 2 từ và tuyệt đối không được chứa chuỗi số $\ge 4$ chữ số (`\d{4,}`). Nếu chứa dữ liệu phát sinh, lệnh xác nhận bị từ chối với trạng thái `hitl_rejected_or_modifying`.
+3. **Chốt chặn Bản nháp Lỗi thời (`not_latest_draft`):**
+   - Khi một phiên trò chuyện đã sinh ra bản nháp mới hơn (ví dụ khách hàng chỉnh sửa thông tin đơn hàng), nếu người dùng vô tình bấm nút xác nhận trên thẻ HTML của bản nháp cũ, hệ thống đối soát `draft_id` với bản nháp mới nhất trong phiên và lập tức từ chối với mã lỗi `not_latest_draft`.
+4. **Đồng bộ Lượt Xác nhận REST vào Bộ nhớ Phiên (REST Confirm Persistence):**
+   - Khi người dùng bấm nút duyệt trên giao diện gọi trực tiếp `POST /api/actions/confirm`, hệ thống không chỉ cập nhật CSDL PostgreSQL mà còn tự động append lượt hội thoại hoàn chỉnh (User: "Xác nhận đặt đơn", Assistant: "Đã xác nhận thành công đơn hàng...") vào `PostgresChatStore`. Nhờ đó, ở lượt trò chuyện kế tiếp, Supervisor nắm bắt đầy đủ ngữ cảnh và không hỏi lại đơn hàng đã hoàn tất.
+5. **Cơ chế Đối Chiếu Số Điện Thoại Bảo Mật Đa Phiên (Phone Identity Matching):**
    - Khi khách hàng truy cập hoặc yêu cầu hủy một đơn hàng từ phiên chat (session) khác hoặc thiết bị khác, hệ thống kích hoạt chốt chặn danh tính: yêu cầu người dùng nhập 4 số cuối số điện thoại người gửi đã đăng ký trong đơn nháp.
    - Ngăn chặn triệt để rủi ro người lạ đánh cắp hoặc đoán bừa mã đơn để hủy đơn hàng của người khác.
-4. **Bộ Lọc Ngữ cảnh Thẻ Vận đơn & Danh Sách Đen Mã Minh Họa (Action Card Filtering):**
+6. **Bộ Lọc Ngữ cảnh Thẻ Vận đơn & Danh Sách Đen Mã Minh Họa (Action Card Filtering):**
    - Trên giao diện Frontend (`PostalActionCard`), bổ sung `isDummyTrackingCode`: đưa các chuỗi số ví dụ mẫu như `EB123456789VN`, `CP123456789VN` vào Blacklist tuyệt đối không bao giờ được sinh thẻ hành động.
    - Bổ sung bộ lọc ngữ cảnh: Nếu câu trả lời mang tính chất hướng dẫn nghiệp vụ, tra cứu định dạng UPU S10, quy trình tra cứu hoặc câu hỏi dạng "mã vận đơn là gì?", thẻ hành động sẽ bị ẩn hoàn toàn, tránh việc người dùng hiểu nhầm rằng hệ thống tự ý ghi/tạo đơn.
-5. **Chuẩn Hóa Tính Toán Ngày Tháng UTC+7 Tương Đối:**
+7. **Chuẩn Hóa Tính Toán Ngày Tháng UTC+7 Tương Đối:**
    - Trong [app/agents/calculator.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/calculator.py), các câu hỏi tính ngày tương đối (như *"ngày 21 tháng sau là thứ mấy"*, *"ngày 30 tháng sau là thứ mấy"*) được tối ưu hóa: trả về trực tiếp ngày dương lịch cụ thể và thứ trong tuần chính xác, loại bỏ phần giải thích khoảng thời gian dư thừa.
 
 ---
@@ -409,7 +422,10 @@ Agent Harness triển khai cơ chế quản lý trạng thái đa tầng doanh n
 1. **Giới hạn Ngân sách Tác vụ (`max_tasks = 8`):** Được giám sát bởi `_tracked_agent` ([app/agents/orchestrator.py:465-468](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/orchestrator.py#L465-L468)). Nếu Supervisor giao quá 8 task trong 1 phiên, các task tiếp theo sẽ bị từ chối với lý do `task_budget_exceeded`.
 2. **Khử Nhiễm Lỗi Nhà Cung Cấp (Provider Error Sanitization):** Khi một Sub-agent gặp sự cố kết nối LLM hoặc timeout ([app/agents/orchestrator.py:478-481](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/orchestrator.py#L478-L481)), lỗi được bọc an toàn thành JSON `{"task_failed": true, "reason": "Sub-agent failed", "error_type": "..."}`. Tuyệt đối không để lộ URL nội bộ, API Key hoặc Prompt nhạy cảm ra ngoài Supervisor.
 3. **Cơ chế Leo thang Dự phòng (Timeout Escalation Fallback):** Trong [app/service.py:128-146](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/service.py#L128-L146), toàn bộ nhánh Deep Agent được bao bọc bởi `asyncio.timeout(settings.deep_timeout)` (mặc định 35s). Nếu quá thời gian, hệ thống tự động ngắt Deep Agent và kích hoạt luồng Fast RAG (Tầng 1) trả lời ngay cho người dùng với tuyến `fast_fallback`.
-4. **Bộ đệm Token An toàn (`SafeStreamBuffer`):** Trong [app/service.py:27-56](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/service.py#L27-L56), khi streaming câu trả lời, bộ đệm buffer giữ lại các token mở đầu nhạy cảm của cờ `[[NO_EVIDENCE]]`, ngăn chặn tuyệt đối tình trạng rò rỉ cờ kỹ thuật ra giao diện người dùng trước khi kịp thay thế bằng thông báo thân thiện.
+4. **Bộ đệm Token Kép An toàn (`SafeStreamBuffer`):** Trong [app/service.py:27-56](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/service.py#L27-L56), khi streaming câu trả lời, bộ đệm buffer giữ lại các token mở đầu nhạy cảm của cờ `[[NO_EVIDENCE]]` và cờ `[[NEED_AGENT]]`.
+   - Ngăn chặn tuyệt đối tình trạng rò rỉ token kỹ thuật nội bộ ra giao diện người dùng.
+   - Khi phát hiện cờ `[[NEED_AGENT]]`, Fast RAG kích hoạt leo thang sạch sang Tier 2 Deep Agent với sự kiện `route_escalated (reason=need_agent_marker)`, bảo đảm câu trả lời đầy đủ, chính xác.
+5. **Chốt chặn Giọng nói Môi trường Production (`Production STT Guard`):** Trong [app/tts/stt.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/tts/stt.py), phương thức `transcribe()` kiểm tra thuộc tính `settings.is_production`. Khi chạy trên môi trường thực tế (`DEMO_MODE=false`), nếu hệ thống chưa cấu hình hoặc mất kết nối dịch vụ STT upstream, hệ thống chủ động ném lỗi `STTError` thay vì âm thầm trả về chuỗi văn bản mô phỏng cố định như môi trường demo.
 
 ---
 
@@ -466,6 +482,10 @@ Hệ thống cung cấp danh mục API RESTful, SSE streaming và giao thức t�
 | `/api/v1/a2a/agent_card.json` | `GET` | None | `agent_card.json` | Thẻ căn cước kỹ thuật số của Agent phục vụ khám phá chuẩn A2A |
 | `/api/v1/a2a/tasks` | `POST` | `A2ATaskRequest` | JSON trạng thái nhiệm vụ | Tiếp nhận và thực thi ủy quyền tác vụ từ các Remote Agent bên ngoài |
 | `FastMCP Server` | `Stdio/SSE` | JSON-RPC 2.0 (`app.mcp`) | JSON-RPC 2.0 Response | Máy chủ Model Context Protocol cung cấp công cụ bưu chính chuẩn hóa |
+
+### Tính Bền vững Schema & Xử lý Lỗi HTTP 422 (Schema Robustness):
+- **Chuẩn hóa Định danh Phiên (`clean_session_id`):** Ban đầu, `ChatRequest.session_id` định nghĩa kiểu nghiêm ngặt `UUID | None`. Khi Client hoặc Frontend sinh mã phiên tùy biến (như `session-1738291...`), Pydantic từ chối với lỗi `422 Unprocessable Entity` ("Dữ liệu gửi chưa hợp lệ"). Hệ thống đã nâng cấp trường này thành `session_id: str | None = None` với validator `clean_session_id` ([app/api/schemas.py:92-108](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/api/schemas.py#L92-L108)), hỗ trợ cả chuỗi UUID chuẩn lẫn chuỗi ký tự định danh tùy biến an toàn.
+- **Trích xuất Lỗi FastAPI Thông minh (`frontend/src/api.js`):** Khi backend trả về lỗi HTTP 4xx/5xx có cấu trúc mảng `detail: [{loc: [...], msg: "..."}]`, Frontend React tự động giải mã mảng lỗi thành thông điệp tường minh cho người dùng thay vì thông báo lỗi mập mờ.
 
 ---
 
@@ -526,11 +546,11 @@ Qua khảo sát toàn bộ codebase, hiện trạng khắc phục các điểm n
 
 ---
 
-## 3.5 Hiện trạng Bộ Kiểm thử (229/229 Tests Passed) và Các mảng Cần Kiểm chứng Bổ sung
+## 3.5 Hiện trạng Bộ Kiểm thử (245/245 Tests Passed Across 28 Files) và Các mảng Cần Kiểm chứng Bổ sung
 
-Bộ kiểm thử tự động của hệ thống hiện có **229 trường hợp thử nghiệm (Test Cases)** phân bố trên **26 file kiểm thử** trong thư mục `tests/`. Kết quả chạy thực tế: **229 passed in 15.45s (100% Pass Rate)**.
+Bộ kiểm thử tự động của hệ thống hiện có **245 trường hợp thử nghiệm (Test Cases)** phân bố trên **28 file (27 file test + 1 conftest.py)** trong thư mục `tests/`. Kết quả chạy thực tế toàn diện: **245 passed in 181.01s (0:03:01) (100% Pass Rate)**.
 
-### Bảng Thống kê 229 Test Cases theo từng Module:
+### Bảng Thống kê 245 Test Cases theo từng Module:
 
 | STT | File Kiểm thử (`tests/`) | Số lượng Tests | Trọng tâm Kiểm chứng Nghiệp vụ & Kỹ thuật |
 | :---: | :--- | :---: | :--- |
@@ -539,28 +559,43 @@ Bộ kiểm thử tự động của hệ thống hiện có **229 trường h�
 | 3 | `test_rag.py` | **23** | Bóc tách bảng DOCX thành cặp Cột:Giá trị, chống ZIP Bomb, Qdrant/Memory index, nhúng GPU, bảo toàn $tf$ trong BM25, cô lập session |
 | 4 | `test_action_agents.py` | **21** | Tạo đơn thể tích (chia 6000), sửa nháp, duyệt đơn (HITL), hủy đơn nháp, hủy đơn đã xác nhận, thời hiệu khiếu nại 6/12 tháng, SLA 20/30 ngày, bảo mật Phone Matching |
 | 5 | `test_schemas_ssrf.py` | **15** | Phòng chống SSRF: chặn IP nội bộ, loopback, CGNAT, link-local và cloud metadata IP |
-| 6 | `test_router.py` | **11** | Bộ định tuyến thích ứng 4 tầng (Zero-LLM), phân loại heuristic, fallback, tính toán thời gian và bưu chính chuyên biệt |
-| 7 | `test_tts.py` | **10** | Hợp đồng ZeroTTS, kiểm tra PCM WAV 16-bit, lọc thẻ trích dẫn, chuẩn hóa văn nói, bộ nhớ đệm âm thanh |
-| 8 | `test_modular_agents.py` | **8** | Đăng ký Subagents Registry, Supervisor Modular Prompt, nạp Enterprise Skills, FastMCP Server Tools/Resources, AgentCard, K8s manifests, healthz & a2a routes |
-| 9 | `test_idor_and_s3_security.py` | **8** | Bảo mật Đa Tenant: Chống tấn công IDOR duyệt/hủy chéo tenant, thực thi S3 bucket allowlist, giới hạn dung lượng upload S3 stream |
-| 10 | `test_external_mcp.py` | **8** | Kết nối MCP Server bên ngoài qua cả StdioTransport và SSETransport, mapping công cụ phân tán cho Supervisor |
-| 11 | `test_postgres.py` | **7** | PostgreSQL Checkpointer, Lưu nháp đơn hàng/khiếu nại an toàn, PostgreSQL Session Store live và graceful fallback khi offline |
-| 12 | `test_s3_ingest.py` | **5** | Kiểm tra nạp tài liệu qua S3 presigned URL an toàn và thực thi whitelist domain |
-| 13 | `test_terminology.py` | **5** | Chuẩn hóa từ điển bưu chính, phát hiện từ khóa, gợi ý thuật ngữ, hậu xử lý số tiền |
-| 14 | `test_prompts.py` | **5** | Ranh giới tài liệu `[TÀI LIỆU]`, thoát thẻ đóng chống Indirect Prompt Injection |
-| 15 | `test_api.py` | **4** | Endpoint FastAPI: upload tài liệu, chat SSE streaming, phân quyền tenant |
-| 16 | `test_context_offloading_and_streaming_tts.py` | **4** | Giảm tải ngữ cảnh tài liệu lớn sang file ảo, streaming TTS phân đoạn theo câu |
-| 17 | `test_a2a_contract.py` | **4** | Giao thức Agent-to-Agent SDK, mã hóa giải mã Google Protobuf Message/Part, hợp đồng Thẻ định danh Agent Card |
-| 18 | `test_mcp_and_action_security.py` | **4** | Xác thực token MCP SSE transport, ngăn chặn giả mạo tenant ID, chống hủy bừa UPU tracking, xác thực số điện thoại qua REST |
-| 19 | `test_fast_rag_edge_cases.py` | **3** | Xử lý biên Fast RAG: tính nhẩm trực tiếp, lọc overlap từ khóa |
-| 20 | `test_checkpointer.py` | **3** | Lưu trữ phiên đa lượt bằng SQLite checkpointer và kiểm thử MemorySaver |
-| 21 | `test_is_greeting.py` | **3** | Phân định chào hỏi thuần túy vs câu hỏi nghiệp vụ bưu chính |
-| 22 | `test_skill_scoping.py` | **3** | Phân quyền truy xuất kỹ năng doanh nghiệp: cô lập tool `read_file` chỉ đọc file kỹ năng thuộc phạm vi của Subagent được gán |
-| 23 | `test_stt.py` | **2** | Bộ chuyển đổi giọng nói STT (Speech-to-Text) và endpoint `/api/voice/transcribe` |
-| 24 | `test_embedding_cache.py` | **2** | Bộ nhớ đệm Vector 2 tầng: RAM LRU cache và PostgreSQL binary BYTEA cache (tách biệt query cache và document cache) |
-| 25 | `test_rate_limit_and_security.py` | **2** | Sliding Window Rate Limiter và Token Bucket bảo vệ API chống DDoS, trả về mã HTTP 429 Retry-After |
-| 26 | `test_live_contract.py` | **1** | Hợp đồng kết nối thực tế với client LLM/Embedding |
-| **Tổng** | **26 files** | **229 tests** | **229 PASSED (100% Pass Rate in 15.45s)** |
+| 6 | `test_multiturn_flow.py` | **12** | Luồng hội thoại đa lượt chuyên sâu: Chốt chặn HITL Pure Confirmation, chặn draft cũ `not_latest_draft`, phòng chống lặp giọng nói Voice Readback, cách ly cờ Fast RAG `[[NEED_AGENT]]`, Guard STT Production, tách vần số điện thoại & mã UPU, xác thực nghiêm ngặt căn cứ `computed` |
+| 7 | `test_router.py` | **11** | Bộ định tuyến thích ứng 4 tầng (Zero-LLM), phân loại heuristic, fallback, tính toán thời gian và bưu chính chuyên biệt |
+| 8 | `test_tts.py` | **11** | Hợp đồng ZeroTTS, kiểm tra PCM WAV 16-bit, lọc thẻ trích dẫn, chuẩn hóa văn nói, bộ nhớ đệm âm thanh, hàm cắt câu `truncate_for_speech` |
+| 9 | `test_postgres.py` | **9** | PostgreSQL Checkpointer, Lưu nháp đơn hàng/khiếu nại, PostgreSQL Session Store live và graceful fallback khi offline, Sync Connection Pool Alias, Draft Created Event |
+| 10 | `test_modular_agents.py` | **8** | Đăng ký Subagents Registry, Supervisor Modular Prompt, nạp Enterprise Skills, FastMCP Server Tools/Resources, AgentCard, K8s manifests, healthz & a2a routes |
+| 11 | `test_idor_and_s3_security.py` | **8** | Bảo mật Đa Tenant: Chống tấn công IDOR duyệt/hủy chéo tenant, thực thi S3 bucket allowlist, giới hạn dung lượng upload S3 stream |
+| 12 | `test_external_mcp.py` | **8** | Kết nối MCP Server bên ngoài qua cả StdioTransport và SSETransport, mapping công cụ phân tán cho Supervisor |
+| 13 | `test_s3_ingest.py` | **5** | Kiểm tra nạp tài liệu qua S3 presigned URL an toàn và thực thi whitelist domain |
+| 14 | `test_terminology.py` | **5** | Chuẩn hóa từ điển bưu chính, phát hiện từ khóa, gợi ý thuật ngữ, hậu xử lý số tiền |
+| 15 | `test_prompts.py` | **5** | Ranh giới tài liệu `[TÀI LIỆU]`, thoát thẻ đóng chống Indirect Prompt Injection |
+| 16 | `test_api.py` | **4** | Endpoint FastAPI: upload tài liệu, chat SSE streaming, phân quyền tenant |
+| 17 | `test_context_offloading_and_streaming_tts.py` | **4** | Giảm tải ngữ cảnh tài liệu lớn sang file ảo, streaming TTS phân đoạn theo câu |
+| 18 | `test_a2a_contract.py` | **4** | Giao thức Agent-to-Agent SDK, mã hóa giải mã Google Protobuf Message/Part, hợp đồng Thẻ định danh Agent Card |
+| 19 | `test_mcp_and_action_security.py` | **4** | Xác thực token MCP SSE transport, ngăn chặn giả mạo tenant ID, chống hủy bừa UPU tracking, xác thực số điện thoại qua REST |
+| 20 | `test_fast_rag_edge_cases.py` | **3** | Xử lý biên Fast RAG: tính nhẩm trực tiếp, lọc overlap từ khóa |
+| 21 | `test_checkpointer.py` | **3** | Lưu trữ phiên đa lượt bằng SQLite checkpointer và kiểm thử MemorySaver |
+| 22 | `test_is_greeting.py` | **3** | Phân định chào hỏi thuần túy vs câu hỏi nghiệp vụ bưu chính |
+| 23 | `test_skill_scoping.py` | **3** | Phân quyền truy xuất kỹ năng doanh nghiệp: cô lập tool `read_file` chỉ đọc file kỹ năng thuộc phạm vi của Subagent được gán |
+| 24 | `test_stt.py` | **3** | Bộ chuyển đổi giọng nói STT (Speech-to-Text), Chốt chặn Production Guard, endpoint `/api/voice/transcribe` |
+| 25 | `test_embedding_cache.py` | **2** | Bộ nhớ đệm Vector 2 tầng: RAM LRU cache và PostgreSQL binary BYTEA cache (tách biệt query cache và document cache) |
+| 26 | `test_rate_limit_and_security.py` | **2** | Sliding Window Rate Limiter và Token Bucket bảo vệ API chống DDoS, trả về mã HTTP 429 Retry-After |
+| 27 | `test_live_contract.py` | **1** | Hợp đồng kết nối thực tế với client LLM/Embedding |
+| **Tổng** | **28 files** (27 tests + conftest) | **245 tests** | **245 PASSED (100% Pass Rate in ~3 min)** |
+
+### Phân tích Trọng tâm 12 Test Cases Luồng Hội thoại Đa Lượt (`test_multiturn_flow.py`):
+1. `test_confirm_keywords_and_hitl_gate`: Kiểm chứng thuật toán phân tách từ khóa xác nhận và từ đệm giao tiếp.
+2. `test_booking_multiturn_flow`: Kiểm chứng quy trình tạo đơn hàng nháp qua chat, chuyển giao diện sang thẻ duyệt, và xác nhận ở lượt tiếp theo.
+3. `test_complaint_multiturn_flow`: Kiểm chứng quy trình lập phiếu khiếu nại bưu phẩm đa lượt và lưu trữ vé CRM.
+4. `test_two_drafts_old_card_blocked_by_not_latest_draft`: Chặn đứng hành vi bấm duyệt thẻ đơn nháp cũ khi phiên trò chuyện đã sinh ra bản nháp mới (`not_latest_draft`).
+5. `test_voice_readback_slot_prompt_matching`: Phát hiện câu hỏi slot-prompt của trợ lý ("Có phải bạn muốn tra cứu...") và tự động gắn cờ `_open_flow = True`.
+6. `test_rest_confirm_saves_turn_visible_to_next_chat`: Đảm bảo khi người dùng duyệt đơn qua REST API `/api/actions/confirm`, lượt hội thoại được lưu vào DB để lượt sau LLM nhận biết đầy đủ.
+7. `test_confirm_with_data_is_blocked`: Kiểm chứng cơ chế Pure Confirmation: chặn câu trả lời chứa số điện thoại hoặc mã vận đơn ("dạ 0912345678 nhé") không bị duyệt nhầm đơn nháp.
+8. `test_need_agent_not_leaked`: Kiểm chứng `SafeStreamBuffer` giấu kín cờ `[[NEED_AGENT]]` khỏi luồng SSE và kích hoạt leo thang an toàn sang Deep Agent.
+9. `test_stt_production_no_simulated`: Kiểm chứng `Settings.is_production` chủ động raise `STTError` khi chạy production thiếu cấu hình upstream, ngăn chặn trả dữ liệu giả định.
+10. `test_spoken_text_phone_and_code`: Kiểm chứng phát âm chuẩn hóa: số điện thoại tách từng chữ số (`0 9 1 2 ...`) và mã UPU tách chữ cái kèm số (`EB 1 2 3 ... VN`).
+11. `test_computed_not_from_code_pattern`: Kiểm chứng nhãn `computed` chỉ được gắn khi có Subagent thực thi thực tế, không suy diễn từ mẫu số hay mã trong câu trả lời.
+12. `test_voice_readback_full_turn_calls_track_item`: Kiểm chứng luồng giọng nói toàn trình: khách hàng xác nhận "đúng rồi" bằng giọng nói lập tức kích hoạt `track_item` mà không hỏi lặp lại.
 
 ### Các phần kiểm thử cần bổ sung khi triển khai quy mô lớn:
 1. **Load Test & Concurrency Stress Test:** Kiểm thử tải đồng thời 50 - 100 người dùng chat đồng thời qua Locust/k6 để đánh giá độ trễ xếp hàng và khả năng chịu tải của cụm máy chủ.
@@ -833,6 +868,17 @@ sequenceDiagram
     end
 ```
 
+### Các Nâng cấp Trọng yếu trong Pipeline Âm thanh Hai chiều:
+1. **Phòng chống Vòng lặp Xác nhận Giọng nói (Voice Readback Multi-Turn Prevention):**
+   - Khi Trợ lý phát sinh câu hỏi slot prompt (như *"Có phải bạn muốn tra cứu mã vận đơn...?"*), hệ thống tự động ghi nhận cờ `_open_flow = True` vào ngữ cảnh phiên.
+   - Khi người dùng phản hồi ngắn gọn bằng giọng nói (`voice_input=True`, ví dụ *"đúng rồi"*, *"chính xác"*), bộ định tuyến thích ứng trực tiếp dispatch vào action nghiệp vụ `track_item` / Sub-agent tương ứng.
+   - Supervisor Prompt chỉ thị dứt khoát không hỏi lại lần hai mà thực thi ngay lập tức công cụ và đọc kết quả cho khách hàng.
+2. **Hợp nhất và Chuẩn hóa Ngữ âm (`spoken_text` Pipeline):**
+   - Loại bỏ hoàn toàn sự chồng chéo giữa `to_speech_text` cũ và `spoken_text`. Hàm `spoken_text` ([app/tts/service.py:165-240](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/tts/service.py#L165-L240)) thực hiện:
+     - **Tách vần số điện thoại:** Nhận dạng các định dạng số di động và hotline (`0912.345.678`, `0912 345 678`, `+84912...`), chèn khoảng trắng từng chữ số (`0 9 1 2 3 4 5 6 7 8`) để mô hình TTS đọc từng số rõ ràng.
+     - **Tách vần mã bưu chính UPU S10:** Nhận dạng định dạng mã bưu gửi VNPost (`EB123456789VN`), tự động tách rời tiền tố, dãy 9 số và hậu tố quốc gia (`EB 1 2 3 4 5 6 7 8 9 VN`).
+     - **Cắt tỉa độ dài câu văn nói an toàn:** Hàm độc lập `truncate_for_speech(text, max_chars=450)` đảm bảo âm thanh truyền phát ngắn gọn, súc tích, không làm nghẽn luồng phát âm thanh.
+
 ---
 
 # PHẦN V: MA TRẬN TRUY VẾT YÊU CẦU – MODULE – CODE – TEST (TRACEABILITY MATRIX)
@@ -847,27 +893,30 @@ sequenceDiagram
 | **REQ-04** | Lưu trữ phiên bền vững đa lượt qua PostgreSQL Checkpointer (kèm SQLite fallback cho unit test) | `app/core` | [app/core/postgres.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/core/postgres.py), [app/core/checkpointer.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/core/checkpointer.py) | `test_postgres.py::test_postgres_lazy_checkpointer_instantiation`, `test_checkpointer.py::test_sqlite_checkpointer_roundtrip` | **100% PASS** |
 | **REQ-05** | Giảm tải ngữ cảnh RAG qua File ảo (`StateBackend`) | `app/agents` | [app/agents/orchestrator.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/orchestrator.py): `_load_enterprise_skills`, `/evidence/prefetched_sources.json` | `test_context_offloading_and_streaming_tts.py::test_context_offloading_evidence_file` | **100% PASS** |
 | **REQ-06** | Lõi Hybrid RAG (Docx Table + Vector + BM25Plus + RRF + Reranker) | `app/rag` | [app/rag/engine.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/rag/engine.py): `KnowledgeBase`, `SentenceSplitter`, `BM25Plus`, `filter_relevant_hits` | `test_rag.py::test_docx_preserves_tables_and_locations`, `test_rag.py::test_reranker_reorders_only_the_hybrid_candidate_pool` (21 tests) | **100% PASS** |
-| **REQ-07** | Đường tắt cục bộ Tầng 0 không gọi LLM (< 1ms) | `app/router` | [app/router/fastpath.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/router/fastpath.py): `local_answer`, `try_arithmetic`, `app/agents/calculator.py:safe_calculate` | `test_fastpath.py::test_calc`, `test_fastpath.py::test_not_calc`, `test_fastpath.py::test_chitchat` (34 tests) | **100% PASS** |
+| **REQ-07** | Đường tắt cục bộ Tầng 0 không gọi LLM (< 1ms) | `app/router` | [app/router/fastpath.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/router/fastpath.py): `local_answer`, `try_arithmetic`, `app/agents/calculator.py:safe_calculate` | `test_fastpath.py::test_calc`, `test_fastpath.py::test_not_calc`, `test_fastpath.py::test_chitchat` (36 tests) | **100% PASS** |
 | **REQ-08** | Bộ định tuyến thích ứng 9 luật ưu tiên Zero-LLM (< 5ms) | `app/router` | [app/router/classifier.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/router/classifier.py): `rule_based_decision`, `classify_query_adaptive` | `test_router.py::test_router_classification_heuristics`, `test_router.py::test_router_temporal_calculation` (11 tests) | **100% PASS** |
 | **REQ-09** | Fast RAG Pipeline 1 bước kèm Cổng nguồn Source Gate | `app/rag` | [app/rag/fast_rag.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/rag/fast_rag.py): `FastRAGExecutor.prepare`, `execute`, `stream` | `test_router.py::test_fast_rag_execution_in_service`, `test_fast_rag_edge_cases.py` (3 tests) | **100% PASS** |
-| **REQ-10** | Quy trình Tạo đơn hàng 2 pha (HITL Booking) chuẩn 6000 | `app/agents` | [app/agents/postal_actions.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/postal_actions.py): `create_draft_booking`, `confirm_booking` | `test_action_agents.py::test_booking_bulky_calculation_and_draft`, `test_action_agents.py::test_booking_confirm_and_cancel_flow` | **100% PASS** |
-| **REQ-11** | Chốt chặn bảo vệ HITL cấp lượt và ý định người dùng | `app/agents` | [app/agents/postal_actions.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/postal_actions.py): `created_draft_ids` guard, `reject_kws` intent guard | `test_action_agents.py::test_hitl_turn_level_guard_prevents_same_turn_auto_confirm`, `test_action_agents.py::test_hitl_intent_guard_blocks_rejection` | **100% PASS** |
+| **REQ-10** | Quy trình Tạo đơn hàng 2 pha (HITL Booking) chuẩn 6000 | `app/agents` | [app/agents/postal_actions.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/postal_actions.py): `create_draft_booking`, `confirm_booking` | `test_action_agents.py::test_booking_bulky_calculation_and_draft`, `test_multiturn_flow.py::test_booking_multiturn_flow` | **100% PASS** |
+| **REQ-11** | Chốt chặn bảo vệ HITL Pure Confirmation & Ngăn chặn lộ draft cũ | `app/agents` | [app/agents/postal_actions.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/postal_actions.py): `_is_pure_confirmation`, `_FILLER_RE`, `not_latest_draft` guard | `test_multiturn_flow.py::test_confirm_keywords_and_hitl_gate`, `test_multiturn_flow.py::test_confirm_with_data_is_blocked`, `test_multiturn_flow.py::test_two_drafts_old_card_blocked_by_not_latest_draft` | **100% PASS** |
 | **REQ-12** | Quy trình Hủy đơn hàng bưu gửi (Đơn nháp & Đơn đã tạo) | `app/agents` | [app/agents/postal_actions.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/postal_actions.py): `cancel_draft_booking`, `cancel_booking` | `test_action_agents.py::test_cancel_booking_confirmed_order`, `test_action_agents.py::test_cancel_draft_booking_auto_detect_latest` | **100% PASS** |
-| **REQ-13** | Quy trình Khiếu nại bưu phẩm, thời hiệu 6/12 tháng & Hủy khiếu nại | `app/agents` | [app/agents/postal_actions.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/postal_actions.py): `create_draft_complaint`, `confirm_complaint`, `cancel_complaint` | `test_action_agents.py::test_complaint_statute_of_limitations_and_draft`, `test_action_agents.py::test_cancel_complaint_flow` | **100% PASS** |
+| **REQ-13** | Quy trình Khiếu nại bưu phẩm, thời hiệu 6/12 tháng & Hủy khiếu nại | `app/agents` | [app/agents/postal_actions.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/postal_actions.py): `create_draft_complaint`, `confirm_complaint`, `cancel_complaint` | `test_action_agents.py::test_complaint_statute_of_limitations_and_draft`, `test_multiturn_flow.py::test_complaint_multiturn_flow` | **100% PASS** |
 | **REQ-14** | Tra cứu danh sách đơn hàng & khiếu nại trong phiên | `app/agents` | [app/agents/postal_actions.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/postal_actions.py): `list_my_orders`, `get_session_drafts` | `test_action_agents.py::test_list_my_orders_summary`, `test_action_agents.py::test_session_isolation_for_drafts` | **100% PASS** |
 | **REQ-15** | Định vị bưu cục gần nhất theo tọa độ GPS và link Maps | `app/domain` | [app/domain/postal_services.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/domain/postal_services.py): `find_nearest_post_offices` | `test_action_agents.py::test_find_nearest_post_office_gps`, `test_action_agents.py::test_find_nearest_post_office_invalid_coords` | **100% PASS** |
-| **REQ-16** | Kiểm duyệt trích dẫn nguồn cấp Claim (`validate_answer`) | `app/agents` | [app/agents/orchestrator.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/orchestrator.py): `validate_answer`, `tokens`, `STOPWORDS` | `test_agents.py::test_claim_level_citation_scrubbing`, `test_agents.py::test_invalid_citations_blocked` | **100% PASS** |
+| **REQ-16** | Kiểm duyệt trích dẫn nguồn cấp Claim & Xác thực Grounding `computed` | `app/agents` | [app/agents/orchestrator.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/orchestrator.py): `validate_answer`, `tokens`, `computed_agents` check | `test_agents.py::test_claim_level_citation_scrubbing`, `test_multiturn_flow.py::test_computed_not_from_code_pattern` | **100% PASS** |
 | **REQ-17** | Phòng vệ tấn công SSRF trên URL và S3 Presigned URL | `app/api` | [app/api/schemas.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/api/schemas.py): `_validate_safe_url`, `_is_private_ip` | `test_schemas_ssrf.py` (15 tests), `test_s3_ingest.py` (5 tests) | **100% PASS** |
-| **REQ-18** | Tích hợp Giọng nói ZeroTTS (WAV & Chunked Stream) | `app/tts` | [app/tts/service.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/tts/service.py): `ZeroTTS`, `validate_wav`, `spoken_text` | `test_tts.py` (10 tests), `test_context_offloading_and_streaming_tts.py::test_streaming_tts_split_long_sentences` | **100% PASS** |
-| **REQ-19** | Nhận diện giọng nói tiếng Việt STT qua Micro | `app/tts` | [app/tts/stt.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/tts/stt.py): `SpeechTranscriber.transcribe`, [app/api/main.py:391](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/api/main.py#L391) | `test_stt.py::test_speech_transcriber_unit`, `test_stt.py::test_api_voice_transcribe_endpoint` (2 tests) | **100% PASS** |
+| **REQ-18** | Tích hợp Giọng nói ZeroTTS (WAV & Chunked Stream) & Chuẩn hóa Ngữ âm | `app/tts` | [app/tts/service.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/tts/service.py): `ZeroTTS`, `spoken_text`, `truncate_for_speech` | `test_tts.py` (11 tests), `test_multiturn_flow.py::test_spoken_text_phone_and_code` | **100% PASS** |
+| **REQ-19** | Nhận diện giọng nói tiếng Việt STT qua Micro & Production Guard | `app/tts` | [app/tts/stt.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/tts/stt.py): `SpeechTranscriber.transcribe`, `settings.is_production` check | `test_stt.py` (3 tests), `test_multiturn_flow.py::test_stt_production_no_simulated` | **100% PASS** |
 | **REQ-20** | Khởi động ấm hệ thống triệt tiêu Cold-Start (Warmup) | `app/service` | [app/service.py:311](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/service.py#L311): `ChatService.warmup`, [app/api/main.py:29](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/api/main.py#L29) | `test_api.py::test_chat_endpoint_lifecycle` | **100% PASS** |
 | **REQ-21** | Giao diện Web SPA tích hợp Vector SVG & FontAwesome | `frontend` | [frontend/src/App.jsx](file:///c:/Users/admin/Downloads/vnpost_deepagent/frontend/src/App.jsx): `PostalActionCard`, `FontAwesomeIcon`, Lucide Icons | `npm run build` compiled 1595 modules (0 errors) | **100% PASS** |
 | **REQ-22** | Chuẩn hóa Công cụ Bưu chính qua Máy chủ FastMCP Server | `app/mcp` | [app/mcp/server.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/mcp/server.py): `FastMCP`, [app/mcp/tools.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/mcp/tools.py) | `test_modular_agents.py::test_fastmcp_server_tools_and_resources` | **100% PASS** |
 | **REQ-23** | Giao thức Tác tử A2A Protocol & Thẻ Định danh Agent Card | `app/core` | [agent_card.json](file:///c:/Users/admin/Downloads/vnpost_deepagent/agent_card.json), [app/core/a2a_client.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/core/a2a_client.py) | `test_modular_agents.py::test_agent_card_json_valid`, `test_modular_agents.py::test_healthz_and_agent_card_routes` | **100% PASS** |
 | **REQ-24** | Kiến trúc Modular Subagents & Benchmark Evaluation Runner | `app/agents` | [app/agents/subagents/](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/subagents/), [app/agents/eval_runner.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/eval_runner.py) | `test_modular_agents.py::test_subagents_registry_complete`, `test_modular_agents.py::test_subagent_evaluation_benchmarks` | **100% PASS** |
-| **REQ-25** | Lưu trữ Bền vững PostgreSQL & Advisory Locks phân tán | `app/core` | [app/core/postgres.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/core/postgres.py): `persist_draft_booking_to_postgres`, `get_postgres_checkpointer`, `PostgresChatStore` | `test_postgres.py` (7 tests passed 100%) | **100% PASS** |
+| **REQ-25** | Lưu trữ Bền vững PostgreSQL & Advisory Locks phân tán | `app/core` | [app/core/postgres.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/core/postgres.py): `persist_draft_booking_to_postgres`, `get_postgres_checkpointer`, `PostgresChatStore` | `test_postgres.py` (9 tests passed 100%) | **100% PASS** |
 | **REQ-26** | Chốt chặn Bảo mật Đa phiên Phone Identity Matching | `app/agents` | [app/agents/postal_actions.py](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/agents/postal_actions.py): Phone verification on cancellation | `test_action_agents.py::test_booking_confirm_and_cancel_flow` | **100% PASS** |
 | **REQ-27** | Lọc Ngữ cảnh Thẻ Vận đơn & Blacklist Mã Giả lập Minh họa | `frontend` | [frontend/src/App.jsx](file:///c:/Users/admin/Downloads/vnpost_deepagent/frontend/src/App.jsx): `isDummyTrackingCode`, `isExplanationOrTutorial` | `npm run build` compiled 1595 modules (0 errors) | **100% PASS** |
+| **REQ-28** | Phòng chống Vòng lặp Giọng nói & Tự động Thực thi (Voice Readback Flow) | `app/service`, `app/router` | [app/service.py:108-160](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/service.py#L108-L160): `_open_flow`, `_SLOT_PROMPT`, `dispatch_action` | `test_multiturn_flow.py::test_voice_readback_slot_prompt_matching`, `test_multiturn_flow.py::test_voice_readback_full_turn_calls_track_item` | **100% PASS** |
+| **REQ-29** | Bộ đệm Token Kép An toàn & Leo thang Không Rò rỉ Marker (`SafeStreamBuffer`) | `app/service` | [app/service.py:27-56](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/service.py#L27-L56): `SafeStreamBuffer`, `[[NEED_AGENT]]` isolation | `test_multiturn_flow.py::test_need_agent_not_leaked` | **100% PASS** |
+| **REQ-30** | Bền vững Schema Định danh Phiên & Phòng vệ Lỗi HTTP 422 | `app/api`, `frontend` | [app/api/schemas.py:92-108](file:///c:/Users/admin/Downloads/vnpost_deepagent/app/api/schemas.py#L92-L108): `clean_session_id`, [frontend/src/api.js](file:///c:/Users/admin/Downloads/vnpost_deepagent/frontend/src/api.js) | `test_multiturn_flow.py::test_rest_confirm_saves_turn_visible_to_next_chat` | **100% PASS** |
 
 ---
 
@@ -1318,7 +1367,7 @@ Hệ thống Mipo VNPost Deep Agent đã hoàn tất chuyển đổi từ kiến
 
 1. **Về `agent.template`:** Đây là một mẫu tham khảo có giá trị cao về mặt chuẩn hóa giao thức tương lai (MCP, A2A, OpenTelemetry). Hiện tại hệ thống Mipo đã chắt lọc và hiện thực hóa trọn vẹn các tinh hoa này (FastMCP Server, A2A Protobuf Client, OpenTelemetry Tracing) trực tiếp vào codebase `app/`.
 2. **Về Khung tác tử Mipo:** Mipo đang vận hành một nền tảng đa tác tử phân cấp mạnh mẽ, module hóa chuyên sâu (`deepagents==0.7.24` + `langgraph` + `llamaindex` + Modular Subagents + FastMCP + A2A + PostgreSQL Persistence + ZeroTTS Streaming).
-3. **Về Năng lực Doanh nghiệp:** Với việc tích hợp hoàn tất **PostgreSQL Checkpointer**, **Phone Identity Matching**, **FastMCP Tool Server**, **A2A Protocol**, **100% Lưu trữ Doanh nghiệp PostgreSQL (loại bỏ hoàn toàn SQLite trong `data/`)**, và **Bộ Kiểm thử Tự động 229/229 Tests Passed (100%)**, VNPost Mipo đã chính thức trở thành **Hạ tầng Tác tử Bưu chính Trung tâm (National Postal AI Hub)** chuẩn công nghiệp, sẵn sàng triển khai quy mô lớn phục vụ hàng triệu khách hàng toàn quốc.
+3. **Về Năng lực Doanh nghiệp:** Với việc tích hợp hoàn tất **PostgreSQL Checkpointer**, **Phone Identity Matching**, **FastMCP Tool Server**, **A2A Protocol**, **100% Lưu trữ Doanh nghiệp PostgreSQL (loại bỏ hoàn toàn SQLite trong `data/`)**, **Chốt chặn HITL Pure Confirmation Gate & Chống lộ draft cũ (`not_latest_draft`)**, **Phòng chống Vòng lặp Giọng nói Hai chiều (Voice Readback Prevention)**, **Bộ đệm Token Kép An toàn (`SafeStreamBuffer` chống rò rỉ cờ `[[NEED_AGENT]]`)**, **Chốt chặn STT Production Guard**, **Chuẩn hóa Ngữ âm Phát âm Số điện thoại & Mã UPU**, và **Bộ Kiểm thử Tự động 245/245 Tests Passed (100% Pass Rate trên 28 files)**, VNPost Mipo đã chính thức trở thành **Hạ tầng Tác tử Bưu chính Trung tâm (National Postal AI Hub)** chuẩn công nghiệp, sẵn sàng triển khai quy mô lớn phục vụ hàng triệu khách hàng toàn quốc.
 
 ---
-*Báo cáo được hoàn thành bởi Senior Software Architect & AI Engineer. Đã triển khai hoàn tất tích hợp PostgreSQL Checkpointer, Modular Subagents, FastMCP Server, A2A Protocol, 100% PostgreSQL Storage và kiểm chứng 100% trên toàn bộ codebase `vnpost_deepagent` (229/229 tests pass).*
+*Báo cáo được hoàn thành bởi Senior Software Architect & AI Engineer. Đã triển khai hoàn tất tích hợp PostgreSQL Checkpointer, Modular Subagents, FastMCP Server, A2A Protocol, 100% PostgreSQL Storage, HITL Pure Confirmation Gate, Voice Multi-Turn Flow và kiểm chứng 100% trên toàn bộ codebase `vnpost_deepagent` (245/245 tests pass).*

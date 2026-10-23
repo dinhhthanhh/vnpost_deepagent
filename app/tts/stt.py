@@ -123,6 +123,9 @@ class SpeechTranscriber:
                 logger.warning("Gemini STT multimodal failed: %s", exc)
 
         # 3. Fallback mô phỏng cho Demo mode hoặc môi trường offline
+        if getattr(self.settings, "is_production", False):
+            raise STTError("Hệ thống STT trực tuyến hiện không khả dụng. Vui lòng thử lại hoặc nhập câu hỏi bằng văn bản.")
+
         # Nhận diện âm thanh mẫu để đảm bảo test suite và frontend luôn chạy mượt mà
         simulated_text = "Tôi muốn kiểm tra bưu phẩm VNPost"
         if len(audio_bytes) < 200:

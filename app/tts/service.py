@@ -32,6 +32,8 @@ POSTAL_PHONETICS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bHITL\b"), "Xác nhận của con người"),
     (re.compile(r"\bTP\.?\s*HCM\b", re.IGNORECASE), "Thành phố Hồ Chí Minh"),
     (re.compile(r"\bTP\.?\s*HN\b", re.IGNORECASE), "Thành phố Hà Nội"),
+    (re.compile(r"\bBK\b"), "Bê Ka"),
+    (re.compile(r"\bKN\b"), "Kê Nờ"),
 ]
 
 
@@ -79,7 +81,59 @@ def spoken_text(text: str) -> str:
     # Số thập phân bắt đầu bằng 0 (ví dụ: 0.125 hoặc 0.5)
     text = re.sub(r"\b0[.,](\d+)\b", r"0 phẩy \1", text)
 
-    # 6. Chuẩn hóa số tiền Việt Nam (125.000đ -> 125000 đồng) và đơn vị số nguyên
+    # 6. Chuẩn hóa số điện thoại, hotline, mã nháp và mã vận đơn (đọc từng chữ số) trước khi xóa dấu chấm ngăn nghìn
+    def _digits(m):
+        return " ".join(m.group(0).replace(".", "").replace(" ", ""))
+
+    text = re.sub(r"(?<!\d)0\d{2,3}[.\s]?\d{3}[.\s]?\d{3,4}(?!\d)", _digits, text)
+
+    # Chuẩn hóa mã đơn nháp/khiếu nại: BK-DRAFT-20261023-EDD0A3A1 -> bê, ka, hai, không, hai, sáu, một, không, hai, ba
+    _DIGIT_NAMES = {"0": "không", "1": "một", "2": "hai", "3": "ba", "4": "bốn",
+                    "5": "năm", "6": "sáu", "7": "bảy", "8": "tám", "9": "chín"}
+    _LETTER_NAMES = {
+        "A": "a", "B": "bê", "C": "xê", "D": "đê", "E": "ê", "F": "ép", "G": "giê",
+        "H": "hắt", "I": "i", "J": "giê", "K": "ca", "L": "en", "M": "em",
+        "N": "en", "O": "ô", "P": "pê", "Q": "quy", "R": "e-rờ", "S": "ét",
+        "T": "tê", "U": "u", "V": "vê", "W": "vê-kép", "X": "ích", "Y": "i-grét", "Z": "zét",
+    }
+
+    def _spell_char(c: str) -> str:
+        c_up = c.upper()
+        if c_up in _DIGIT_NAMES:
+            return _DIGIT_NAMES[c_up]
+        if c_up in _LETTER_NAMES:
+            return _LETTER_NAMES[c_up]
+        return c
+
+    def _clean_draft_code(m: re.Match) -> str:
+        pref = m.group(1).upper()
+        # Đọc từng chữ cái tiền tố rõ ràng (B-K, K-N)
+        pref_spoken = ", ".join(_spell_char(c) for c in pref)
+        # Đọc từng chữ số của ngày (8 số) bằng tên số tiếng Việt, cách nhau dấu phẩy
+        digits_spoken = ", ".join(_DIGIT_NAMES[d] for d in m.group(2))
+        return f"{pref_spoken}, {digits_spoken}"
+
+    text = re.sub(
+        r"\b(BK|KN)(?:-DRAFT)?-(\d{8})(?:-[A-Za-z0-9]+)?\b",
+        _clean_draft_code,
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # Mã vận đơn UPU: EB123456789VN -> E B, 1, 2, 3, 4, 5, 6, 7, 8, 9, V N
+    def _spell_tracking_code(m: re.Match) -> str:
+        prefix = ", ".join(_spell_char(c) for c in m.group(1))
+        digits = ", ".join(_DIGIT_NAMES[d] for d in m.group(2))
+        suffix = ", ".join(_spell_char(c) for c in m.group(3))
+        return f"{prefix}, {digits}, {suffix}"
+
+    text = re.sub(
+        r"\b([A-Za-z]{2})(\d{9})([A-Za-z]{2})\b",
+        _spell_tracking_code,
+        text,
+    )
+
+    # 7. Chuẩn hóa số tiền Việt Nam (125.000đ -> 125000 đồng) và đơn vị số nguyên
     text = re.sub(r"(?<=\d)\.(?=\d{3}(?!\d))", "", text)
     text = re.sub(
         r"\b(\d+)\s*(?:đ/kg|đồng/kg)\b", r"\1 đồng một ki lô gam", text, flags=re.IGNORECASE
@@ -91,19 +145,22 @@ def spoken_text(text: str) -> str:
     text = re.sub(r"\b(\d+)\s*m\b", r"\1 mét", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(\d+)\s*km\b", r"\1 ki lô mét", text, flags=re.IGNORECASE)
 
-    # 7. Tách mã vận đơn UPU (ví dụ EB123456789VN -> EB 123 456 789 VN) để TTS đọc rõ từng cụm số
-    text = re.sub(r"\b([A-Za-z]{2})(\d{3})(\d{3})(\d{3})([A-Za-z]{2})\b", r"\1 \2 \3 \4 \5", text)
-
     # 8. Áp dụng từ điển phiên âm ngữ âm bưu chính
     for pattern, phonetic in POSTAL_PHONETICS:
         text = pattern.sub(phonetic, text)
 
-    # 9. Chuẩn hóa số điện thoại / hotline có dấu chấm hoặc khoảng cách
-    text = re.sub(r"(\d{4})\.(\d{2,3})\.(\d{2,3})", r"\1 \2 \3", text)
+    # 9. Hotline dạng 1900/1800
     text = re.sub(r"\b(1900|1800)\s+(\d{2,4})\s+(\d{2,4})\b", r"\1 \2 \3", text)
 
     text = text.replace("|", ", ").replace("`", "").replace("**", "").replace("*", "")
     return re.sub(r"\s+", " ", text).strip()
+
+
+def truncate_for_speech(spoken: str, max_chars: int = 450) -> str:
+    if len(spoken) <= max_chars:
+        return spoken
+    cut = spoken[:max_chars].rsplit(". ", 1)[0].rstrip(".")
+    return cut + ". Anh chị xem chi tiết trên màn hình nhé."
 
 
 def validate_wav(data: bytes):

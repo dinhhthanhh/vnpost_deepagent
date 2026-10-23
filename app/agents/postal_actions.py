@@ -11,10 +11,71 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import time
+
 # Cơ sở dữ liệu bộ nhớ lưu trữ các bản ghi đơn hàng và khiếu nại (có thể đồng bộ DB)
 _DRAFT_BOOKINGS: dict[str, dict[str, Any]] = {}
 _DRAFT_COMPLAINTS: dict[str, dict[str, Any]] = {}
 DEFAULT_DRAFT_TTL_SECONDS = 1800  # 30 phút hiệu lực cho bản nháp
+
+_VERIFY_FAILS: dict[tuple[str, str], dict[str, Any]] = {}
+_MAX_VERIFY_FAILS = 5
+_VERIFY_LOCK_SECONDS = 15 * 60
+
+
+def _verify_locked(tenant: str, target_id: str) -> int:
+    rec = _VERIFY_FAILS.get((tenant, target_id))
+    now = time.monotonic()
+    return int(rec["until"] - now) if rec and float(rec.get("until", 0)) > now else 0
+
+
+def _verify_register_fail(tenant: str, target_id: str) -> None:
+    now = time.monotonic()
+    rec = _VERIFY_FAILS.setdefault((tenant, target_id), {"n": 0, "until": 0.0})
+    if rec["until"] and float(rec["until"]) <= now:
+        rec["n"], rec["until"] = 0, 0.0
+    rec["n"] = int(rec["n"]) + 1
+    if int(rec["n"]) >= _MAX_VERIFY_FAILS:
+        rec["until"] = now + _VERIFY_LOCK_SECONDS
+
+
+def _verify_reset(tenant: str, target_id: str) -> None:
+    _VERIFY_FAILS.pop((tenant, target_id), None)
+
+
+def _normalize_vn_phone(raw: str) -> str | None:
+    d = re.sub(r"[\s.\-()]", "", raw or "")
+    if d.startswith("+84"):
+        d = "0" + d[3:]
+    elif d.startswith("84") and len(d) == 11:
+        d = "0" + d[2:]
+    return d if re.fullmatch(r"0\d{9}", d) else None
+
+
+def _validate_booking_input(
+    sender_phone: str | None,
+    receiver_phone: str | None,
+    weight_grams: float | None,
+    length_cm: float | None,
+    width_cm: float | None,
+    height_cm: float | None,
+    max_kg: float | None = None,
+) -> list[str]:
+    errs: list[str] = []
+    if _normalize_vn_phone(sender_phone or "") is None:
+        errs.append("số điện thoại người gửi phải gồm 10 chữ số")
+    if _normalize_vn_phone(receiver_phone or "") is None:
+        errs.append("số điện thoại người nhận phải gồm 10 chữ số")
+    if weight_grams is None or weight_grams <= 0:
+        errs.append("khối lượng phải lớn hơn 0")
+    dims = [length_cm or 0.0, width_cm or 0.0, height_cm or 0.0]
+    if any(x < 0 for x in dims):
+        errs.append("kích thước không được âm")
+    elif any(x > 0 for x in dims) and not all(x > 0 for x in dims):
+        errs.append("cần đủ cả ba chiều dài, rộng, cao (đều lớn hơn 0)")
+    if max_kg and weight_grams and (weight_grams / 1000 > max_kg):
+        errs.append(f"khối lượng vượt giới hạn {max_kg} kg của dịch vụ")
+    return errs
 
 
 def _sync_booking_draft(draft_record: dict[str, Any]) -> None:
@@ -60,6 +121,118 @@ def _get_current_session_context() -> tuple[str, str | None, str | None]:
         )
     except Exception:
         return ("default", None, None)
+
+
+_CONFIRM_RE = re.compile(
+    r"(?<!\w)(xác nhận|xac nhan|đồng ý|dong y|đúng rồi|dung roi|chốt|chot|tạo đi|tao di|"
+    r"nộp đi|nop di|gửi đi|gui di|tiến hành|tien hanh|duyệt|duyet|ok|oke|okay|vâng|dạ|"
+    r"được rồi|duoc roi|confirm|yes)(?!\w)",
+    re.IGNORECASE,
+)
+_QUESTION_RE = re.compile(
+    r"\?|(?<!\w)(chưa|chua|hông|hong|ko|hả|ha|không|khong|bao nhiêu|bao nhieu|khi nào|khi nao|thế nào|the nao|sao|vậy hả)(?!\w)",
+    re.IGNORECASE,
+)
+_CHANGE_RE = re.compile(
+    r"(?<!\w)(hủy|huy|thôi|thoi|khoan|không|khong|sửa|sua|đổi|doi|thay|cập nhật|cap nhat)(?!\w)",
+    re.IGNORECASE,
+)
+_FILLER_RE = re.compile(
+    r"(?<!\w)(tôi|em|anh|chị|nhé|nha|ạ|đi|luôn|rồi|vậy|thì|mipo|tạo|đơn|hàng|phiếu|khiếu nại|nộp|đặt|gửi)(?!\w)",
+    re.I,
+)
+_DRAFT_ID_RE = re.compile(r"\b(?:bk|kn)-draft-[\w-]+|\bdraft-[\w-]+", re.I)
+
+
+def _is_pure_confirmation(msg: str) -> bool:
+    rest = _DRAFT_ID_RE.sub(" ", msg)
+    rest = _CONFIRM_RE.sub(" ", rest)
+    rest = _FILLER_RE.sub(" ", rest)
+    rest = re.sub(r"[\s,.!?…]+", " ", rest).strip()
+    return len(rest.split()) <= 2 and not re.search(r"\d{4,}", rest)
+
+
+def _hitl_gate(clean_id: str, record: dict) -> str | None:
+    """Trả JSON lỗi nếu KHÔNG được phép xác nhận; None nếu được phép.
+
+    - Không có RunContext (REST /api/actions/confirm, người dùng bấm nút) -> cho phép.
+    - Có RunContext (agent gọi tool) -> bắt buộc tin nhắn gần nhất là xác nhận rõ ràng.
+    """
+    try:
+        from app.core.context import current_run
+
+        run = current_run.get()
+    except LookupError:
+        return None
+    except Exception:
+        return json.dumps(
+            {
+                "status": "error",
+                "message": "Không thể xác thực ngữ cảnh thực thi để xác nhận bản nháp.",
+            },
+            ensure_ascii=False,
+        )
+
+    if clean_id in getattr(run, "created_draft_ids", []):
+        return json.dumps(
+            {
+                "status": "hitl_required",
+                "draft_id": clean_id,
+                "message": (
+                    "⚠️ Chốt chặn bảo vệ HITL: Bản nháp vừa tạo trong lượt này. "
+                    "Hãy trình bày bảng tóm tắt và chờ khách xác nhận ở lượt sau. Tuyệt đối không tự ý gọi xác nhận!"
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    rec_sid, run_sid = record.get("session_id"), getattr(run, "session_id", None)
+    if rec_sid and run_sid and rec_sid != run_sid:
+        return json.dumps(
+            {
+                "status": "error",
+                "message": f"Không có quyền xác nhận bản nháp của phiên khác (phiên hiện tại: {run_sid}).",
+            },
+            ensure_ascii=False,
+        )
+
+    msg = (getattr(run, "user_message", "") or "").strip()
+    if _CHANGE_RE.search(msg):
+        return json.dumps(
+            {
+                "status": "hitl_rejected_or_modifying",
+                "draft_id": clean_id,
+                "message": (
+                    f"Khách hàng chưa xác nhận hoặc đang yêu cầu sửa/hủy đơn nháp (nội dung: '{msg}'). "
+                    "Hãy xử lý yêu cầu sửa/hủy của khách."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    if _QUESTION_RE.search(msg):
+        return json.dumps(
+            {
+                "status": "hitl_required",
+                "draft_id": clean_id,
+                "message": f"Tin nhắn gần nhất là câu hỏi, chưa phải xác nhận (nội dung: '{msg}').",
+            },
+            ensure_ascii=False,
+        )
+
+    if not _CONFIRM_RE.search(msg) or len(msg.split()) > 12 or not _is_pure_confirmation(msg):
+        return json.dumps(
+            {
+                "status": "hitl_required",
+                "draft_id": clean_id,
+                "message": (
+                    f"Chưa có xác nhận rõ ràng từ khách ở tin nhắn gần nhất (nội dung: '{msg}'). "
+                    "Hãy hỏi lại hoặc xử lý yêu cầu sửa/hủy của khách."
+                ),
+            },
+            ensure_ascii=False,
+        )
+    return None
 
 
 def _is_tenant_match(t1: str | None, t2: str | None) -> bool:
@@ -317,8 +490,30 @@ def create_draft_booking(
             ensure_ascii=False,
         )
 
+    errs = _validate_booking_input(
+        clean_sender_phone,
+        clean_receiver_phone,
+        weight_grams,
+        length_cm,
+        width_cm,
+        height_cm,
+        max_kg=None,
+    )
+    if errs:
+        return json.dumps(
+            {
+                "status": "invalid_input",
+                "errors": errs,
+                "message": "Thông tin chưa hợp lệ: " + "; ".join(errs) + ". Vui lòng hỏi lại khách hàng.",
+            },
+            ensure_ascii=False,
+        )
+
+    clean_sender_phone = _normalize_vn_phone(clean_sender_phone) or clean_sender_phone
+    clean_receiver_phone = _normalize_vn_phone(clean_receiver_phone) or clean_receiver_phone
+
     # 1. Tính toán khối lượng quy đổi thể tích theo chuẩn VNPost (hệ số 6000)
-    actual_kg = round(max(10, weight_grams) / 1000.0, 2)
+    actual_kg = round(weight_grams / 1000.0, 2)
     vol_kg = 0.0
     if length_cm > 0 and width_cm > 0 and height_cm > 0:
         vol_kg = round((length_cm * width_cm * height_cm) / 6000.0, 2)
@@ -403,6 +598,7 @@ def create_draft_booking(
         run = current_run.get()
         if hasattr(run, "created_draft_ids"):
             run.created_draft_ids.append(draft_id)
+        run.event("draft_created", kind="booking", draft_id=draft_id, detail=draft_record)
     except Exception:
         pass
 
@@ -466,6 +662,38 @@ def confirm_booking(
             ensure_ascii=False,
         )
 
+    # 1. Chốt chặn thuộc đúng tenant / phiên làm việc
+    ctx_tenant, ctx_session_id, _ = _get_current_session_context()
+    rec_session = record.get("session_id")
+    if ctx_session_id and rec_session and rec_session != ctx_session_id:
+        return json.dumps(
+            {
+                "status": "error",
+                "message": f"Không có quyền xác nhận bản nháp đơn hàng của phiên khác (phiên hiện tại: {ctx_session_id}).",
+            },
+            ensure_ascii=False,
+        )
+
+    # 2. Chốt chặn Draft mới nhất trong phiên (chống xác nhận nhầm draft cũ)
+    if ctx_session_id:
+        waiting_drafts = get_session_drafts(
+            session_id=ctx_session_id, tenant=tenant or ctx_tenant, status="WAITING_CONFIRMATION"
+        )["bookings"]
+        if waiting_drafts:
+            latest_draft = max(waiting_drafts, key=lambda d: d.get("created_at", ""))
+            if clean_id != latest_draft.get("draft_id"):
+                return json.dumps(
+                    {
+                        "status": "not_latest_draft",
+                        "draft_id": clean_id,
+                        "message": (
+                            f"Bản nháp [{clean_id}] không phải bản nháp mới nhất của phiên "
+                            f"(bản nháp mới nhất là [{latest_draft.get('draft_id')}]). Vui lòng xác nhận bản nháp mới nhất."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+
     now = _get_vn_now()
 
     # Kiểm tra hết hạn hiệu lực (TTL)
@@ -517,69 +745,15 @@ def confirm_booking(
         )
 
     # Chốt chặn vòng đời hội thoại đa tầng (Multi-layer HITL Guard)
+    if (err := _hitl_gate(clean_id, record)):
+        return err
+
     try:
         from app.core.context import current_run
 
         run = current_run.get()
-        # 1. Chốt chặn Turn-level: Cấm xác nhận đơn nháp vừa tạo trong cùng một lượt gọi
-        if clean_id in getattr(run, "created_draft_ids", []):
-            return json.dumps(
-                {
-                    "status": "hitl_required",
-                    "draft_id": clean_id,
-                    "message": (
-                        f"⚠️ Chốt chặn bảo vệ HITL: Bản nháp đơn hàng [{clean_id}] vừa được tạo trong lượt hội thoại này. "
-                        "Bạn PHẢI dừng lượt, trình bày bảng tóm tắt chi tiết đơn hàng cho khách hàng và yêu cầu khách hàng "
-                        "bấm nút duyệt hoặc phản hồi 'Xác nhận' ở lượt tiếp theo. Tuyệt đối không được tự ý gọi confirm_booking!"
-                    ),
-                },
-                ensure_ascii=False,
-            )
-
-        # 2. Chốt chặn Ý định người dùng (Intent Guard): Nếu khách có ý định hủy hoặc chỉnh sửa
-        user_msg = (getattr(run, "user_message", None) or "").strip().lower()
-        if user_msg:
-            reject_kws = [
-                "hủy",
-                "huy",
-                "không tạo",
-                "khong tao",
-                "thôi",
-                "thoi",
-                "không gửi",
-                "khong gui",
-                "khoan",
-            ]
-            confirm_kws = [
-                "xác nhận",
-                "xac nhan",
-                "đồng ý",
-                "dong y",
-                "ok",
-                "oke",
-                "tạo đi",
-                "tao di",
-                "duyệt",
-                "duyet",
-                "gửi đi",
-                "gui di",
-                "chốt",
-                "chot",
-                "tiến hành",
-                "confirm",
-                "yes",
-            ]
-            if any(kw in user_msg for kw in reject_kws) and not any(
-                kw in user_msg for kw in confirm_kws
-            ):
-                return json.dumps(
-                    {
-                        "status": "hitl_rejected_or_modifying",
-                        "draft_id": clean_id,
-                        "message": f"Khách hàng chưa xác nhận (tin nhắn có ý định hủy hoặc chưa sẵn sàng: '{user_msg}'). Hãy hỗ trợ theo nguyện vọng của khách thay vì xác nhận đơn.",
-                    },
-                    ensure_ascii=False,
-                )
+        if hasattr(run, "actions_invoked"):
+            run.actions_invoked.append("confirm_booking")
     except Exception:
         pass
 
@@ -668,10 +842,10 @@ def create_draft_complaint(
     )
     limit_months = 12 if is_intl else 6
 
-    # 1. Kiểm tra thời hiệu khiếu nại theo /skills/quy-trinh-khieu-nai-boi-thuong/SKILL.md
+    # 1. Kiểm tra thời hiệu khiếu nại bằng code (6 tháng nội địa, 12 tháng quốc tế) nếu có ngày gửi
+    sent_dt = None
     if sent_date and sent_date.strip():
-        sent_dt = None
-        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y"):
             try:
                 sent_dt = datetime.strptime(sent_date.strip(), fmt).replace(tzinfo=now.tzinfo)
                 break
@@ -679,26 +853,37 @@ def create_draft_complaint(
                 pass
         if sent_dt:
             delta_days = (now - sent_dt).days
-            max_days = limit_months * 30.5  # Ước lượng chuẩn tháng
+            max_days = 366 if is_intl else 183
             if delta_days > max_days:
-                scope_str = "quốc tế (12 tháng)" if is_intl else "trong nước (06 tháng)"
+                scope_str = "quốc tế (12 tháng)" if is_intl else "nội địa (06 tháng)"
                 return json.dumps(
                     {
                         "status": "rejected_expired",
                         "item_code": clean_code,
+                        "scope": "Quốc tế" if is_intl else "Nội địa",
+                        "sent_date": sent_date.strip(),
+                        "elapsed_days": delta_days,
+                        "limit_months": limit_months,
                         "message": (
                             f"Từ chối tiếp nhận khiếu nại cho bưu phẩm {clean_code}: "
-                            f"Ngày gửi ({sent_date.strip()}) đã vượt quá thời hiệu khiếu nại quy định của VNPost "
+                            f"Ngày gửi ({sent_date.strip()}, đã trôi qua {delta_days} ngày) vượt quá thời hiệu khiếu nại quy định của VNPost "
                             f"cho dịch vụ {scope_str} tính từ ngày gửi."
                         ),
                     },
                     ensure_ascii=False,
                 )
-            statute_of_limitations_text = f"Đã xác minh: Còn trong thời hiệu ({limit_months:02d} tháng kể từ ngày gửi {sent_date.strip()})"
-        else:
-            statute_of_limitations_text = f"Chưa thể xác thực định dạng ngày gửi ({sent_date.strip()}) - Thời hiệu quy định là {limit_months:02d} tháng"
+            if sent_dt:
+                statute_of_limitations_text = (
+                    f"Đã xác minh bằng code: Còn trong thời hiệu ({limit_months:02d} tháng; đã gửi {delta_days} ngày trước, ngày gửi {sent_date.strip()})"
+                )
+            else:
+                statute_of_limitations_text = (
+                    f"Chưa thể xác thực định dạng ngày gửi ({sent_date.strip()}) - Thời hiệu quy định là {limit_months:02d} tháng"
+                )
     else:
-        statute_of_limitations_text = f"Chưa xác minh ngày gửi (chưa có sent_date; thời hiệu quy định là {limit_months:02d} tháng kể từ ngày gửi)"
+        statute_of_limitations_text = (
+            f"Chưa xác minh ngày gửi (chưa cung cấp ngày gửi hàng; thời hiệu quy định là {limit_months:02d} tháng tính từ ngày gửi)"
+        )
 
     # 2. Phân loại loại sự cố và tính toán định mức bồi thường
     ctype_lower = clean_complaint_type.lower()
@@ -785,6 +970,7 @@ def create_draft_complaint(
         run = current_run.get()
         if hasattr(run, "created_draft_ids"):
             run.created_draft_ids.append(draft_ticket_id)
+        run.event("draft_created", kind="complaint", draft_id=draft_ticket_id, detail=claim_record)
     except Exception:
         pass
 
@@ -845,6 +1031,38 @@ def confirm_complaint(
             ensure_ascii=False,
         )
 
+    # 1. Chốt chặn thuộc đúng tenant / phiên làm việc
+    ctx_tenant, ctx_session_id, _ = _get_current_session_context()
+    rec_session = record.get("session_id")
+    if ctx_session_id and rec_session and rec_session != ctx_session_id:
+        return json.dumps(
+            {
+                "status": "error",
+                "message": f"Không có quyền xác nhận phiếu khiếu nại của phiên khác (phiên hiện tại: {ctx_session_id}).",
+            },
+            ensure_ascii=False,
+        )
+
+    # 2. Chốt chặn Draft mới nhất trong phiên (chống xác nhận nhầm draft cũ)
+    if ctx_session_id:
+        waiting_complaints = get_session_drafts(
+            session_id=ctx_session_id, tenant=tenant or ctx_tenant, status="WAITING_CONFIRMATION"
+        )["complaints"]
+        if waiting_complaints:
+            latest_complaint = max(waiting_complaints, key=lambda d: d.get("created_at", ""))
+            if clean_id != latest_complaint.get("draft_ticket_id"):
+                return json.dumps(
+                    {
+                        "status": "not_latest_draft",
+                        "draft_ticket_id": clean_id,
+                        "message": (
+                            f"Phiếu khiếu nại [{clean_id}] không phải bản nháp mới nhất của phiên "
+                            f"(bản nháp mới nhất là [{latest_complaint.get('draft_ticket_id')}]). Vui lòng xác nhận bản nháp mới nhất."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+
     now = _get_vn_now()
 
     # Kiểm tra hết hạn hiệu lực (TTL)
@@ -896,64 +1114,15 @@ def confirm_complaint(
         )
 
     # Chốt chặn vòng đời hội thoại đa tầng (Multi-layer HITL Guard)
+    if (err := _hitl_gate(clean_id, record)):
+        return err
+
     try:
         from app.core.context import current_run
 
         run = current_run.get()
-        # 1. Chốt chặn Turn-level: Cấm xác nhận phiếu khiếu nại vừa tạo trong cùng một lượt gọi
-        if clean_id in getattr(run, "created_draft_ids", []):
-            return json.dumps(
-                {
-                    "status": "hitl_required",
-                    "draft_ticket_id": clean_id,
-                    "message": (
-                        f"⚠️ Chốt chặn bảo vệ HITL: Phiếu khiếu nại nháp [{clean_id}] vừa được tạo trong lượt hội thoại này. "
-                        "Bạn PHẢI dừng lượt, trình bày bảng tóm tắt hồ sơ khiếu nại cho khách hàng và yêu cầu khách hàng "
-                        "bấm nút duyệt hoặc phản hồi 'Xác nhận' ở lượt tiếp theo. Tuyệt đối không được tự ý gọi confirm_complaint!"
-                    ),
-                },
-                ensure_ascii=False,
-            )
-
-        # 2. Chốt chặn Ý định người dùng (Intent Guard)
-        user_msg = (getattr(run, "user_message", None) or "").strip().lower()
-        if user_msg:
-            reject_kws = [
-                "hủy",
-                "huy",
-                "không khiếu nại",
-                "khong khieu nai",
-                "thôi",
-                "thoi",
-                "bỏ qua",
-                "khoan",
-            ]
-            confirm_kws = [
-                "xác nhận",
-                "xac nhan",
-                "đồng ý",
-                "dong y",
-                "ok",
-                "oke",
-                "nộp đi",
-                "gửi đi",
-                "chốt",
-                "chot",
-                "tiến hành",
-                "confirm",
-                "yes",
-            ]
-            if any(kw in user_msg for kw in reject_kws) and not any(
-                kw in user_msg for kw in confirm_kws
-            ):
-                return json.dumps(
-                    {
-                        "status": "hitl_rejected_or_modifying",
-                        "draft_ticket_id": clean_id,
-                        "message": f"Khách hàng chưa xác nhận (tin nhắn có ý định hủy hoặc chưa sẵn sàng: '{user_msg}'). Hãy hỗ trợ theo nguyện vọng của khách thay vì xác nhận gửi khiếu nại.",
-                    },
-                    ensure_ascii=False,
-                )
+        if hasattr(run, "actions_invoked"):
+            run.actions_invoked.append("confirm_complaint")
     except Exception:
         pass
 
@@ -1064,7 +1233,16 @@ def update_draft_booking(
     if sender_name is not None and sender_name.strip():
         record["sender"]["name"] = sender_name.strip()
     if sender_phone is not None and sender_phone.strip():
-        record["sender"]["phone"] = sender_phone.strip()
+        norm_s = _normalize_vn_phone(sender_phone)
+        if not norm_s:
+            return json.dumps(
+                {
+                    "status": "invalid_input",
+                    "message": "Số điện thoại người gửi phải gồm 10 chữ số.",
+                },
+                ensure_ascii=False,
+            )
+        record["sender"]["phone"] = norm_s
     if sender_address is not None and sender_address.strip():
         record["sender"]["address"] = sender_address.strip()
         s_prov, s_reg = _detect_province_and_region(sender_address.strip())
@@ -1075,7 +1253,16 @@ def update_draft_booking(
     if receiver_name is not None and receiver_name.strip():
         record["receiver"]["name"] = receiver_name.strip()
     if receiver_phone is not None and receiver_phone.strip():
-        record["receiver"]["phone"] = receiver_phone.strip()
+        norm_r = _normalize_vn_phone(receiver_phone)
+        if not norm_r:
+            return json.dumps(
+                {
+                    "status": "invalid_input",
+                    "message": "Số điện thoại người nhận phải gồm 10 chữ số.",
+                },
+                ensure_ascii=False,
+            )
+        record["receiver"]["phone"] = norm_r
     if receiver_address is not None and receiver_address.strip():
         record["receiver"]["address"] = receiver_address.strip()
         r_prov, r_reg = _detect_province_and_region(receiver_address.strip())
@@ -1085,9 +1272,21 @@ def update_draft_booking(
     # Cập nhật thông tin bưu kiện nếu có
     parcel = record["parcel"]
     recalc_needed = False
-    if weight_grams is not None and weight_grams > 0:
-        parcel["weight_actual_kg"] = round(max(10, weight_grams) / 1000.0, 2)
+    if weight_grams is not None:
+        if weight_grams <= 0:
+            return json.dumps(
+                {"status": "invalid_input", "message": "Khối lượng phải lớn hơn 0."},
+                ensure_ascii=False,
+            )
+        parcel["weight_actual_kg"] = round(weight_grams / 1000.0, 2)
         recalc_needed = True
+
+    dims_check = [length_cm, width_cm, height_cm]
+    if any(x is not None and x < 0 for x in dims_check):
+        return json.dumps(
+            {"status": "invalid_input", "message": "Kích thước không được âm."},
+            ensure_ascii=False,
+        )
 
     dims_parts = [
         float(x) for x in re.findall(r"\d+(?:\.\d+)?", parcel.get("dimensions_cm", "")) or [0, 0, 0]
@@ -1377,42 +1576,65 @@ def cancel_draft_booking(
         needs_verification = True
 
     if needs_verification:
+        lock_key = clean_id
+        left = _verify_locked(tenant or "default", lock_key)
+        if left > 0:
+            return json.dumps(
+                {
+                    "status": "verification_locked",
+                    "draft_id": clean_id,
+                    "message": f"Đã nhập sai quá nhiều lần. Vui lòng thử lại sau {left // 60 + 1} phút hoặc liên hệ tổng đài/bưu cục để được hỗ trợ.",
+                },
+                ensure_ascii=False,
+            )
+
         sender_phone = (
             record.get("sender", {}).get("phone")
             or record.get("sender_phone")
             or (record.get("detail", {}).get("sender", {}).get("phone"))
             or ""
         )
-        if sender_phone:
-            clean_sender = re.sub(r"\D", "", sender_phone)
-            clean_verif = re.sub(r"\D", "", verification_phone or "")
-            if not clean_verif:
-                masked = f"...{clean_sender[-4:]}" if len(clean_sender) >= 4 else "***"
-                return json.dumps(
-                    {
-                        "status": "requires_verification",
-                        "draft_id": clean_id,
-                        "masked_phone": masked,
-                        "message": (
-                            f"🔒 BẢO VỆ CHÍNH CHỦ: Yêu cầu hủy đơn nháp [{clean_id}] thực hiện ngoài phiên tạo ban đầu. "
-                            f"Để đảm bảo an toàn, vui lòng cung cấp 4 số cuối của Số điện thoại người gửi "
-                            f"(SĐT đuôi {masked}) để xác nhận hủy đơn."
-                        ),
-                    },
-                    ensure_ascii=False,
-                )
-            is_matched = clean_verif == clean_sender or (
-                len(clean_verif) >= 4 and clean_sender.endswith(clean_verif)
+        clean_sender = re.sub(r"\D", "", sender_phone or "")
+        if not clean_sender:
+            return json.dumps(
+                {
+                    "status": "verification_unavailable",
+                    "draft_id": clean_id,
+                    "message": "Đơn này chưa có SĐT người gửi để xác minh. Vui lòng liên hệ bưu cục hoặc tổng đài để hủy đơn.",
+                },
+                ensure_ascii=False,
             )
-            if not is_matched:
-                return json.dumps(
-                    {
-                        "status": "verification_failed",
-                        "draft_id": clean_id,
-                        "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người gửi của đơn này. Yêu cầu hủy bị từ chối.",
-                    },
-                    ensure_ascii=False,
-                )
+
+        clean_verif = re.sub(r"\D", "", verification_phone or "")
+        if not clean_verif:
+            masked = f"...{clean_sender[-4:]}" if len(clean_sender) >= 4 else "***"
+            return json.dumps(
+                {
+                    "status": "requires_verification",
+                    "draft_id": clean_id,
+                    "masked_phone": masked,
+                    "message": (
+                        f"🔒 BẢO VỆ CHÍNH CHỦ: Yêu cầu hủy đơn nháp [{clean_id}] thực hiện ngoài phiên tạo ban đầu. "
+                        f"Để đảm bảo an toàn, vui lòng cung cấp 4 số cuối của Số điện thoại người gửi "
+                        f"(SĐT đuôi {masked}) để xác nhận hủy đơn."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        is_matched = clean_verif == clean_sender or (
+            len(clean_verif) >= 4 and clean_sender.endswith(clean_verif)
+        )
+        if not is_matched:
+            _verify_register_fail(tenant or "default", lock_key)
+            return json.dumps(
+                {
+                    "status": "verification_failed",
+                    "draft_id": clean_id,
+                    "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người gửi của đơn này. Yêu cầu hủy bị từ chối.",
+                },
+                ensure_ascii=False,
+            )
+        _verify_reset(tenant or "default", lock_key)
 
     record["status"] = "CANCELLED"
     _DRAFT_BOOKINGS[clean_id] = record
@@ -1515,44 +1737,69 @@ def cancel_booking(
             needs_verification = True
 
         if needs_verification:
+            lock_key = (item_code or draft_id or clean_id or "unknown")
+            left = _verify_locked(tenant or "default", lock_key)
+            if left > 0:
+                return json.dumps(
+                    {
+                        "status": "verification_locked",
+                        "draft_id": draft_id,
+                        "item_code": item_code,
+                        "message": f"Đã nhập sai quá nhiều lần. Vui lòng thử lại sau {left // 60 + 1} phút hoặc liên hệ tổng đài/bưu cục để được hỗ trợ.",
+                    },
+                    ensure_ascii=False,
+                )
+
             sender_phone = (
                 target_record.get("sender", {}).get("phone")
                 or target_record.get("sender_phone")
                 or (target_record.get("detail", {}).get("sender", {}).get("phone"))
                 or ""
             )
-            if sender_phone:
-                clean_sender = re.sub(r"\D", "", sender_phone)
-                clean_verif = re.sub(r"\D", "", verification_phone or "")
-                if not clean_verif:
-                    masked = f"...{clean_sender[-4:]}" if len(clean_sender) >= 4 else "***"
-                    return json.dumps(
-                        {
-                            "status": "requires_verification",
-                            "draft_id": draft_id,
-                            "item_code": item_code,
-                            "masked_phone": masked,
-                            "message": (
-                                f"🔒 BẢO VỆ CHÍNH CHỦ: Yêu cầu hủy đơn hàng [{item_code or draft_id}] thực hiện ngoài phiên tạo ban đầu. "
-                                f"Để ngăn chặn người lạ hủy nhầm hoặc phá hoại đơn hàng, vui lòng cung cấp 4 số cuối của "
-                                f"Số điện thoại người gửi (SĐT đuôi {masked}) để xác nhận hủy đơn."
-                            ),
-                        },
-                        ensure_ascii=False,
-                    )
-                is_matched = clean_verif == clean_sender or (
-                    len(clean_verif) >= 4 and clean_sender.endswith(clean_verif)
+            clean_sender = re.sub(r"\D", "", sender_phone or "")
+            if not clean_sender:
+                return json.dumps(
+                    {
+                        "status": "verification_unavailable",
+                        "draft_id": draft_id,
+                        "item_code": item_code,
+                        "message": "Đơn này chưa có SĐT người gửi để xác minh. Vui lòng liên hệ bưu cục hoặc tổng đài để hủy đơn.",
+                    },
+                    ensure_ascii=False,
                 )
-                if not is_matched:
-                    return json.dumps(
-                        {
-                            "status": "verification_failed",
-                            "draft_id": draft_id,
-                            "item_code": item_code,
-                            "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người gửi của đơn này. Yêu cầu hủy đơn bị từ chối vì lý do an toàn bảo mật.",
-                        },
-                        ensure_ascii=False,
-                    )
+
+            clean_verif = re.sub(r"\D", "", verification_phone or "")
+            if not clean_verif:
+                masked = f"...{clean_sender[-4:]}" if len(clean_sender) >= 4 else "***"
+                return json.dumps(
+                    {
+                        "status": "requires_verification",
+                        "draft_id": draft_id,
+                        "item_code": item_code,
+                        "masked_phone": masked,
+                        "message": (
+                            f"🔒 BẢO VỆ CHÍNH CHỦ: Yêu cầu hủy đơn hàng [{item_code or draft_id}] thực hiện ngoài phiên tạo ban đầu. "
+                            f"Để ngăn chặn người lạ hủy nhầm hoặc phá hoại đơn hàng, vui lòng cung cấp 4 số cuối của "
+                            f"Số điện thoại người gửi (SĐT đuôi {masked}) để xác nhận hủy đơn."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+            is_matched = clean_verif == clean_sender or (
+                len(clean_verif) >= 4 and clean_sender.endswith(clean_verif)
+            )
+            if not is_matched:
+                _verify_register_fail(tenant or "default", lock_key)
+                return json.dumps(
+                    {
+                        "status": "verification_failed",
+                        "draft_id": draft_id,
+                        "item_code": item_code,
+                        "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người gửi của đơn này. Yêu cầu hủy đơn bị từ chối vì lý do an toàn bảo mật.",
+                    },
+                    ensure_ascii=False,
+                )
+            _verify_reset(tenant or "default", lock_key)
 
         if status == "WAITING_CONFIRMATION":
             target_record["status"] = "CANCELLED"
@@ -1711,42 +1958,65 @@ def cancel_draft_complaint(
         needs_verification = True
 
     if needs_verification:
+        lock_key = clean_id
+        left = _verify_locked(tenant or "default", lock_key)
+        if left > 0:
+            return json.dumps(
+                {
+                    "status": "verification_locked",
+                    "draft_ticket_id": clean_id,
+                    "message": f"Đã nhập sai quá nhiều lần. Vui lòng thử lại sau {left // 60 + 1} phút hoặc liên hệ tổng đài/bưu cục để được hỗ trợ.",
+                },
+                ensure_ascii=False,
+            )
+
         cust_phone = (
             record.get("customer", {}).get("phone")
             or record.get("customer_phone")
             or (record.get("detail", {}).get("customer", {}).get("phone"))
             or ""
         )
-        if cust_phone:
-            clean_cust = re.sub(r"\D", "", cust_phone)
-            clean_verif = re.sub(r"\D", "", verification_phone or "")
-            if not clean_verif:
-                masked = f"...{clean_cust[-4:]}" if len(clean_cust) >= 4 else "***"
-                return json.dumps(
-                    {
-                        "status": "requires_verification",
-                        "draft_ticket_id": clean_id,
-                        "masked_phone": masked,
-                        "message": (
-                            f"🔒 BẢO VỆ CHÍNH CHỦ: Phiếu khiếu nại [{clean_id}] được lập ở một phiên làm việc khác. "
-                            f"Để đảm bảo an toàn, vui lòng cung cấp 4 số cuối của SĐT người khiếu nại "
-                            f"(SĐT đuôi {masked}) để xác nhận hủy."
-                        ),
-                    },
-                    ensure_ascii=False,
-                )
-            is_matched = clean_verif == clean_cust or (
-                len(clean_verif) >= 4 and clean_cust.endswith(clean_verif)
+        clean_cust = re.sub(r"\D", "", cust_phone or "")
+        if not clean_cust:
+            return json.dumps(
+                {
+                    "status": "verification_unavailable",
+                    "draft_ticket_id": clean_id,
+                    "message": "Phiếu này chưa có SĐT người khiếu nại để xác minh. Vui lòng liên hệ bưu cục hoặc tổng đài để hủy khiếu nại.",
+                },
+                ensure_ascii=False,
             )
-            if not is_matched:
-                return json.dumps(
-                    {
-                        "status": "verification_failed",
-                        "draft_ticket_id": clean_id,
-                        "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người khiếu nại. Yêu cầu hủy bị từ chối.",
-                    },
-                    ensure_ascii=False,
-                )
+
+        clean_verif = re.sub(r"\D", "", verification_phone or "")
+        if not clean_verif:
+            masked = f"...{clean_cust[-4:]}" if len(clean_cust) >= 4 else "***"
+            return json.dumps(
+                {
+                    "status": "requires_verification",
+                    "draft_ticket_id": clean_id,
+                    "masked_phone": masked,
+                    "message": (
+                        f"🔒 BẢO VỆ CHÍNH CHỦ: Phiếu khiếu nại [{clean_id}] được lập ở một phiên làm việc khác. "
+                        f"Để đảm bảo an toàn, vui lòng cung cấp 4 số cuối của SĐT người khiếu nại "
+                        f"(SĐT đuôi {masked}) để xác nhận hủy."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        is_matched = clean_verif == clean_cust or (
+            len(clean_verif) >= 4 and clean_cust.endswith(clean_verif)
+        )
+        if not is_matched:
+            _verify_register_fail(tenant or "default", lock_key)
+            return json.dumps(
+                {
+                    "status": "verification_failed",
+                    "draft_ticket_id": clean_id,
+                    "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người khiếu nại. Yêu cầu hủy bị từ chối.",
+                },
+                ensure_ascii=False,
+            )
+        _verify_reset(tenant or "default", lock_key)
 
     record["status"] = "CANCELLED"
     _DRAFT_COMPLAINTS[clean_id] = record
@@ -1857,44 +2127,69 @@ def cancel_complaint(
             needs_verification = True
 
         if needs_verification:
+            lock_key = (ticket_number or draft_id or clean_id or "unknown")
+            left = _verify_locked(tenant or "default", lock_key)
+            if left > 0:
+                return json.dumps(
+                    {
+                        "status": "verification_locked",
+                        "ticket_number": ticket_number,
+                        "draft_ticket_id": draft_id,
+                        "message": f"Đã nhập sai quá nhiều lần. Vui lòng thử lại sau {left // 60 + 1} phút hoặc liên hệ tổng đài/bưu cục để được hỗ trợ.",
+                    },
+                    ensure_ascii=False,
+                )
+
             cust_phone = (
                 target_record.get("customer", {}).get("phone")
                 or target_record.get("customer_phone")
                 or (target_record.get("detail", {}).get("customer", {}).get("phone"))
                 or ""
             )
-            if cust_phone:
-                clean_cust = re.sub(r"\D", "", cust_phone)
-                clean_verif = re.sub(r"\D", "", verification_phone or "")
-                if not clean_verif:
-                    masked = f"...{clean_cust[-4:]}" if len(clean_cust) >= 4 else "***"
-                    return json.dumps(
-                        {
-                            "status": "requires_verification",
-                            "ticket_number": ticket_number,
-                            "draft_ticket_id": draft_id,
-                            "masked_phone": masked,
-                            "message": (
-                                f"🔒 BẢO VỆ CHÍNH CHỦ: Yêu cầu rút phiếu khiếu nại [{ticket_number or draft_id}] thực hiện ngoài phiên tạo ban đầu. "
-                                f"Để đảm bảo an toàn, vui lòng cung cấp 4 số cuối của SĐT người khiếu nại "
-                                f"(SĐT đuôi {masked}) để xác nhận rút khiếu nại."
-                            ),
-                        },
-                        ensure_ascii=False,
-                    )
-                is_matched = clean_verif == clean_cust or (
-                    len(clean_verif) >= 4 and clean_cust.endswith(clean_verif)
+            clean_cust = re.sub(r"\D", "", cust_phone or "")
+            if not clean_cust:
+                return json.dumps(
+                    {
+                        "status": "verification_unavailable",
+                        "ticket_number": ticket_number,
+                        "draft_ticket_id": draft_id,
+                        "message": "Phiếu này chưa có SĐT người khiếu nại để xác minh. Vui lòng liên hệ bưu cục hoặc tổng đài để rút khiếu nại.",
+                    },
+                    ensure_ascii=False,
                 )
-                if not is_matched:
-                    return json.dumps(
-                        {
-                            "status": "verification_failed",
-                            "ticket_number": ticket_number,
-                            "draft_ticket_id": draft_id,
-                            "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người khiếu nại. Yêu cầu rút khiếu nại bị từ chối vì lý do an toàn bảo mật.",
-                        },
-                        ensure_ascii=False,
-                    )
+
+            clean_verif = re.sub(r"\D", "", verification_phone or "")
+            if not clean_verif:
+                masked = f"...{clean_cust[-4:]}" if len(clean_cust) >= 4 else "***"
+                return json.dumps(
+                    {
+                        "status": "requires_verification",
+                        "ticket_number": ticket_number,
+                        "draft_ticket_id": draft_id,
+                        "masked_phone": masked,
+                        "message": (
+                            f"🔒 BẢO VỆ CHÍNH CHỦ: Yêu cầu rút phiếu khiếu nại [{ticket_number or draft_id}] thực hiện ngoài phiên tạo ban đầu. "
+                            f"Để đảm bảo an toàn, vui lòng cung cấp 4 số cuối của SĐT người khiếu nại "
+                            f"(SĐT đuôi {masked}) để xác nhận rút khiếu nại."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+            is_matched = clean_verif == clean_cust or (
+                len(clean_verif) >= 4 and clean_cust.endswith(clean_verif)
+            )
+            if not is_matched:
+                _verify_register_fail(tenant or "default", lock_key)
+                return json.dumps(
+                    {
+                        "status": "verification_failed",
+                        "ticket_number": ticket_number,
+                        "draft_ticket_id": draft_id,
+                        "message": "❌ XÁC THỰC THẤT BẠI: Số điện thoại xác minh không khớp với thông tin người khiếu nại. Yêu cầu rút khiếu nại bị từ chối vì lý do an toàn bảo mật.",
+                    },
+                    ensure_ascii=False,
+                )
+            _verify_reset(tenant or "default", lock_key)
 
         if status == "WAITING_CONFIRMATION":
             target_record["status"] = "CANCELLED"
@@ -2215,7 +2510,54 @@ def execute_action_with_interrupt(action_type: str, draft_id: str) -> dict[str, 
         if human_decision and human_decision.get("approved"):
             return json.loads(confirm_complaint(draft_id))
         else:
-            cancel_draft_complaint(draft_id)
-            return {"status": "rejected", "message": "Người dùng đã từ chối nộp phiếu khiếu nại."}
-
+            cancel_complaint(ticket_id_or_draft_id=draft_id, reason="Người dùng từ chối xác nhận")
+            return {"status": "rejected", "message": "Người dùng đã từ chối xác nhận khiếu nại."}
     return {"status": "error", "message": f"Loại hành động không hợp lệ: {action_type}"}
+
+
+def has_active_draft_for_session(tenant: str, session_id: str | None) -> bool:
+    """Kiểm tra xem phiên có bản nháp đơn hàng hoặc khiếu nại đang chờ xác nhận (WAITING_CONFIRMATION) hay không."""
+    if not session_id:
+        return False
+    drafts = get_session_drafts(session_id=session_id, tenant=tenant, status="WAITING_CONFIRMATION")
+    now = _get_vn_now()
+    active_b = [b for b in drafts.get("bookings", []) if not _is_draft_expired(b, now)]
+    active_c = [c for c in drafts.get("complaints", []) if not _is_draft_expired(c, now)]
+    return bool(active_b or active_c)
+
+
+def cancel_orphaned_drafts(tenant: str, session_id: str | None) -> int:
+    """Hủy toàn bộ các bản nháp mồ côi đang chờ xác nhận trong phiên khi người dùng sửa câu hỏi / re-ask."""
+    if not session_id:
+        return 0
+    cancelled_count = 0
+    now = _get_vn_now()
+
+    # 1. In-memory bookings
+    for rec in _DRAFT_BOOKINGS.values():
+        if _is_tenant_match(rec.get("tenant", "default"), tenant) and rec.get("session_id") == session_id:
+            if rec.get("status") == "WAITING_CONFIRMATION":
+                rec["status"] = "CANCELLED_ORPHANED"
+                rec["cancelled_at"] = now.isoformat()
+                cancelled_count += 1
+                _sync_booking_draft(rec)
+
+    # 2. In-memory complaints
+    for rec in _DRAFT_COMPLAINTS.values():
+        if _is_tenant_match(rec.get("tenant", "default"), tenant) and rec.get("session_id") == session_id:
+            if rec.get("status") == "WAITING_CONFIRMATION":
+                rec["status"] = "CANCELLED_ORPHANED"
+                rec["cancelled_at"] = now.isoformat()
+                cancelled_count += 1
+                _sync_complaint_draft(rec)
+
+    # 3. PostgreSQL
+    try:
+        from app.core.postgres import cancel_orphaned_drafts_in_postgres
+
+        cancelled_count += cancel_orphaned_drafts_in_postgres(tenant=tenant, session_id=session_id)
+    except Exception:
+        pass
+
+    return cancelled_count
+

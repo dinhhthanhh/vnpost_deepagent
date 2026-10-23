@@ -75,7 +75,13 @@ class FastRAGExecutor:
         return messages
 
     async def prepare(
-        self, tenant: str, message: str, history: list[dict], grounded: bool
+        self,
+        tenant: str,
+        message: str,
+        history: list[dict],
+        grounded: bool,
+        voice: bool = False,
+        voice_input: bool = False,
     ) -> PreparedRAG:
         """Retrieve once before choosing whether the request needs escalation."""
         run = current_run.get()
@@ -143,7 +149,9 @@ class FastRAGExecutor:
             if evidence_blocks
             else "Không tìm thấy tài liệu phù hợp trong hệ thống."
         )
-        user_prompt = fast_user_message(message, evidence_text)
+        user_prompt = fast_user_message(
+            message, evidence_text, voice=voice, voice_input=voice_input
+        )
         system_content = FAST_RAG_SYSTEM_PROMPT
         terms = load_terminology()
         matched = find_matched_terminology(message, terms)

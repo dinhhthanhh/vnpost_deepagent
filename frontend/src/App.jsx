@@ -46,6 +46,7 @@ import {
   faMagnifyingGlass,
   faMicrophone,
   faPenToSquare,
+  faPlus,
   faTriangleExclamation,
   faWandMagicSparkles,
 } from "@fortawesome/free-solid-svg-icons";
@@ -225,11 +226,63 @@ function FormattedAnswer({ text }) {
   }
 }
 
-// Thẻ Hành Động Tương Tác: Hỗ trợ Human-in-the-Loop xác nhận/hủy đơn nháp và quản lý bưu gửi trực quan
-function PostalActionCard({ text, onSend, onSetInput }) {
-  if (!text || typeof text !== "string") return null;
+// Hook tính toán đếm ngược thời gian hiệu lực TTL (30 phút) cho bản nháp đơn hàng / khiếu nại
+function useDraftCountdown(draftInfo, messageCreated) {
+  const [targetTime] = useState(() => {
+    const rawExpiresAt = draftInfo?.detail?.expires_at || draftInfo?.expires_at;
+    if (rawExpiresAt) {
+      const parsed = new Date(rawExpiresAt).getTime();
+      if (!isNaN(parsed)) return parsed;
+    }
+    const rawCreatedAt = draftInfo?.detail?.created_at || draftInfo?.created_at;
+    if (rawCreatedAt) {
+      const parsed = new Date(rawCreatedAt).getTime();
+      if (!isNaN(parsed)) return parsed + 1800 * 1000;
+    }
+    if (messageCreated) {
+      const createdMs =
+        typeof messageCreated === "number"
+          ? (messageCreated > 1e11 ? messageCreated : messageCreated * 1000)
+          : new Date(messageCreated).getTime();
+      if (!isNaN(createdMs)) return createdMs + 1800 * 1000;
+    }
+    return Date.now() + 1800 * 1000;
+  });
 
-  const textLower = text.toLowerCase();
+  const [timeLeft, setTimeLeft] = useState(() => {
+    const diff = Math.floor((targetTime - Date.now()) / 1000);
+    return Math.max(0, diff);
+  });
+
+  useEffect(() => {
+    const update = () => {
+      const diff = Math.floor((targetTime - Date.now()) / 1000);
+      setTimeLeft(Math.max(0, diff));
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [targetTime]);
+
+  const minutes = Math.floor(timeLeft / 60);
+  const seconds = timeLeft % 60;
+  const formatted = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  const isExpired = timeLeft <= 0;
+  const isWarning = timeLeft > 0 && timeLeft <= 300; // Dưới 5 phút hiển thị cảnh báo nhấp nháy
+
+  return { timeLeft, formatted, isExpired, isWarning };
+}
+
+// Thẻ Hành Động Tương Tác: Hỗ trợ Human-in-the-Loop xác nhận/hủy đơn nháp và quản lý bưu gửi trực quan qua REST API
+function PostalActionCard({ text, draftInfo, session, apiKey, messageCreated, onActionSuccess, onSend, onSetInput }) {
+  const [busyAction, setBusyAction] = useState(false);
+  const [actionResult, setActionResult] = useState(null);
+  const [actionError, setActionError] = useState(null);
+  const { formatted, isExpired, isWarning } = useDraftCountdown(draftInfo, messageCreated);
+
+  if ((!text || typeof text !== "string") && !draftInfo) return null;
+
+  const textLower = (text || "").toLowerCase();
 
   // Danh sách mã vận đơn giả lập / minh họa mẫu (không bao giờ được sinh thẻ hành động)
   const isDummyTrackingCode = (code) =>
@@ -247,106 +300,401 @@ function PostalActionCard({ text, onSend, onSetInput }) {
     textLower.includes("mã vận đơn là gì") ||
     textLower.includes("tra cứu trạng thái");
 
-  if (isExplanationOrTutorial) return null;
+  if (isExplanationOrTutorial && !draftInfo) return null;
 
-  // 1. Nhận diện Đơn hàng nháp chờ duyệt (WAITING_CONFIRMATION / draft_id)
-  const draftBookingMatch = text.match(/\b(BK-DRAFT-[A-Za-z0-9]+|DRAFT-[A-Za-z0-9]+)\b/i);
-  const isDraftBooking = draftBookingMatch && (
-    textLower.includes("bản nháp đơn hàng") ||
-    textLower.includes("chờ duyệt") ||
-    textLower.includes("chờ xác nhận") ||
-    textLower.includes("waiting_confirmation") ||
-    textLower.includes("xác nhận (hitl)")
-  );
+  // 1. Nhận diện Đơn hàng nháp chờ duyệt (từ SSE event draftInfo hoặc regex trên text, hỗ trợ cả mã nháp có gạch nối đầy đủ)
+  const draftBookingMatch = text?.match(/\b(BK-DRAFT-[A-Za-z0-9-]+|DRAFT-[A-Za-z0-9-]+)\b/i);
+  const isDraftBooking =
+    (draftInfo && draftInfo.kind === "booking") ||
+    Boolean(
+      draftBookingMatch &&
+      (draftBookingMatch[0].toUpperCase().startsWith("BK-DRAFT-") ||
+        textLower.includes("mã nháp") ||
+        textLower.includes("đơn hàng nháp") ||
+        textLower.includes("bản nháp") ||
+        textLower.includes("chờ duyệt") ||
+        textLower.includes("chờ xác nhận") ||
+        textLower.includes("waiting_confirmation") ||
+        textLower.includes("xác nhận (hitl)"))
+    );
 
-  // 2. Nhận diện Khiếu nại nháp chờ duyệt
-  const draftComplaintMatch = text.match(/\b(KN-DRAFT-[A-Za-z0-9]+)\b/i);
-  const isDraftComplaint = draftComplaintMatch && (
-    textLower.includes("nháp") ||
-    textLower.includes("chờ duyệt") ||
-    textLower.includes("chờ xác nhận")
-  );
+  // 2. Nhận diện Khiếu nại nháp chờ duyệt (từ SSE event draftInfo hoặc regex trên text)
+  const draftComplaintMatch = text?.match(/\b(KN-DRAFT-[A-Za-z0-9-]+)\b/i);
+  const isDraftComplaint =
+    (draftInfo && draftInfo.kind === "complaint") ||
+    Boolean(
+      draftComplaintMatch &&
+      (draftComplaintMatch[0].toUpperCase().startsWith("KN-DRAFT-") ||
+        textLower.includes("khiếu nại") ||
+        textLower.includes("nháp") ||
+        textLower.includes("chờ duyệt") ||
+        textLower.includes("chờ xác nhận"))
+    );
 
   // 3. Nhận diện Vận đơn bưu chính VNPost thực sự vừa tạo/xác nhận thành công
-  const trackingMatch = text.match(/\b(EB|CP|RA|LP)\d{9}VN\b/i);
-  const isConfirmedOrder = trackingMatch && !isDummyTrackingCode(trackingMatch[0]) && (
-    textLower.includes("tạo đơn gửi hàng thành công") ||
-    textLower.includes("đã xác nhận đơn hàng") ||
-    textLower.includes("phát hành mã vận đơn chính thức")
-  );
+  const trackingMatch = text?.match(/\b(EB|CP|RA|LP)\d{9}VN\b/i);
+  const isConfirmedOrder =
+    trackingMatch &&
+    !isDummyTrackingCode(trackingMatch[0]) &&
+    (textLower.includes("tạo đơn gửi hàng thành công") ||
+      textLower.includes("đã xác nhận đơn hàng") ||
+      textLower.includes("phát hành mã vận đơn chính thức"));
+
+  async function handleConfirmBooking(draftId) {
+    if (busyAction) return;
+    setBusyAction(true);
+    setActionError(null);
+    try {
+      const res = await request("/api/actions/confirm", apiKey, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action_type: "booking",
+          draft_id: draftId,
+          session_id: session || null,
+        }),
+      });
+      const data = await res.json();
+      if (data.status === "confirmed" || data.status === "already_confirmed") {
+        setActionResult({
+          status: "confirmed",
+          code: data.item_code,
+          title: "Đã xác nhận đặt đơn thành công!",
+          message: data.message || `Mã vận đơn chính thức: ${data.item_code}. Bưu tá VNPost sẽ liên hệ thu gom theo lịch hẹn.`,
+        });
+        if (onActionSuccess) onActionSuccess({ action_type: "booking", status: "confirmed", data });
+      } else if (data.status === "expired") {
+        setActionResult({
+          status: "expired",
+          title: "Đã hết thời gian - Đã hủy đơn nháp",
+          message: data.message || `Đã hết thời gian 30 phút hiệu lực, hệ thống đã tự động hủy bản nháp đơn hàng ${draftId}. Quý khách vui lòng tạo lại đơn mới.`,
+        });
+      } else {
+        setActionError(data.message || "Không thể xác nhận đơn hàng.");
+      }
+    } catch (err) {
+      setActionError(`Lỗi xác nhận: ${err.message}`);
+    } finally {
+      setBusyAction(false);
+    }
+  }
+
+  async function handleCancelBooking(draftId) {
+    if (busyAction) return;
+    setBusyAction(true);
+    setActionError(null);
+    try {
+      const res = await request("/api/actions/cancel", apiKey, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action_type: "booking",
+          target_id: draftId,
+          reason: "Khách hàng hủy trên giao diện",
+          session_id: session || null,
+        }),
+      });
+      const data = await res.json();
+      if (data.status === "cancelled" || data.status === "already_cancelled") {
+        setActionResult({
+          status: "cancelled",
+          title: "Đã hủy đơn nháp thành công",
+          message: data.message || `Đã hủy bản nháp đơn hàng ${draftId}.`,
+        });
+        if (onActionSuccess) onActionSuccess({ action_type: "booking", status: "cancelled", data });
+      } else {
+        setActionError(data.message || "Không thể hủy đơn hàng.");
+      }
+    } catch (err) {
+      setActionError(`Lỗi hủy: ${err.message}`);
+    } finally {
+      setBusyAction(false);
+    }
+  }
+
+  async function handleConfirmComplaint(draftTicketId) {
+    if (busyAction) return;
+    setBusyAction(true);
+    setActionError(null);
+    try {
+      const res = await request("/api/actions/confirm", apiKey, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action_type: "complaint",
+          draft_id: draftTicketId,
+          session_id: session || null,
+        }),
+      });
+      const data = await res.json();
+      if (data.status === "submitted" || data.status === "already_submitted" || data.status === "confirmed") {
+        setActionResult({
+          status: "confirmed",
+          code: data.ticket_number,
+          title: "Đã nộp khiếu nại thành công!",
+          message: data.message || `Mã số hồ sơ CSKH: ${data.ticket_number}. Thời hạn xử lý theo quy định SLA.`,
+        });
+        if (onActionSuccess) onActionSuccess({ action_type: "complaint", status: "confirmed", data });
+      } else if (data.status === "expired") {
+        setActionResult({
+          status: "expired",
+          title: "Đã hết thời gian - Đã hủy phiếu nháp",
+          message: data.message || `Đã hết thời gian 30 phút hiệu lực, hệ thống đã tự động hủy phiếu khiếu nại nháp ${draftTicketId}. Quý khách vui lòng tạo lại yêu cầu mới.`,
+        });
+      } else {
+        setActionError(data.message || "Không thể nộp khiếu nại.");
+      }
+    } catch (err) {
+      setActionError(`Lỗi nộp khiếu nại: ${err.message}`);
+    } finally {
+      setBusyAction(false);
+    }
+  }
+
+  async function handleCancelComplaint(draftTicketId) {
+    if (busyAction) return;
+    setBusyAction(true);
+    setActionError(null);
+    try {
+      const res = await request("/api/actions/cancel", apiKey, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action_type: "complaint",
+          target_id: draftTicketId,
+          reason: "Khách hàng hủy khiếu nại trên giao diện",
+          session_id: session || null,
+        }),
+      });
+      const data = await res.json();
+      if (data.status === "cancelled" || data.status === "already_cancelled") {
+        setActionResult({
+          status: "cancelled",
+          title: "Đã hủy phiếu khiếu nại thành công",
+          message: data.message || `Đã hủy phiếu khiếu nại ${draftTicketId}.`,
+        });
+        if (onActionSuccess) onActionSuccess({ action_type: "complaint", status: "cancelled", data });
+      } else {
+        setActionError(data.message || "Không thể hủy khiếu nại.");
+      }
+    } catch (err) {
+      setActionError(`Lỗi hủy: ${err.message}`);
+    } finally {
+      setBusyAction(false);
+    }
+  }
+
+  if (actionResult) {
+    const isExpiredResult = actionResult.status === "expired";
+    return (
+      <div className={`postal-action-card ${actionResult.status === "confirmed" ? "confirmed-card" : isExpiredResult ? "expired-card" : "cancelled-card"}`}>
+        <div className="action-card-header">
+          <span className={`action-card-badge ${actionResult.status === "confirmed" ? "status-confirmed" : isExpiredResult ? "status-expired" : "status-cancelled"}`}>
+            <FontAwesomeIcon icon={actionResult.status === "confirmed" ? faCircleCheck : faTriangleExclamation} /> {actionResult.title}
+          </span>
+          {actionResult.code && <span className="action-card-id tracking-code">{actionResult.code}</span>}
+        </div>
+        <div className="action-card-body">
+          <p className="action-card-desc">{actionResult.message}</p>
+        </div>
+        {isExpiredResult && (
+          <div className="action-card-buttons">
+            <button
+              type="button"
+              className="action-card-btn btn-confirm"
+              onClick={() => onSetInput("Tôi muốn tạo lại đơn hàng này với thông tin người gửi và người nhận như trên")}
+            >
+              <FontAwesomeIcon icon={faPlus} /> Tạo lại đơn mới
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (isDraftBooking) {
-    const draftId = draftBookingMatch[0];
+    const draftId = draftInfo?.draft_id || draftBookingMatch?.[0];
     return (
-      <div className="postal-action-card booking-card">
+      <div className={`postal-action-card booking-card ${isExpired ? "expired-card" : ""}`}>
         <div className="action-card-header">
-          <span className="action-card-badge status-waiting">
-            <FontAwesomeIcon icon={faClock} /> Chờ duyệt đơn (HITL)
-          </span>
+          {isExpired ? (
+            <span className="action-card-badge status-expired">
+              <FontAwesomeIcon icon={faTriangleExclamation} /> Đã hết thời gian - Đã hủy đơn nháp
+            </span>
+          ) : (
+            <span className="action-card-badge status-waiting">
+              <FontAwesomeIcon icon={faClock} /> Chờ duyệt đơn
+            </span>
+          )}
+          {!isExpired && (
+            <span className={`action-card-timer ${isWarning ? "timer-warning" : ""}`} title="Thời gian còn lại để duyệt đơn">
+              <FontAwesomeIcon icon={faClock} /> Còn lại: <strong>{formatted}</strong>
+            </span>
+          )}
           <span className="action-card-id">{draftId}</span>
         </div>
         <div className="action-card-body">
-          <p className="action-card-desc">
-            Bản nháp đơn hàng đã sẵn sàng. Quý khách vui lòng bấm xác nhận để phát hành mã vận đơn VNPost và điều phối bưu tá thu gom.
-          </p>
+          {isExpired ? (
+            <div className="action-card-expired-alert">
+              <FontAwesomeIcon icon={faTriangleExclamation} />
+              <span>
+                <strong>Đã hết thời gian hiệu lực (quá 30 phút):</strong> Hệ thống đã tự động hủy bản nháp đơn hàng này. Quý khách vui lòng bấm nút "Tạo lại đơn mới" để Mipo hỗ trợ lập đơn mới.
+              </span>
+            </div>
+          ) : (
+            <p className="action-card-desc">
+              Bản nháp đơn hàng đã sẵn sàng. Quý khách vui lòng bấm xác nhận trong vòng <strong>30 phút</strong> để phát hành mã vận đơn VNPost và điều phối bưu tá thu gom.
+            </p>
+          )}
+          {actionError && (
+            <div
+              className="action-card-error-alert"
+              style={{
+                color: "#b91c1c",
+                backgroundColor: "#fef2f2",
+                border: "1px solid #fecaca",
+                borderRadius: "6px",
+                padding: "8px 12px",
+                fontSize: "0.85rem",
+                marginTop: "8px",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "8px",
+                lineHeight: "1.4",
+              }}
+            >
+              <FontAwesomeIcon icon={faTriangleExclamation} style={{ marginTop: "2px", flexShrink: 0, color: "#dc2626" }} />
+              <span>{actionError}</span>
+            </div>
+          )}
         </div>
         <div className="action-card-buttons">
-          <button
-            type="button"
-            className="action-card-btn btn-confirm"
-            onClick={() => onSend(`Tôi xác nhận đồng ý tạo đơn hàng ${draftId}`)}
-          >
-            <FontAwesomeIcon icon={faCircleCheck} /> Xác nhận đặt đơn
-          </button>
-          <button
-            type="button"
-            className="action-card-btn btn-cancel"
-            onClick={() => onSend(`Tôi muốn hủy đơn nháp ${draftId}`)}
-          >
-            <FontAwesomeIcon icon={faCircleXmark} /> Hủy đơn nháp
-          </button>
-          <button
-            type="button"
-            className="action-card-btn btn-edit"
-            onClick={() => onSetInput(`Tôi muốn sửa đơn ${draftId}: `)}
-          >
-            <FontAwesomeIcon icon={faPenToSquare} /> Sửa thông tin
-          </button>
+          {isExpired ? (
+            <button
+              type="button"
+              className="action-card-btn btn-confirm"
+              onClick={() => onSetInput("Tôi muốn tạo lại đơn hàng này với thông tin người gửi và người nhận như trên")}
+            >
+              <FontAwesomeIcon icon={faPlus} /> Tạo lại đơn mới
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="action-card-btn btn-confirm"
+                disabled={busyAction}
+                onClick={() => handleConfirmBooking(draftId)}
+              >
+                <FontAwesomeIcon icon={faCircleCheck} /> {busyAction ? "Đang xử lý..." : "Xác nhận đặt đơn"}
+              </button>
+              <button
+                type="button"
+                className="action-card-btn btn-cancel"
+                disabled={busyAction}
+                onClick={() => handleCancelBooking(draftId)}
+              >
+                <FontAwesomeIcon icon={faCircleXmark} /> Hủy đơn nháp
+              </button>
+              <button
+                type="button"
+                className="action-card-btn btn-edit"
+                disabled={busyAction}
+                onClick={() => onSetInput(`Tôi muốn sửa đơn ${draftId}: `)}
+              >
+                <FontAwesomeIcon icon={faPenToSquare} /> Sửa thông tin
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
   }
 
   if (isDraftComplaint) {
-    const draftTicketId = draftComplaintMatch[0];
+    const draftTicketId = draftInfo?.draft_id || draftComplaintMatch?.[0];
     return (
-      <div className="postal-action-card complaint-card">
+      <div className={`postal-action-card complaint-card ${isExpired ? "expired-card" : ""}`}>
         <div className="action-card-header">
-          <span className="action-card-badge status-waiting">
-            <FontAwesomeIcon icon={faTriangleExclamation} /> Chờ nộp khiếu nại (HITL)
-          </span>
+          {isExpired ? (
+            <span className="action-card-badge status-expired">
+              <FontAwesomeIcon icon={faTriangleExclamation} /> Đã hết thời gian - Đã hủy phiếu nháp
+            </span>
+          ) : (
+            <span className="action-card-badge status-waiting">
+              <FontAwesomeIcon icon={faTriangleExclamation} /> Chờ nộp khiếu nại (HITL)
+            </span>
+          )}
+          {!isExpired && (
+            <span className={`action-card-timer ${isWarning ? "timer-warning" : ""}`} title="Thời gian còn lại để nộp khiếu nại">
+              <FontAwesomeIcon icon={faClock} /> Còn lại: <strong>{formatted}</strong>
+            </span>
+          )}
           <span className="action-card-id">{draftTicketId}</span>
         </div>
         <div className="action-card-body">
-          <p className="action-card-desc">
-            Hồ sơ khiếu nại bưu gửi đã được lập nháp. Vui lòng xác nhận để chính thức nộp vào hệ thống CSKH VNPost (SLA 20 ngày).
-          </p>
+          {isExpired ? (
+            <div className="action-card-expired-alert">
+              <FontAwesomeIcon icon={faTriangleExclamation} />
+              <span>
+                <strong>Đã hết thời gian hiệu lực (quá 30 phút):</strong> Hệ thống đã tự động hủy phiếu khiếu nại nháp này. Quý khách vui lòng bấm nút "Lập khiếu nại mới" để gửi lại yêu cầu.
+              </span>
+            </div>
+          ) : (
+            <p className="action-card-desc">
+              Hồ sơ khiếu nại bưu gửi đã được lập nháp. Vui lòng xác nhận trong vòng <strong>30 phút</strong> để chính thức nộp vào hệ thống CSKH VNPost (SLA 20 ngày).
+            </p>
+          )}
+          {actionError && (
+            <div
+              className="action-card-error-alert"
+              style={{
+                color: "#b91c1c",
+                backgroundColor: "#fef2f2",
+                border: "1px solid #fecaca",
+                borderRadius: "6px",
+                padding: "8px 12px",
+                fontSize: "0.85rem",
+                marginTop: "8px",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "8px",
+                lineHeight: "1.4",
+              }}
+            >
+              <FontAwesomeIcon icon={faTriangleExclamation} style={{ marginTop: "2px", flexShrink: 0, color: "#dc2626" }} />
+              <span>{actionError}</span>
+            </div>
+          )}
         </div>
         <div className="action-card-buttons">
-          <button
-            type="button"
-            className="action-card-btn btn-confirm"
-            onClick={() => onSend(`Tôi xác nhận nộp phiếu khiếu nại ${draftTicketId}`)}
-          >
-            <FontAwesomeIcon icon={faCircleCheck} /> Xác nhận nộp khiếu nại
-          </button>
-          <button
-            type="button"
-            className="action-card-btn btn-cancel"
-            onClick={() => onSend(`Tôi muốn hủy phiếu khiếu nại ${draftTicketId}`)}
-          >
-            <FontAwesomeIcon icon={faCircleXmark} /> Hủy khiếu nại
-          </button>
+          {isExpired ? (
+            <button
+              type="button"
+              className="action-card-btn btn-confirm"
+              onClick={() => onSetInput("Tôi muốn nộp lại khiếu nại này")}
+            >
+              <FontAwesomeIcon icon={faWandMagicSparkles} /> Lập khiếu nại mới
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="action-card-btn btn-confirm"
+                disabled={busyAction}
+                onClick={() => handleConfirmComplaint(draftTicketId)}
+              >
+                <FontAwesomeIcon icon={faCircleCheck} /> {busyAction ? "Đang xử lý..." : "Xác nhận nộp khiếu nại"}
+              </button>
+              <button
+                type="button"
+                className="action-card-btn btn-cancel"
+                disabled={busyAction}
+                onClick={() => handleCancelComplaint(draftTicketId)}
+              >
+                <FontAwesomeIcon icon={faCircleXmark} /> Hủy khiếu nại
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -422,6 +770,7 @@ export default function App() {
   const [locating, setLocating] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [wasVoiceInput, setWasVoiceInput] = useState(false);
   const speechRecRef = useRef(null);
   const mediaRecRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -467,9 +816,9 @@ export default function App() {
   function handleFindNearestPostOffice() {
     requestUserLocation((loc) => {
       if (loc) {
-        send(null, "Tìm bưu điện VNPost gần vị trí của tôi nhất", loc);
+        send(null, "📍 Tìm bưu cục gần tôi", loc);
       } else {
-        setInput("Tìm bưu điện gần ");
+        setInput("Tìm bưu cục gần ");
       }
     });
   }
@@ -531,7 +880,51 @@ export default function App() {
       return;
     }
 
-    // 1. Ưu tiên Web Speech API (nhận diện giọng nói tiếng Việt trực tiếp với độ trễ cực thấp)
+    // 1. Ưu tiên ghi âm MediaRecorder gửi lên backend VNPost (/api/voice/transcribe) để đảm bảo bảo mật dữ liệu nội bộ
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioChunksRef.current = [];
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecRef.current = mediaRecorder;
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          setIsRecording(false);
+          stream.getTracks().forEach((track) => track.stop());
+          const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+          if (blob.size > 100) {
+            setNotice("Đang chuyển đổi âm thanh sang văn bản tiếng Việt qua STT VNPost...");
+            try {
+              const result = await transcribeAudio(blob, key);
+              if (result && result.simulated) {
+                setNotice("Dịch vụ nhận diện giọng nói hiện đang ở chế độ mô phỏng, vui lòng gõ câu hỏi bằng văn bản.");
+              } else if (result && result.text) {
+                setInput(result.text);
+                setWasVoiceInput(true);
+                setNotice("Đã nhận diện giọng nói thành công!");
+              }
+            } catch (err) {
+              setNotice(`Lỗi STT: ${err.message}`);
+            }
+          }
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+        setNotice("Đang ghi âm Microphone (bấm lại nút Mic để hoàn tất)...");
+        return;
+      } catch (err) {
+        console.warn("Lỗi MediaRecorder, chuyển sang Web Speech API fallback:", err);
+      }
+    }
+
+    // 2. Fallback sang Web Speech API nếu thiết bị không hỗ trợ MediaRecorder
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRec) {
       try {
@@ -553,6 +946,7 @@ export default function App() {
           }
           if (transcript) {
             setInput(transcript);
+            setWasVoiceInput(true);
           }
         };
 
@@ -574,54 +968,12 @@ export default function App() {
         recognition.start();
         return;
       } catch (err) {
-        console.warn("Lỗi SpeechRecognition, chuyển sang MediaRecorder fallback:", err);
+        console.warn("Lỗi SpeechRecognition:", err);
       }
     }
 
-    // 2. Fallback: Dùng MediaRecorder ghi âm gửi lên backend /api/voice/transcribe
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setNotice("Trình duyệt không hỗ trợ truy cập Microphone.");
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecRef.current = mediaRecorder;
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        setIsRecording(false);
-        stream.getTracks().forEach((track) => track.stop());
-        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        if (blob.size > 100) {
-          setNotice("Đang chuyển đổi âm thanh sang văn bản tiếng Việt qua STT...");
-          try {
-            const result = await transcribeAudio(blob, key);
-            if (result && result.text) {
-              setInput(result.text);
-              setNotice("Đã nhận diện giọng nói thành công!");
-            }
-          } catch (err) {
-            setNotice(`Lỗi STT: ${err.message}`);
-          }
-        }
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-      setNotice("Đang ghi âm Microphone (bấm lại nút Mic để hoàn tất)...");
-    } catch (err) {
-      console.error("Lỗi Microphone:", err);
-      setIsRecording(false);
-      setNotice("Không thể truy cập Microphone thiết bị.");
-    }
+    setIsRecording(false);
+    setNotice("Trình duyệt không hỗ trợ truy cập Microphone thiết bị.");
   };
 
   // Đóng dropdown khi click ra ngoài
@@ -1075,6 +1427,16 @@ export default function App() {
     let receivedAnswer = false;
 
     try {
+      const isVoiceInput = Boolean(wasVoiceInput || isRecording);
+      setWasVoiceInput(false);
+      const isNearest = (t) => {
+        if (!t) return false;
+        const l = t.toLowerCase();
+        return (
+          (l.includes("bưu điện") || l.includes("bưu cục")) &&
+          (l.includes("gần") || l.includes("ở đâu") || l.includes("quanh đây") || l.includes("gần tôi") || l.includes("gần nhất"))
+        );
+      };
       await streamChat(
         {
           message: text,
@@ -1083,9 +1445,11 @@ export default function App() {
           grounded,
           mode: routeMode,
           voice,
+          voice_input: isVoiceInput,
+          input_mode: isVoiceInput ? "voice" : "text",
           stream_voice: Boolean(speech),
           voice_name: voiceName,
-          location: locOverride || userLocation || null,
+          location: locOverride || (isNearest(text) ? userLocation : null),
         },
         key,
         (item) => {
@@ -1110,6 +1474,15 @@ export default function App() {
             );
           } else if (item.type === "tts_segment") {
             speech?.addSegment(item.text, item.voice);
+            setEvents((previous) => [...previous.slice(-30), item]);
+          } else if (item.type === "draft_created") {
+            setMessages((previous) =>
+              previous.map((m) =>
+                m.id === assistantMsgId
+                  ? { ...m, draft: { kind: item.kind, draft_id: item.draft_id, detail: item.detail } }
+                  : m
+              )
+            );
             setEvents((previous) => [...previous.slice(-30), item]);
           } else if (item.type === "answer" || item.type === "done") {
             receivedAnswer = true;
@@ -1166,14 +1539,16 @@ export default function App() {
     stopAudio();
     setEditingMessageId(null);
     setEditText("");
-    const sliced = messages.slice(0, msgIndex);
     if (session) {
       try {
         await truncateSession(session, msgIndex, key);
       } catch (err) {
         console.warn("Không thể cắt tỉa session trên máy chủ:", err);
+        setNotice("Không thể đồng bộ thao tác cắt tỉa với máy chủ. Vui lòng thử lại.");
+        return;
       }
     }
+    const sliced = messages.slice(0, msgIndex);
     send(null, trimmed, null, sliced);
   }
 
@@ -1685,9 +2060,14 @@ export default function App() {
                           <FormattedAnswer text={message.answer || message.error} />
 
                           {/* Thẻ hành động tương tác cho Đơn hàng nháp (HITL) hoặc Vận đơn đã tạo */}
-                          {message.answer && (
+                          {(message.answer || message.draft) && (
                             <PostalActionCard
                               text={message.answer}
+                              draftInfo={message.draft}
+                              session={session}
+                              apiKey={key}
+                              messageCreated={message.created}
+                              onActionSuccess={() => loadSessions(key)}
                               onSend={(actionText) => send(null, actionText)}
                               onSetInput={(val) => setInput(val)}
                             />
@@ -1789,7 +2169,7 @@ export default function App() {
                     disabled={busy || locating}
                   >
                     <MapPin size={16} color="#2563eb" />
-                    <span>Định vị GPS: Tìm bưu điện VNPost gần tôi nhất</span>
+                    <span>📍 Tìm bưu cục gần tôi</span>
                   </button>
                   <button
                     type="button"
@@ -1834,8 +2214,8 @@ export default function App() {
                     notice.includes("Lỗi") || notice.includes("không")
                       ? faTriangleExclamation
                       : notice.includes("thành công")
-                      ? faCircleCheck
-                      : faCircleInfo
+                        ? faCircleCheck
+                        : faCircleInfo
                   }
                   className="notice-fa-icon"
                 />
@@ -1917,7 +2297,10 @@ export default function App() {
                 className="mipo-text-input"
                 placeholder={isRecording ? "Đang lắng nghe giọng nói của bạn..." : "Vui lòng đặt câu hỏi!"}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  setWasVoiceInput(false);
+                }}
                 onPaste={handlePaste}
                 disabled={busy}
               />
@@ -2030,8 +2413,8 @@ export default function App() {
                     streamingAudio
                       ? "Đang phát giọng đọc — Bấm để dừng nói"
                       : voice
-                      ? "Đọc to giọng nói (TTS): Đang BẬT — Bấm để tắt"
-                      : "Bật chế độ đọc to giọng nói (TTS)"
+                        ? "Đọc to giọng nói (TTS): Đang BẬT — Bấm để tắt"
+                        : "Bật chế độ đọc to giọng nói (TTS)"
                   }
                   onClick={() => {
                     if (streamingAudio) {

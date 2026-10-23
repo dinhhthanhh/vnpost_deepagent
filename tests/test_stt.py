@@ -34,6 +34,24 @@ async def test_speech_transcriber_unit(settings):
 
 
 @pytest.mark.asyncio
+async def test_speech_transcriber_production_guard():
+    """Kiểm tra guard STT trên production không bao giờ trả về câu mô phỏng fallback."""
+    prod_settings = Settings(
+        demo_mode=False,
+        api_keys_json='{"key1234567890123456": "tenant"}',
+        llm_api_key="real-api-key-12345",
+        llm_model="gpt-4o",
+        allow_hash=True,
+    )
+    assert prod_settings.is_production is True
+    transcriber = SpeechTranscriber(prod_settings)
+    dummy_wav = b"RIFF" + b"\x00" * 36 + b"data" + b"\x00" * 300
+    with pytest.raises(STTError) as exc:
+        await transcriber.transcribe(dummy_wav)
+    assert "Hệ thống STT trực tuyến hiện không khả dụng" in str(exc.value)
+
+
+@pytest.mark.asyncio
 async def test_api_voice_transcribe_endpoint(settings):
     """Kiểm tra endpoint HTTP POST /api/voice/transcribe."""
     with TestClient(create_app(settings)) as client:

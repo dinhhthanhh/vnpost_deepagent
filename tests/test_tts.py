@@ -120,10 +120,12 @@ def test_speech_cleanup_postal_phonetics_and_decimals():
     assert "0 phẩy 125 lít" in spoken_dec
     assert "125000 đồng" in spoken_dec
 
-    # 3. Phân tách cụm số mã vận đơn UPU
+    # 3. Phân tách cụm số mã vận đơn UPU (phúc âm từng ký tự để TTS phát âm chính xác)
     text_tracking = "Hành trình bưu gửi EB123456789VN đã phát thành công."
     spoken_track = spoken_text(text_tracking)
-    assert "EB 123 456 789 VN" in spoken_track
+    assert "ê, bê" in spoken_track          # chữ E và B được đọc từng ký tự
+    assert "một, hai, ba" in spoken_track   # chữ số được đọc bằng tên số tiếng Việt
+    assert "vê, en" in spoken_track          # ký tự kết V và N
 
 
 async def test_tts_audio_caching(settings):
@@ -160,3 +162,15 @@ async def test_tts_audio_caching(settings):
     adapter.clear_cache()
     assert adapter.cache_stats()["entries"] == 0
     await client.aclose()
+
+
+def test_truncate_for_speech():
+    from app.tts import truncate_for_speech
+
+    short_text = "Chào anh chị. Chúc anh chị một ngày tốt lành."
+    assert truncate_for_speech(short_text, max_chars=100) == short_text
+
+    long_text = "Dịch vụ chuyển phát nhanh EMS. " * 30
+    cut = truncate_for_speech(long_text, max_chars=100)
+    assert "Anh chị xem chi tiết trên màn hình nhé." in cut
+    assert len(cut) < len(long_text)

@@ -225,6 +225,10 @@ def get_sync_pool(
     return _SYNC_POOL
 
 
+# Backward-compatible alias for get_sync_pool
+get_sync_connection_pool = get_sync_pool
+
+
 async def init_postgres_schema(pool: AsyncConnectionPool) -> None:
     """Khởi tạo cấu trúc bảng HITL Drafts và kiểm tra tính toàn vẹn."""
     try:
@@ -606,4 +610,36 @@ def purge_session_from_postgres(
     except Exception as exc:
         logger.debug("Lỗi purge session từ PostgreSQL: %s", exc)
         return False
+
+
+def cancel_orphaned_drafts_in_postgres(tenant: str, session_id: str) -> int:
+    """Đánh dấu hủy các bản nháp đang chờ xác nhận (WAITING_CONFIRMATION) trong PostgreSQL khi session bị truncate."""
+    pool = get_sync_pool()
+    if pool is None:
+        return 0
+    cancelled = 0
+    try:
+        with pool.connection() as conn:
+            cur1 = conn.execute(
+                """
+                UPDATE draft_bookings
+                SET status = 'CANCELLED_ORPHANED', updated_at = CURRENT_TIMESTAMP
+                WHERE tenant = %s AND session_id = %s AND status = 'WAITING_CONFIRMATION';
+                """,
+                (tenant, session_id),
+            )
+            cancelled += cur1.rowcount or 0
+            cur2 = conn.execute(
+                """
+                UPDATE draft_complaints
+                SET status = 'CANCELLED_ORPHANED'
+                WHERE tenant = %s AND session_id = %s AND status = 'WAITING_CONFIRMATION';
+                """,
+                (tenant, session_id),
+            )
+            cancelled += cur2.rowcount or 0
+    except Exception as exc:
+        logger.debug("Lỗi cancel orphaned drafts từ PostgreSQL: %s", exc)
+    return cancelled
+
 

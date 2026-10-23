@@ -100,16 +100,26 @@ class LocationInfo(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
     image: str | None = Field(None, max_length=15_000_000)
-    session_id: UUID | None = None
+    session_id: str | None = None
     grounded: bool = True
     mode: Literal["auto", "fast", "deep"] = "auto"
     voice: bool = False
+    voice_input: bool = False
+    input_mode: Literal["text", "voice"] = "text"
     # The web client can synthesize completed text fragments itself through the
     # streaming TTS endpoint. Keep this opt-in so API consumers retain the
     # existing single-WAV behaviour.
     stream_voice: bool = False
     voice_name: str | None = Field(None, pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     location: LocationInfo | None = None
+
+    @field_validator("session_id", mode="before")
+    @classmethod
+    def clean_session_id(cls, value):
+        if value is None:
+            return None
+        s = str(value).strip()
+        return s or None
 
     @field_validator("message")
     @classmethod
@@ -223,6 +233,9 @@ class ActionConfirmRequest(BaseModel):
     draft_id: str = Field(
         ...,
         description="Mã bản nháp đơn hàng hoặc phiếu khiếu nại (ví dụ: BK-DRAFT-... hoặc KN-DRAFT-...)",
+    )
+    session_id: str | None = Field(
+        None, description="Mã phiên hội thoại yêu cầu xác nhận (dùng để kiểm tra quyền theo phiên)"
     )
 
 

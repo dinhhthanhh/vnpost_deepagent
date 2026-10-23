@@ -27,14 +27,18 @@ class RunContext:
     # The service emits final, validated TTS segments after validation.
     stream_voice: bool = False
     voice_name: str | None = None
+    voice_input: bool = False
     user_message: str | None = None
     created_draft_ids: list[str] = field(default_factory=list)
+    skills_accessed: list[str] = field(default_factory=list)
+    actions_invoked: list[str] = field(default_factory=list)
+    computed_agents: set[str] = field(default_factory=set)
 
     def __post_init__(self):
         self.slots = asyncio.Semaphore(self.max_parallel)
 
-    def event(self, kind: str, **data):
-        item = {"type": kind, "elapsed_ms": round((time.monotonic() - self.start) * 1000), **data}
+    def event(self, event_type: str, /, **data):
+        item = {"type": event_type, "elapsed_ms": round((time.monotonic() - self.start) * 1000), **data}
         self.events.append(item)
         if self.queue is not None:
             self.queue.put_nowait(item)

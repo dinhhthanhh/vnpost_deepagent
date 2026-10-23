@@ -1,11 +1,37 @@
 param(
     [int]$Port = 8000,
-    [string]$EnvironmentName = "vnpost-deepagent"
+    [string]$EnvironmentName = "vnpost-deepagent",
+    [switch]$NoDocker = $false
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 if (!(Test-Path ".env")) { Copy-Item .env.example .env }
+
+# ------------------------------------------------------------------------------
+# Khởi động cơ sở dữ liệu Docker (PostgreSQL & Qdrant) để bảo toàn lịch sử chat
+# ------------------------------------------------------------------------------
+if (-not $NoDocker) {
+    $docker = (Get-Command docker -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
+    if ($docker) {
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        Write-Host " Đang kiểm tra và khởi động PostgreSQL & Qdrant qua Docker..." -ForegroundColor Cyan
+        Write-Host "==========================================================" -ForegroundColor Cyan
+        try {
+            & docker compose up -d postgres qdrant
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "[OK] Container PostgreSQL (5432) & Qdrant (6333) đã sẵn sàng." -ForegroundColor Green
+            } else {
+                Write-Host "[Cảnh báo] docker compose trả về lỗi. Hệ thống sẽ dùng SQLite fallback." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "[Cảnh báo] Không thể kết nối tới Docker Daemon: $_" -ForegroundColor Yellow
+            Write-Host "          Hệ thống sẽ tạm thời sử dụng SQLite fallback cục bộ." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "[Lưu ý] Không tìm thấy lệnh 'docker'. Hệ thống sẽ dùng SQLite fallback." -ForegroundColor Yellow
+    }
+}
 
 $uv = (Get-Command uv -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source)
 if ($uv) {

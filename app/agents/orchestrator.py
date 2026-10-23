@@ -268,6 +268,12 @@ class AgentHarness:
             """Đọc file ảo trong StateBackend như /evidence/prefetched_sources.json hoặc tài liệu/kỹ năng trong /skills/."""
             clean_path = path.strip()
             if clean_path in self.enterprise_skills:
+                try:
+                    run = current_run.get()
+                    if hasattr(run, "skills_accessed"):
+                        run.skills_accessed.append(clean_path)
+                except Exception:
+                    pass
                 return self.enterprise_skills[clean_path].get("content", "")
             try:
                 run = current_run.get()
@@ -510,14 +516,25 @@ class AgentHarness:
                             },
                             ensure_ascii=False,
                         )
+                matched_skill = None
                 if clean_path in self.enterprise_skills:
-                    return self.enterprise_skills[clean_path].get("content", "")
-                for alt_path in (
-                    clean_path.replace("_", "-"),
-                    clean_path.replace("-", "_"),
-                ):
-                    if alt_path in self.enterprise_skills:
-                        return self.enterprise_skills[alt_path].get("content", "")
+                    matched_skill = self.enterprise_skills[clean_path].get("content", "")
+                else:
+                    for alt_path in (
+                        clean_path.replace("_", "-"),
+                        clean_path.replace("-", "_"),
+                    ):
+                        if alt_path in self.enterprise_skills:
+                            matched_skill = self.enterprise_skills[alt_path].get("content", "")
+                            break
+                if matched_skill is not None:
+                    try:
+                        run = current_run.get()
+                        if hasattr(run, "skills_accessed"):
+                            run.skills_accessed.append(clean_path)
+                    except Exception:
+                        pass
+                    return matched_skill
                 try:
                     run = current_run.get()
                     if clean_path in {
@@ -702,16 +719,6 @@ class AgentHarness:
                 calculate_date,
                 find_nearest_post_office,
                 lookup_post_office,
-                create_draft_booking,
-                update_draft_booking,
-                confirm_booking,
-                cancel_draft_booking,
-                cancel_booking,
-                create_draft_complaint,
-                update_draft_complaint,
-                confirm_complaint,
-                cancel_draft_complaint,
-                cancel_complaint,
                 list_my_orders,
                 parallel_tasks,
             ],
@@ -752,6 +759,8 @@ class AgentHarness:
                 run.event("task_start", agent=name)
                 try:
                     result = await inner.ainvoke(state, config=config)
+                    if name in {"tracking-agent", "post-office-agent", "booking-agent", "complaint-agent"}:
+                        run.computed_agents.add(name)
                     run.event("task_end", agent=name, status="ok")
                     return {"messages": [result["messages"][-1]]}
                 except asyncio.CancelledError:
@@ -790,6 +799,9 @@ class AgentHarness:
         prefetched_evidence: str | None = None,
         thread_id: str | None = None,
         location: Any = None,
+        voice: bool = False,
+        voice_input: bool = False,
+        skip_prefetch_override: bool = False,
     ) -> str:
         """Run the supervisor after a mandatory retrieval step for grounded deep queries.
 
@@ -849,7 +861,7 @@ class AgentHarness:
             )
             and not has_policy_kw
         )
-        skip_prefetch = is_pure_calc or is_pure_tracking or is_pure_location
+        skip_prefetch = is_pure_calc or is_pure_tracking or is_pure_location or skip_prefetch_override
         if grounded and not (image and len(message.strip().split()) <= 5) and not skip_prefetch:
             run = current_run.get()
             if prefetched_evidence is not None:
@@ -887,7 +899,7 @@ class AgentHarness:
         elif is_pure_calc:
             mode = "Câu hỏi về tính toán số học hoặc ngày tháng/lịch trình. Sử dụng mốc thời gian thực hiện tại và công cụ calculate / calculate_date (hoặc giao analyst-agent) để suy luận logic rõ ràng và đưa ra đáp án chính xác. Không trích dẫn nguồn bưu chính nếu không liên quan."
         elif is_pure_tracking:
-            mode = "Câu hỏi tra cứu định vị, hành trình bưu gửi VNPost theo mã vận đơn. Gọi công cụ `track_item` (hoặc giao tracking-agent) để tra cứu trạng thái và thông tin hành trình. Không trích dẫn nguồn tài liệu quy định."
+            mode = "Câu hỏi tra cứu định vị, hành trình bưu gửi VNPost theo mã vận đơn. Giao tracking-agent tra cứu trạng thái và thông tin hành trình theo mã vận đơn. Không trích dẫn nguồn tài liệu quy định."
         elif is_pure_location:
             mode = "Câu hỏi tìm kiếm mạng lưới bưu cục VNPost gần nhất. Gọi `find_nearest_post_office` với tọa độ GPS hoặc `lookup_post_office` (hoặc giao post-office-agent). Không trích dẫn nguồn tài liệu quy định."
         elif grounded:
@@ -899,8 +911,8 @@ class AgentHarness:
         terms = load_terminology()
         matched = find_matched_terminology(message, terms)
         hint = build_terminology_hint(matched)
-        prompt_text = message + "\n\n[Chế độ hệ thống: " + mode + "]"
-        prompt_text += f"\n\n[{prompts.get_current_date_hint()}]"
+        prompt_text = prompts.deep_user_message(message, voice=voice, voice_input=voice_input)
+        prompt_text += "\n\n[Chế độ hệ thống: " + mode + "]"
         if hint:
             prompt_text += f"\n\n[{hint}]"
         if location:
@@ -1019,7 +1031,13 @@ class AgentHarness:
 NO_EVIDENCE_TEMPLATE = "Hệ thống chưa có tài liệu đủ tin cậy để trả lời nội dung này. Vui lòng tải tài liệu liên quan hoặc liên hệ bộ phận phụ trách."
 
 
-def validate_answer(answer: str, sources: dict, grounded: bool, message: str):
+def validate_answer(
+    answer: str,
+    sources: dict,
+    grounded: bool,
+    message: str,
+    computed: bool = False,
+):
     ids = set(re.findall(r"\[(S\d+)\]", answer))
     if ids - sources.keys():
         return (
@@ -1107,7 +1125,29 @@ def validate_answer(answer: str, sources: dict, grounded: bool, message: str):
 
     selected = [sources[i] for i in sorted(valid_ids, key=lambda x: int(x[1:]))]
 
-    if (is_calc_or_temporal or is_realtime_postal) and not selected:
+    run = None
+    try:
+        from app.core.context import current_run
+
+        run = current_run.get()
+        has_skill_or_action = bool(
+            getattr(run, "skills_accessed", None) or getattr(run, "actions_invoked", None)
+        )
+    except Exception:
+        has_skill_or_action = False
+
+    action_computed = bool(
+        computed
+        or getattr(run, "computed_agents", None)
+        or getattr(run, "actions_invoked", None)
+    )
+
+    if (
+        is_calc_or_temporal
+        or is_realtime_postal
+        or has_skill_or_action
+        or action_computed
+    ) and not selected:
         return cleaned_answer, [], "computed", warnings
 
     if not greeting and not selected:

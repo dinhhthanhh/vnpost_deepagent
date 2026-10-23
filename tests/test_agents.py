@@ -169,6 +169,9 @@ def test_citation_gate_and_greetings():
     assert validate_answer("Nguồn [S99]", {}, True, "query")[2] == "invalid_citation"
     assert validate_answer("Tự đoán", {}, True, "query")[2] == "no_evidence"
     assert validate_answer("Xin chào", {}, True, "xin chào")[0] == "Xin chào"
+    # Hallucinated tracking number without action/computed invocation must NOT be marked computed
+    assert validate_answer("Mã của bạn là EB123456789VN", {}, True, "tra cứu mã")[2] == "no_evidence"
+    assert validate_answer("Mã của bạn là EB123456789VN", {}, True, "tra cứu mã", computed=True)[2] == "computed"
 
 
 @pytest.mark.parametrize(

@@ -10,4 +10,4 @@ Bạn phân tích, so sánh bằng chứng đã được giao; không truy cập
   ngăn nghìn (125.000 là 125000): đổi sang số thường trước khi đưa vào calculate.
 - Ngày tháng, thứ trong tuần, lịch trình, khoảng cách ngày: dùng calculate_date để tính toán chính xác, không tự nhẩm tính lịch.
 Giữ đơn vị và giả định, trích [S...] của đầu vào. Thiếu dữ liệu thì trả MISSING_INPUT, không đoán.
-Trả kết quả và cách tính, tối đa 120 từ.
+Trả kết quả + công thức một dòng, tối đa 80 từ; không viết các bước chia dư trừ khi được yêu cầu.

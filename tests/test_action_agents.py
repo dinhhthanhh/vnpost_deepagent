@@ -325,10 +325,10 @@ def test_region_pricing_zones_skill_compliance():
     res_hn_dn = json.loads(
         create_draft_booking(
             sender_name="A",
-            sender_phone="0901",
+            sender_phone="0901234567",
             sender_address="Hà Nội",
             receiver_name="B",
-            receiver_phone="0902",
+            receiver_phone="0902345678",
             receiver_address="Đà Nẵng",
             weight_grams=500,
         )
@@ -340,10 +340,10 @@ def test_region_pricing_zones_skill_compliance():
     res_dn_ct = json.loads(
         create_draft_booking(
             sender_name="A",
-            sender_phone="0901",
+            sender_phone="0901234567",
             sender_address="Đà Nẵng",
             receiver_name="B",
-            receiver_phone="0902",
+            receiver_phone="0902345678",
             receiver_address="Cần Thơ",
             weight_grams=500,
         )
@@ -354,10 +354,10 @@ def test_region_pricing_zones_skill_compliance():
     res_hn_hp = json.loads(
         create_draft_booking(
             sender_name="A",
-            sender_phone="0901",
+            sender_phone="0901234567",
             sender_address="Hà Nội",
             receiver_name="B",
-            receiver_phone="0902",
+            receiver_phone="0902345678",
             receiver_address="Hải Phòng",
             weight_grams=500,
         )
@@ -368,10 +368,10 @@ def test_region_pricing_zones_skill_compliance():
     res_dn_hue = json.loads(
         create_draft_booking(
             sender_name="A",
-            sender_phone="0901",
+            sender_phone="0901234567",
             sender_address="Đà Nẵng",
             receiver_name="B",
-            receiver_phone="0902",
+            receiver_phone="0902345678",
             receiver_address="Thừa Thiên Huế",
             weight_grams=500,
         )
@@ -550,10 +550,10 @@ def test_draft_state_machine_strict_guards():
     b_draft = json.loads(
         create_draft_booking(
             sender_name="Gửi 1",
-            sender_phone="0901",
+            sender_phone="0901234567",
             sender_address="Hà Nội",
             receiver_name="Nhận 1",
-            receiver_phone="0902",
+            receiver_phone="0902345678",
             receiver_address="Hải Phòng",
             weight_grams=300,
         )
@@ -576,10 +576,10 @@ def test_draft_state_machine_strict_guards():
     b_draft_ok = json.loads(
         create_draft_booking(
             sender_name="Gửi 2",
-            sender_phone="0901",
+            sender_phone="0901234567",
             sender_address="Hà Nội",
             receiver_name="Nhận 2",
-            receiver_phone="0902",
+            receiver_phone="0902345678",
             receiver_address="Hải Phòng",
             weight_grams=300,
         )
@@ -604,10 +604,10 @@ def test_draft_update_before_confirmation():
     draft_res = json.loads(
         create_draft_booking(
             sender_name="Nguyễn Văn A",
-            sender_phone="0911",
+            sender_phone="0911223344",
             sender_address="Hà Nội",
             receiver_name="Trần Văn B",
-            receiver_phone="0922",
+            receiver_phone="0922334455",
             receiver_address="Hải Phòng",
             weight_grams=500,
         )
@@ -689,10 +689,10 @@ def test_session_scoped_draft_isolation():
         b1 = json.loads(
             create_draft_booking(
                 sender_name="Alpha Sender",
-                sender_phone="0911",
+                sender_phone="0911223344",
                 sender_address="Hà Nội",
                 receiver_name="Alpha Recv",
-                receiver_phone="0922",
+                receiver_phone="0922334455",
                 receiver_address="Hà Nội",
                 weight_grams=250,
             )
@@ -714,10 +714,10 @@ def test_session_scoped_draft_isolation():
         b2 = json.loads(
             create_draft_booking(
                 sender_name="Beta Sender",
-                sender_phone="0933",
+                sender_phone="0933445566",
                 sender_address="Đà Nẵng",
                 receiver_name="Beta Recv",
-                receiver_phone="0944",
+                receiver_phone="0944556677",
                 receiver_address="Đà Nẵng",
                 weight_grams=400,
             )
@@ -890,10 +890,10 @@ def test_list_my_orders_in_session():
         # Tạo 1 đơn nháp
         create_draft_booking(
             sender_name="Người Gửi A",
-            sender_phone="091",
+            sender_phone="0912345678",
             sender_address="Hà Nội",
             receiver_name="Người Nhận B",
-            receiver_phone="092",
+            receiver_phone="0923456789",
             receiver_address="Hải Phòng",
             weight_grams=300,
         )
@@ -901,10 +901,10 @@ def test_list_my_orders_in_session():
         d2 = json.loads(
             create_draft_booking(
                 sender_name="Người Gửi C",
-                sender_phone="093",
+                sender_phone="0934567890",
                 sender_address="Đà Nẵng",
                 receiver_name="Người Nhận D",
-                receiver_phone="094",
+                receiver_phone="0945678901",
                 receiver_address="Huế",
                 weight_grams=600,
             )
@@ -1009,10 +1009,10 @@ def test_action_api_endpoints():
         d = json.loads(
             create_draft_booking(
                 sender_name="API Sender",
-                sender_phone="0911",
+                sender_phone="0911223344",
                 sender_address="Hà Nội",
                 receiver_name="API Recv",
-                receiver_phone="0922",
+                receiver_phone="0922334455",
                 receiver_address="Đà Nẵng",
                 weight_grams=400,
             )
@@ -1057,7 +1057,7 @@ def test_action_api_endpoints():
                 "action_type": "booking",
                 "target_id": item_code,
                 "reason": "Hủy qua UI",
-                "verification_phone": "0911",
+                "verification_phone": "3344",
             },
         )
         assert res_cancel.status_code == 200

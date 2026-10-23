@@ -124,3 +124,31 @@ def test_store_postgres_live(settings, tmp_path):
     history_after = store.history("tenant-test", test_sid)
     assert len(history_after) == 0
 
+
+def test_get_sync_connection_pool_alias():
+    """Kiểm tra alias get_sync_connection_pool trỏ đúng vào get_sync_pool."""
+    from app.core.postgres import cancel_orphaned_drafts_in_postgres, get_sync_connection_pool, get_sync_pool
+
+    assert get_sync_connection_pool is get_sync_pool
+    # Đảm bảo cancel_orphaned_drafts_in_postgres chạy êm khi offline
+    assert cancel_orphaned_drafts_in_postgres("dummy_tenant", "dummy_sess") == 0
+
+
+def test_run_context_event_draft_created_kind():
+    """Kiểm tra RunContext.event chấp nhận keyword argument kind='booking' / 'complaint'."""
+    from app.core.context import RunContext
+
+    ctx = RunContext("default", "req-test-kind", 1, 1)
+    # Không raise TypeError: got multiple values for argument 'kind'
+    ctx.event("draft_created", kind="booking", draft_id="BK-123", detail={"key": "val"})
+    ctx.event("draft_created", kind="complaint", draft_id="CP-456", detail={"key": "val2"})
+
+    assert len(ctx.events) == 2
+    assert ctx.events[0]["type"] == "draft_created"
+    assert ctx.events[0]["kind"] == "booking"
+    assert ctx.events[0]["draft_id"] == "BK-123"
+
+    assert ctx.events[1]["type"] == "draft_created"
+    assert ctx.events[1]["kind"] == "complaint"
+    assert ctx.events[1]["draft_id"] == "CP-456"
+

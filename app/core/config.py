@@ -239,6 +239,13 @@ class Settings(BaseSettings):
 
     # Short clean property aliases
     @property
+    def is_production(self) -> bool:
+        is_live = bool(
+            self.llm_api_key.get_secret_value() and not self.llm_model.startswith("your-")
+        )
+        return self.demo_mode is False or (is_live and self.demo_mode is not True)
+
+    @property
     def request_timeout(self) -> float:
         return self.request_timeout_seconds
 
